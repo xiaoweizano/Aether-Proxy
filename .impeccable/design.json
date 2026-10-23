@@ -1,0 +1,452 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-23T17:45:00Z",
+  "title": "Design System: Aether",
+  "extensions": {
+    "colorMeta": {
+      "bg": {
+        "role": "neutral",
+        "displayName": "Near-Black Ground",
+        "canonical": "oklch(14.93% 0.0046 264.47)",
+        "tonalRamp": [
+          "#0A0B0D",
+          "#2D2E30",
+          "#545558",
+          "#7F8083",
+          "#ACAEB1",
+          "#CCCED1",
+          "#E3E4E8",
+          "#F3F5F8"
+        ]
+      },
+      "sidebar": {
+        "role": "neutral",
+        "displayName": "Rail Shade",
+        "canonical": "oklch(15.93% 0.0066 270.98)",
+        "tonalRamp": [
+          "#0A0B0E",
+          "#2C2E31",
+          "#545559",
+          "#7F8084",
+          "#ACAEB2",
+          "#CCCED2",
+          "#E3E4E9",
+          "#F3F5FA"
+        ]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Card Surface",
+        "canonical": "oklch(19.93% 0.0068 258.37)",
+        "tonalRamp": [
+          "#090B0E",
+          "#2C2E31",
+          "#535559",
+          "#7E8084",
+          "#ABAEB2",
+          "#CBCED2",
+          "#E2E5E9",
+          "#F2F5FA"
+        ]
+      },
+      "card-2": {
+        "role": "neutral",
+        "displayName": "Lifted Surface",
+        "canonical": "oklch(22.07% 0.0091 255.61)",
+        "tonalRamp": [
+          "#090B0F",
+          "#2B2E32",
+          "#52565A",
+          "#7D8186",
+          "#AAAEB4",
+          "#CACED4",
+          "#E1E5EB",
+          "#F1F5FB"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Card Hairline",
+        "canonical": "oklch(26.76% 0.0103 260.70)",
+        "tonalRamp": [
+          "#090B10",
+          "#2B2E33",
+          "#52555B",
+          "#7D8087",
+          "#AAAEB5",
+          "#CACED5",
+          "#E1E5EC",
+          "#F1F5FC"
+        ]
+      },
+      "border-2": {
+        "role": "neutral",
+        "displayName": "Control Hairline",
+        "canonical": "oklch(30.81% 0.0138 261.71)",
+        "tonalRamp": [
+          "#080B11",
+          "#2A2E35",
+          "#51555D",
+          "#7C8089",
+          "#A9AEB7",
+          "#C9CED7",
+          "#E0E5EE",
+          "#F0F5FF"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Cool White",
+        "canonical": "oklch(93.38% 0.0029 264.54)",
+        "tonalRamp": [
+          "#0A0B0C",
+          "#2D2E2F",
+          "#545557",
+          "#7F8082",
+          "#ADAEB0",
+          "#CDCED0",
+          "#E3E4E6",
+          "#F4F5F7"
+        ]
+      },
+      "dim": {
+        "role": "neutral",
+        "displayName": "Quiet Grey",
+        "canonical": "oklch(70.28% 0.0111 247.99)",
+        "tonalRamp": [
+          "#080C10",
+          "#2A2E33",
+          "#51565B",
+          "#7B8187",
+          "#A9AFB5",
+          "#C8CFD5",
+          "#DFE5EC",
+          "#EFF6FC"
+        ]
+      },
+      "faint": {
+        "role": "neutral",
+        "displayName": "Whisper Grey",
+        "canonical": "oklch(61.32% 0.0134 248.05)",
+        "tonalRamp": [
+          "#070C11",
+          "#292F34",
+          "#50565D",
+          "#7A8188",
+          "#A8AFB6",
+          "#C7CFD6",
+          "#DEE6ED",
+          "#EEF6FE"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Signal Blue",
+        "canonical": "oklch(65.50% 0.1839 260.64)",
+        "tonalRamp": [
+          "#000825",
+          "#00276C",
+          "#064BB9",
+          "#397AEC",
+          "#7EAEFF",
+          "#B2CFFF",
+          "#D6E6FF",
+          "#F0F5FF"
+        ]
+      },
+      "success": {
+        "role": "secondary",
+        "displayName": "Health Green",
+        "canonical": "oklch(77.29% 0.1535 163.22)",
+        "tonalRamp": [
+          "#000F07",
+          "#003824",
+          "#006646",
+          "#00986A",
+          "#27CB92",
+          "#57EDB1",
+          "#90FFCD",
+          "#DCFFED"
+        ]
+      },
+      "danger": {
+        "role": "secondary",
+        "displayName": "Reserved Red",
+        "canonical": "oklch(71.06% 0.1661 22.22)",
+        "tonalRamp": [
+          "#1F0002",
+          "#5C000E",
+          "#9D1727",
+          "#D14E51",
+          "#FF8482",
+          "#FFB9B6",
+          "#FFDBD8",
+          "#FFF2F1"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The current node name, 30px/650 at -0.02em. The largest object on the dashboard; nothing else is this large."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The page title (仪表盘) and, at -0.01em, the kernel version line. 26px/650."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "The three rate readings at 28px/650 with a 14px 500 unit suffix in dim. Tabular, left-aligned, one number per card."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "The 17px/600 sidebar wordmark; a 13px/500 variant titles the chart card."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Nav items, connected status, the proxy pill, card copy. 13px/400."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Card labels, hero sub-line, health line, kernel row keys, segmented options. 12px/400."
+      },
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "Chips, stat footers, hero stat keys, badge glyphs, chart legend, version line. 11px/400, never uppercase, never tracked."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Cascadia Mono at 12px for the health percentage — the only mono type in the product."
+      }
+    },
+    "shadows": [
+      {
+        "name": "status-halo",
+        "value": "0 0 0 3px rgba(52,211,153,.12)",
+        "purpose": "The connected dot in the header. The only halo in the product; it means 'alive' and belongs to that dot alone."
+      },
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid #4A8CFF; outline-offset: 2px",
+        "purpose": "Global :focus-visible. A stroke rather than a shadow, and the only focus treatment in the artifact."
+      }
+    ],
+    "washLadder": [
+      {
+        "name": "chart-area",
+        "value": "rgba(74,140,255,.10)",
+        "purpose": "Fill under the download line."
+      },
+      {
+        "name": "nav-active",
+        "value": "rgba(74,140,255,.12)",
+        "purpose": "Fill behind the active sidebar item."
+      },
+      {
+        "name": "badge",
+        "value": "rgba(74,140,255,.14)",
+        "purpose": "Fill behind a rate card's direction badge."
+      },
+      {
+        "name": "selection",
+        "value": "rgba(74,140,255,.28)",
+        "purpose": "Text selection."
+      }
+    ],
+    "canvas": [
+      {
+        "name": "target-window",
+        "value": "1280×800",
+        "purpose": "The artifact's reference viewport: all four blocks plus the full 150px chart visible without scroll."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Sidebar Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "38px nav row in the 232px rail: 17px outline icon, 11px gap, 13px label. Hover steps one tone; active is a 12% blue wash with blue type.",
+      "html": "<a class=\"ds-nav ds-nav--active\" href=\"#\"><svg class=\"ds-nav-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1.5\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1.5\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1.5\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\" rx=\"1.5\"/></svg>仪表盘</a>",
+      "css": ".ds-nav { display: flex; align-items: center; gap: 11px; height: 38px; padding: 0 11px; border-radius: 8px; background: transparent; color: #9AA0A6; text-decoration: none; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; } .ds-nav:hover { background: #141619; color: #E8E9EB; } .ds-nav--active { background: rgba(74,140,255,.12); color: #4A8CFF; } .ds-nav-icon { width: 17px; height: 17px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; } .ds-nav:focus-visible { outline: 2px solid #4A8CFF; outline-offset: 2px; }"
+    },
+    {
+      "name": "Mode Switch",
+      "kind": "custom",
+      "refersTo": "segmented",
+      "description": "34px segmented control in the header's right cluster: 规则 / 全局 / 直连. Permanent, never behind a menu. Outer 10px radius with 3px padding and a 7px active segment — the concentric pair.",
+      "html": "<div class=\"ds-seg\" role=\"group\" aria-label=\"代理模式\"><button class=\"ds-seg-opt ds-seg-opt--on\" type=\"button\">规则</button><button class=\"ds-seg-opt\" type=\"button\">全局</button><button class=\"ds-seg-opt\" type=\"button\">直连</button></div>",
+      "css": ".ds-seg { display: inline-flex; gap: 2px; padding: 3px; background: #141619; border: 1px solid #23262B; border-radius: 10px; } .ds-seg-opt { height: 26px; padding: 0 13px; border: 0; border-radius: 7px; background: transparent; color: #9AA0A6; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 12px; cursor: pointer; } .ds-seg-opt:hover { color: #E8E9EB; } .ds-seg-opt--on { background: #181B1F; color: #E8E9EB; } .ds-seg-opt--on:hover { color: #E8E9EB; } .ds-seg-opt:focus-visible { outline: 2px solid #4A8CFF; outline-offset: 2px; }"
+    },
+    {
+      "name": "Proxy Pill",
+      "kind": "button",
+      "refersTo": "proxy-pill",
+      "description": "34px system-proxy state control, sitting beside the mode switch. Green text on a 10% green fill under a 35%-alpha green border — the only green-filled surface in the product.",
+      "html": "<div class=\"ds-proxy-pill\"><span class=\"ds-proxy-dot\"></span>系统代理 已开启</div>",
+      "css": ".ds-proxy-pill { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid rgba(52,211,153,.35); background: rgba(52,211,153,.10); color: #34D399; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; cursor: pointer; } .ds-proxy-pill:focus-visible { outline: 2px solid #4A8CFF; outline-offset: 2px; } .ds-proxy-dot { width: 7px; height: 7px; border-radius: 50%; background: #34D399; }"
+    },
+    {
+      "name": "Dashboard Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "The base surface: 14px radius, card tone, 1px border, 16/18 padding, no shadow. A 12px label row with an optional 24px icon button that gains a 1px outline on hover and no fill.",
+      "html": "<section class=\"ds-card\"><div class=\"ds-card-head\"><span class=\"ds-card-label\">内核状态</span><button class=\"ds-icon-btn\" type=\"button\" aria-label=\"刷新内核状态\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M20 12a8 8 0 1 1-2.3-5.6\"/><path d=\"M20 4v4h-4\"/></svg></button></div><p class=\"ds-card-body\">卡片内容走在这里，标签 12px，正文 13px。</p></section>",
+      "css": ".ds-card { background: #141619; border: 1px solid #23262B; border-radius: 14px; padding: 16px 18px; min-width: 0; color: #E8E9EB; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; } .ds-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; } .ds-card-label { font-size: 12px; color: #9AA0A6; } .ds-card-body { margin: 0; font-size: 13px; line-height: 1.5; } .ds-icon-btn { width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #7E858C; cursor: pointer; } .ds-icon-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; } .ds-icon-btn:hover { border-color: #2C3037; color: #E8E9EB; } .ds-icon-btn:focus-visible { outline: 2px solid #4A8CFF; outline-offset: 2px; }"
+    },
+    {
+      "name": "Current Node Card",
+      "kind": "card",
+      "description": "The hero, spanning two of three tracks. 30px node name with a 22px chip, a 12px sub-line, a health line with the mono percentage, the 60-tick health strip, and a three-column stat row opened by a 1px rule.",
+      "html": "<section class=\"ds-hero\"><div class=\"ds-hero-labelrow\"><span class=\"ds-hero-label\">当前节点</span></div><div class=\"ds-hero-node\"><b>HK-01</b><span class=\"ds-chip\">Proxy</span></div><div class=\"ds-hero-sub\">规则模式 · <em>TCP</em> · 443</div><div class=\"ds-hero-health\">最近 60 分钟 0 次失败 · 最近 38ms<span class=\"ds-hero-pct\">100%</span></div><div class=\"ds-ticks\" aria-hidden=\"true\"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class=\"ds-miss\"></i><i></i><i></i><i></i><i></i></div><div class=\"ds-hero-stats\"><div><div class=\"ds-k\">会话时长</div><div class=\"ds-v\">01:10:54</div></div><div><div class=\"ds-k\">已用流量</div><div class=\"ds-v\">2.7 MB</div></div><div><div class=\"ds-k\">工作模式</div><div class=\"ds-v\">规则</div></div></div></section>",
+      "css": ".ds-hero { grid-column: span 2; min-width: 0; background: #141619; border: 1px solid #23262B; border-radius: 14px; padding: 16px 18px; color: #E8E9EB; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; } .ds-hero-labelrow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; } .ds-hero-label { font-size: 12px; color: #9AA0A6; } .ds-hero-node { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; } .ds-hero-node b { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; } .ds-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border: 1px solid #2C3037; border-radius: 6px; font-size: 11px; color: #9AA0A6; } .ds-hero-sub { font-size: 12px; color: #7E858C; margin-bottom: 16px; } .ds-hero-sub em { font-style: normal; color: #9AA0A6; } .ds-hero-health { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #9AA0A6; margin-bottom: 8px; } .ds-hero-pct { margin-left: auto; color: #34D399; font-family: 'Cascadia Mono', 'Consolas', ui-monospace, monospace; font-size: 12px; font-variant-numeric: tabular-nums; } .ds-ticks { display: flex; align-items: flex-end; gap: 2px; height: 22px; margin-bottom: 18px; } .ds-ticks i { flex: 1; height: 100%; border-radius: 1px; background: #34D399; opacity: .85; } .ds-ticks i.ds-miss { height: 55%; background: #2C3037; opacity: 1; } .ds-hero-stats { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #23262B; padding-top: 14px; } .ds-hero-stats .ds-k { font-size: 11px; color: #7E858C; margin-bottom: 5px; } .ds-hero-stats .ds-v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Rate Stat Card",
+      "kind": "card",
+      "description": "One metric per card: a 22px tinted badge, a 12px label, the 28px figure with a 14px unit suffix, and a footer pinned to the bottom so the three cumulative readings align.",
+      "html": "<section class=\"ds-stat\"><div class=\"ds-stat-head\"><span class=\"ds-badge ds-badge--down\">↓</span>下载速度</div><div class=\"ds-stat-figure\">0.00<span>MB/s</span></div><div class=\"ds-stat-foot\">累计 2.0 MB</div></section>",
+      "css": ".ds-stat { display: flex; flex-direction: column; min-width: 0; background: #141619; border: 1px solid #23262B; border-radius: 14px; padding: 16px 18px; color: #E8E9EB; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; } .ds-stat-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #9AA0A6; margin-bottom: 10px; } .ds-badge { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 11px; } .ds-badge--down { background: rgba(74,140,255,.14); color: #4A8CFF; } .ds-badge--up { background: rgba(52,211,153,.14); color: #34D399; } .ds-badge--conn { background: rgba(251,191,36,.14); color: #FBBF24; } .ds-stat-figure { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; } .ds-stat-figure span { font-size: 14px; font-weight: 500; color: #9AA0A6; margin-left: 4px; } .ds-stat-foot { margin-top: auto; padding-top: 10px; font-size: 11px; color: #7E858C; }"
+    },
+    {
+      "name": "Kernel Status Card",
+      "kind": "card",
+      "description": "26px version line, a wrapping row of solid chips for facts, and three key/value rows at 12px — keys in faint, values in dim at 500 with tabular figures, right-aligned.",
+      "html": "<section class=\"ds-kernel\"><div class=\"ds-card-head\"><span class=\"ds-card-label\">内核状态</span></div><div class=\"ds-kernel-big\">mihomo · v1.19.32</div><div class=\"ds-chips\"><span class=\"ds-chip-solid\">运行中</span><span class=\"ds-chip-solid\">端口 5566</span><span class=\"ds-chip-solid\">3 个策略组</span></div><div class=\"ds-kernel-rows\"><div><span>启动于</span><b>13:31:13</b></div><div><span>内存占用</span><b>68 MB</b></div><div><span>进程守护</span><b>正常</b></div></div></section>",
+      "css": ".ds-kernel { min-width: 0; background: #141619; border: 1px solid #23262B; border-radius: 14px; padding: 16px 18px; color: #E8E9EB; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; } .ds-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; } .ds-card-label { font-size: 12px; color: #9AA0A6; } .ds-kernel-big { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin: 14px 0 10px; font-variant-numeric: tabular-nums; } .ds-chips { display: flex; flex-wrap: wrap; gap: 8px; } .ds-chip-solid { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; background: #181B1F; color: #9AA0A6; font-size: 11px; } .ds-kernel-rows { margin-top: 16px; display: grid; gap: 8px; } .ds-kernel-rows div { display: flex; justify-content: space-between; font-size: 12px; color: #7E858C; } .ds-kernel-rows b { color: #9AA0A6; font-weight: 500; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Traffic Chart Card",
+      "kind": "custom",
+      "description": "Full-width block: 13px title, two solid chips for peak and average, a right-aligned legend, then a 150px chart. Download is a 2px blue line over a 10% wash; upload is a 2px green line with no fill; four 1px gridlines, no axes or labels.",
+      "html": "<section class=\"ds-chart\"><div class=\"ds-chart-head\"><span class=\"ds-chart-title\">流量历史</span><span class=\"ds-chip-solid\">最高 0.54 MB/s</span><span class=\"ds-chip-solid\">平均 0.07 MB/s</span><span class=\"ds-legend\"><span class=\"ds-d\"><i></i>下载</span><span class=\"ds-u\"><i></i>上传</span></span></div><svg class=\"ds-chart-svg\" viewBox=\"0 0 1000 190\" preserveAspectRatio=\"none\" role=\"img\" aria-label=\"最近 60 分钟流量曲线\"><g stroke=\"#1E2126\" stroke-width=\"1\"><line x1=\"0\" y1=\"20\" x2=\"1000\" y2=\"20\"/><line x1=\"0\" y1=\"65\" x2=\"1000\" y2=\"65\"/><line x1=\"0\" y1=\"110\" x2=\"1000\" y2=\"110\"/><line x1=\"0\" y1=\"155\" x2=\"1000\" y2=\"155\"/></g><path d=\"M0,178 L120,176 L240,175 L360,174 L480,60 L560,90 L640,70 L720,120 L800,80 L880,150 L1000,174 L1000,190 L0,190 Z\" fill=\"rgba(74,140,255,.10)\"/><path d=\"M0,178 L120,176 L240,175 L360,174 L480,60 L560,90 L640,70 L720,120 L800,80 L880,150 L1000,174\" fill=\"none\" stroke=\"#4A8CFF\" stroke-width=\"2\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M0,184 L120,183 L240,184 L360,182 L480,172 L560,176 L640,178 L720,182 L800,176 L880,183 L1000,183\" fill=\"none\" stroke=\"#34D399\" stroke-width=\"2\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/></svg></section>",
+      "css": ".ds-chart { grid-column: 1 / -1; min-width: 0; background: #141619; border: 1px solid #23262B; border-radius: 14px; padding: 16px 18px; color: #E8E9EB; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; } .ds-chart-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; } .ds-chart-title { font-size: 13px; font-weight: 500; } .ds-chip-solid { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; background: #181B1F; color: #9AA0A6; font-size: 11px; } .ds-legend { margin-left: auto; display: flex; gap: 16px; font-size: 11px; color: #7E858C; } .ds-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; } .ds-d i { background: #4A8CFF; } .ds-u i { background: #34D399; } .ds-chart-svg { display: block; width: 100%; height: 150px; }"
+    },
+    {
+      "name": "Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "22px fact chip. Outlined (1px border-2, transparent) for classification like Proxy; solid (card-2, no border) for facts like 运行中 or a peak rate. Never a filter, never selected.",
+      "html": "<span class=\"ds-chip\">Proxy</span> <span class=\"ds-chip-solid\">运行中</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border: 1px solid #2C3037; border-radius: 6px; background: transparent; font-size: 11px; color: #9AA0A6; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; } .ds-chip-solid { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; background: #181B1F; font-size: 11px; color: #9AA0A6; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Instrument Cluster",
+    "overview": "Aether's first screen is a dashboard in the automotive sense: four instruments you can read from across the room, and a workshop door marked 「连接」 for when something is wrong. The window opens on a 40px title bar over a 232px rail over a three-column field of 14px-radius cards — current node, kernel status, three rate readings, and a 60-minute flow chart. The largest object on the screen is a node name at 30px. The second-largest things are numbers. Everything that explains why lives one level down, on the page the artifact only links to.\n\nThe material is near-black layered paper: four surfaces within five percentage points of lightness, separated by 1px hairlines rather than shadows, with a single blue that behaves like a signal lamp and a green that means \"healthy\". Density is no longer the argument — whitespace is. A card's label sits at 11–12px, its figure at 26–30px, and the space between them does the work a border used to do. Hover is a single tonal step; there is no elevation, no glass, no glow except the three-pixel halo around the connected dot.\n\nConfirmed rejections carried by the pivot: the dense htop-style grid is gone as a first surface (it survives as the 「连接」 page and is not documented from this artifact), and with it the brass-on-bone instrument palette, the 28px row lattice, and the zero-radius square. What was kept is the discipline: exactly one accent, tabular figures, and no decoration that does not report a fact.",
+    "keyCharacteristics": [
+      "Four blocks, one screen, no scroll at 1280×800.",
+      "Card surfaces at 14px radius on four near-black tones; separation by 1px hairline, never by shadow.",
+      "One blue for structure and interaction; one green for health; no third hue in the surface.",
+      "Figures 26–30px, labels 11–12px, and nothing in between.",
+      "Every number is tabular; only the health percentage is set in mono.",
+      "The mode switch (规则 / 全局 / 直连) is permanently in the top-right, beside the proxy pill.",
+      "Hover is one tonal step and it is instant; the artifact declares no transitions at all."
+    ],
+    "rules": [
+      {
+        "name": "The Blue Never Fills Rule",
+        "body": "Signal blue appears at full strength only as type, as a 2px chart stroke, as a dot, or as a focus ring. Any area of blue is the accent at 10–28% alpha. A solid blue button, bar or panel is not this system.",
+        "section": "colors"
+      },
+      {
+        "name": "The Wash Ladder Rule",
+        "body": "Blue areas have four steps and they are not interchangeable: 10% for the chart area under the download line, 12% for the active nav row, 14% for a badge chip, 28% for text selection. A blue tint at any other alpha is off-system.",
+        "section": "colors"
+      },
+      {
+        "name": "The Green Is Health Rule",
+        "body": "Green marks one fact — the product is working: connected, proxy on, kernel running, this minute was healthy, this is upload. It is never a decorative accent, never a hover, never a category colour.",
+        "section": "colors"
+      },
+      {
+        "name": "The Three-Step Text Rule",
+        "body": "Type descends in three tiers, and the tier is a role rather than a contrast allowance: text carries figures and headlines, dim carries labels and secondary values, faint carries annotation — the hero sub-line, stat footers, kernel keys, the version line, the legend, resting icons. All three clear AA on every surface they land on (14.92 / 6.86 / 4.85 on card), so no word is being sacrificed for legibility; what the tiers protect is the reading order.",
+        "section": "colors"
+      },
+      {
+        "name": "The Big Number, Small Label Rule",
+        "body": "A card pairs a figure at 26–30px with its label at 11–12px. No 14–24px heading sits between them; if a card needs a middle size, it needs to be two cards.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular, Not Mono Rule",
+        "body": "Every figure that can change while you watch is font-variant-numeric: tabular-nums in the UI face. Mono is not the house numeral face — it appears only for the health percentage. Figures stay in the same voice as the labels around them; only their size and weight change.",
+        "section": "typography"
+      },
+      {
+        "name": "The Four Weights Rule",
+        "body": "400, 500, 600, 650. There is no 700 and no 300. Emphasis above 600 is earned by size and by -0.02em tracking, not by more weight.",
+        "section": "typography"
+      },
+      {
+        "name": "The Title Bar Is The Only Caps Rule",
+        "body": "The sole uppercase, letter-spaced string in the product is the 40px title bar's wordmark (12px, .16em), because it stands in for OS chrome. Chinese labels are never uppercased, never tracked out, and never turned into eyebrow labels.",
+        "section": "typography"
+      },
+      {
+        "name": "The Four Blocks Rule",
+        "body": "At the target window (1280×800) all four blocks and the whole chart are visible with no scroll. If a fifth block is added, something else leaves the first viewport — the dashboard is a glance, not a feed.",
+        "section": "layout"
+      },
+      {
+        "name": "The Fixed Rail Rule",
+        "body": "The sidebar is 232px and is never content-sized, never collapsible in this artifact, and never narrowed to make room for cards.",
+        "section": "layout"
+      },
+      {
+        "name": "The Thirds Rule",
+        "body": "A card is one, two or three of the three tracks. There is no half-column, no four-column variant, and no card that sizes to its content.",
+        "section": "layout"
+      },
+      {
+        "name": "The One Gap Rule",
+        "body": "14px is the only gap in the card field — horizontally and vertically. Card padding (16/18) changes; the gap does not.",
+        "section": "layout"
+      },
+      {
+        "name": "The Border, Not Shadow Rule",
+        "body": "A card separates by one tone plus 1px of border. If a surface needs to lift, it steps one tone; it never gains a drop shadow.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Halo Is Status Rule",
+        "body": "A soft ring means \"alive\" and nothing else. It is one colour, one size, one 3px radius, attached to one dot.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Concentric Radius Rule",
+        "body": "A rounded element inside a rounded element is inset by exactly the difference in radius: 10px track − 3px padding = 7px segment. If you change the outer radius, the padding and the inner radius move together or neither moves.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Dots Are Circles Rule",
+        "body": "Roundness rises with smallness: the only perfect circles are 6–8px status and legend dots. Buttons, chips and icons are rounded rectangles — the 34px proxy control and mode switch are the tallest controls in the product and both still use the 10px control radius, so no capsule-shaped button exists.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do pair every figure with an 11–12px label and skip the sizes between 13 and 26px on cards.",
+      "Do set figures in the UI face with tabular-nums; reach for mono only for the health percentage.",
+      "Do keep the mode switch and proxy pill in the header's right cluster at all times.",
+      "Do separate surfaces with one tonal step plus 1px border (or border-2 for anything interactive).",
+      "Do tint blue only at 10 / 12 / 14 / 28% and use full-strength blue for type, 2px strokes and dots.",
+      "Do let a card span exactly 1, 2 or 3 tracks of the three-column field with a 14px gap.",
+      "Do keep the first viewport at four blocks with the chart fully visible at 1280×800.",
+      "Do change hover by one tone and change it instantly, as the artifact does.",
+      "Do pin rate-card footers with margin-top:auto so the three footers sit on one baseline."
+    ],
+    "donts": [
+      "Don't fill any surface with solid accent — blue areas are washes, never blocks.",
+      "Don't use green for anything but health, on-state and the upload series.",
+      "Don't set a primary figure in faint — the third tier is annotation (sub-lines, footers, keys, legend), and every figure in the artifact is set in text.",
+      "Don't add a drop shadow, blur or backdrop to a card; the only halo belongs to the connected dot.",
+      "Don't invent a heading size between 14px and 24px to make a card louder.",
+      "Don't give a chip a selected or filter state — chips are facts.",
+      "Don't centre or right-align a card's primary figure; every card in the artifact is left-aligned, with only the kernel's values and the health percentage set right.",
+      "Don't uppercase or track out Chinese labels; the title-bar wordmark is the only caps in the product.",
+      "Don't add a fourth card width or a responsive column squeeze — the field is three tracks, 14px apart.",
+      "Don't use the reserved danger red on this surface; nothing in the dashboard is red."
+    ]
+  }
+}

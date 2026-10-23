@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aether — 路由透视</title>
+<style>
+  /* ── tokens ─────────────────────────────────────────────── */
+  :root {
+    --ground:      #08090A;
+    --panel:       #0E1013;
+    --raise:       #16191D;
+    --raise-2:     #1B1F24;
+    --hairline:    #22262D;
+    --hairline-2:  #2C323A;
+    --text:        #D8D5CC;
+    --text-dim:    #949CA5;
+    --text-faint:  #828A93;
+    --accent:      #C9A227;
+    --accent-dim:  #8A7020;
+    --alert:       #C0473A;  /* 线形与状态灯 */
+    --alert-text:  #D9604F;  /* 文字，AA 合规 */
+    --meter:       #1C2026;
+
+    --row-h: 28px;
+    --fs-main: 13px;
+    --fs-sub: 11px;
+    --fs-micro: 10px;
+    --rail-w: 240px;
+
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+            "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    --font-num: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--fs-main);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: #3A3320; color: #F2EEE2; }
+  :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--hairline-2);
+    border-radius: 0;
+    border: 2px solid var(--ground);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: #3A414B; }
+
+  /* ── shell ──────────────────────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-rows: 48px 1fr 32px;
+    height: 100vh;
+    min-width: 760px;
+  }
+
+  /* ── summary strip ──────────────────────────────────────── */
+  .summary {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 0 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .brand .dot {
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+  }
+  .summary .state { display: flex; align-items: center; gap: 10px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--hairline-2);
+    color: var(--text-dim);
+    font-size: var(--fs-micro);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .pill.on { border-color: var(--accent-dim); color: var(--accent); }
+  .pill.off { border-color: var(--hairline-2); color: var(--text-dim); }
+  .summary .rates {
+    margin-left: auto;
+    display: flex;
+    gap: 18px;
+    font-family: var(--font-num);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .summary .rates b { color: var(--text); font-weight: 500; }
+  .summary .cmd {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--hairline-2);
+    color: var(--text-dim);
+    font-size: var(--fs-micro);
+  }
+  .summary .cmd kbd {
+    font-family: var(--font-num);
+    font-size: 10px;
+    color: var(--text);
+  }
+
+  /* ── body ───────────────────────────────────────────────── */
+  .body {
+    display: grid;
+    grid-template-columns: var(--rail-w) 1fr;
+    min-height: 0;
+  }
+
+  .rail {
+    background: var(--panel);
+    padding: 12px 0 16px;
+    overflow-y: auto;
+  }
+  .rail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px 8px;
+    font-size: var(--fs-micro);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .group { padding: 4px 0 8px; }
+  .group-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 14px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .group-title .caret { width: 10px; color: var(--text-faint); font-size: 10px; }
+  .node {
+    display: grid;
+    grid-template-columns: 2px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    height: 28px;
+    padding: 0 14px 0 18px;
+    color: var(--text-dim);
+    cursor: default;
+    transition: background-color 90ms steps(1, end), color 90ms steps(1, end);
+  }
+  .node:hover { background: var(--raise); color: var(--text); }
+  .node.selected { background: var(--raise); color: var(--text); }
+  .node .tick { height: 100%; background: transparent; }
+  .node.selected .tick { background: var(--accent); }
+  .node .lat { font-family: var(--font-num); font-size: 11px; color: var(--text-faint); }
+  .node.selected .lat { color: var(--accent); }
+
+  /* ── grid ───────────────────────────────────────────────── */
+  .main { display: grid; grid-template-rows: 36px 28px 1fr; min-width: 0; min-height: 0; }
+
+  .grid-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    background: var(--ground);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .grid-bar .label {
+    font-size: var(--fs-micro);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .grid-bar .label b { color: var(--text-dim); font-weight: 600; }
+  .search {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 24px;
+    padding: 0 10px;
+    min-width: 220px;
+    border: 1px solid var(--hairline-2);
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+  .search .slash {
+    font-family: var(--font-num);
+    font-size: 10px;
+    border: 1px solid var(--hairline-2);
+    padding: 0 4px;
+  }
+  .toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-faint); }
+  .toggle .box { width: 12px; height: 12px; border: 1px solid var(--hairline-2); }
+
+  .cols, .row {
+    display: grid;
+    grid-template-columns: 72px 120px minmax(220px, 1fr) 200px 140px 56px;
+    align-items: center;
+  }
+
+  .cols {
+    height: 28px;
+    padding: 0 16px;
+    background: var(--ground);
+    border-bottom: 1px solid var(--hairline);
+    font-size: var(--fs-micro);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    user-select: none;
+  }
+  .cols > span { padding-right: 12px; }
+  .cols .sorted { color: var(--text-dim); }
+  .cols .sorted::after { content: " ↓"; color: var(--accent); }
+
+  .rows { overflow-y: auto; min-height: 0; }
+
+  .row {
+    position: relative;
+    height: var(--row-h);
+    padding: 0 16px;
+    color: var(--text);
+    box-shadow: inset 0 -1px 0 rgba(255,255,255,.025);
+    transition: background-color 90ms steps(1, end);
+  }
+  .row:hover { background: var(--raise); }
+  .row.selected {
+    background: var(--raise-2);
+    box-shadow: 0 1px 0 #000, inset 0 0 0 1px var(--hairline-2);
+  }
+
+  /* 状态由线形承担，不靠颜色 */
+  .row::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 50%;
+    width: 2px;
+    transform: translateY(-50%);
+    background: transparent;
+  }
+  .row.active::before { height: 100%; background: var(--accent); }
+  .row.selected::before { height: 100%; background: var(--accent); }
+  .row.ended::before {
+    height: 40%;
+    background: repeating-linear-gradient(
+      180deg, var(--text-faint) 0 2px, transparent 2px 4px);
+  }
+  .row.rejected::before { height: 100%; background: var(--alert); }
+  .row.ended .host { color: var(--text-dim); }
+  .row.ended .bar::after { background: var(--text-faint); }
+  .row.rejected .route-cell { color: var(--alert-text); }
+
+  .row > span { padding-right: 12px; overflow: hidden; white-space: nowrap; }
+  .time { font-family: var(--font-num); font-size: 11px; color: var(--text-faint); }
+  .row.selected .time, .row.selected .dur { color: var(--text-dim); }
+  .proc { color: var(--text-dim); }
+  .proc.missing { color: var(--text-faint); }
+  .host { text-overflow: ellipsis; }
+  .route { color: var(--text-dim); }
+  .route .grp { color: var(--text-faint); }
+  .route .sep { color: var(--text-faint); padding: 0 5px; }
+  .route .node-name { color: var(--text); }
+
+  /* 双向电平表：上行向左、下行向右，长度按 sqrt 归一化 */
+  .traffic {
+    font-family: var(--font-num);
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .traffic .up { color: var(--text-faint); }
+  .bar {
+    flex: 1;
+    min-width: 24px;
+    height: 2px;
+    background: var(--meter);
+    position: relative;
+  }
+  .bar::before, .bar::after { content: ""; position: absolute; top: 0; bottom: 0; }
+  .bar::before { right: 50%; width: var(--u); background: var(--text-faint); opacity: .85; }
+  .bar::after  { left: 50%;  width: var(--d); background: var(--accent); opacity: .7; }
+
+  .dur { font-family: var(--font-num); font-size: 11px; color: var(--text-faint); text-align: right; }
+
+  /* 行内详情：完整状态，不是抽屉 */
+  .detail {
+    grid-column: 1 / -1;
+    background: var(--raise);
+    border-top: 1px solid var(--hairline-2);
+    border-bottom: 1px solid var(--hairline-2);
+    padding: 14px 16px 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 32px;
+    row-gap: 10px;
+    box-shadow: 0 1px 0 #000;
+  }
+  .detail .field { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: baseline; }
+  .detail .k {
+    font-size: var(--fs-micro);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .detail .v { font-size: 13px; color: var(--text); }
+  .detail .v.mono { font-family: var(--font-num); font-size: 11px; color: var(--text-dim); }
+  .chain { display: flex; align-items: center; gap: 8px; }
+  .chain .g { color: var(--text-dim); }
+  .chain .a { color: var(--text-faint); }
+  .chain .n { color: var(--accent); }
+  .rule .payload { color: var(--accent); }
+
+  /* ── footer ─────────────────────────────────────────────── */
+  .foot {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--hairline);
+    font-size: var(--fs-micro);
+    letter-spacing: .06em;
+    color: var(--text-faint);
+  }
+  .foot kbd {
+    font-family: var(--font-num);
+    border: 1px solid var(--hairline-2);
+    padding: 0 4px;
+    margin-right: 5px;
+    color: var(--text-dim);
+  }
+  .foot .fail { margin-left: auto; color: var(--text-faint); }
+  .foot .fail b { color: var(--alert-text); font-weight: 600; }
+  .foot .loglink {
+    font: inherit; font-size: var(--fs-micro); letter-spacing: .06em;
+    color: var(--text-dim); background: none; border: 0;
+    border-bottom: 1px solid var(--hairline-2);
+    padding: 0 0 1px; margin-left: 2px; cursor: default;
+  }
+  .foot .loglink:hover { color: var(--text); border-bottom-color: var(--text-faint); }
+
+  /* 窄宽度整列丢弃，绝不挤压 */
+  @media (max-width: 1100px) {
+    .cols, .row { grid-template-columns: 72px 120px minmax(200px,1fr) 180px 120px; }
+    .dur, .cols .c-dur { display: none; }
+  }
+  @media (max-width: 900px) {
+    .cols, .row { grid-template-columns: 72px 110px minmax(180px,1fr) 160px; }
+    .traffic, .cols .c-traffic { display: none; }
+    .detail { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 760px) {
+    .app { min-width: 0; }
+    .body { grid-template-columns: 1fr; }
+    .rail { display: none; }
+    .cols, .row { grid-template-columns: 100px minmax(160px,1fr) 150px; }
+    .time, .cols .c-time { display: none; }
+  }
+</style>
+</head>
+<body>
+<!--
+THESIS: 一张固定网格承载全部正在发生的连接；拒绝卡片、标签页与留白膨胀。
+OWN-WORLD: 近黑地面、暖骨白正文、黄铜色单强调、砖红仅用于拒绝；列对齐是装饰本身。
+STORY: 打开即知道是否在代理、走在哪个节点、哪条连接走了哪条路；需要时展开一条看完整因果。
+FIRST VIEWPORT: 48px 汇总带；240px 节点网格；六列连接网格，行高 28px；底栏是键盘动作。
+FORM: htop 进程监视器，第二轮候选第 3 位，seed key 468913f0（reroll 1）；掷骰记录见 .impeccable/rolls/2026-10-23-direction.md。
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance.
+-->
+<div class="app">
+
+  <header class="summary">
+    <div class="brand"><span class="dot"></span>AETHER</div>
+    <div class="state">
+      <span class="pill on">系统代理 开</span>
+      <span class="pill">规则模式</span>
+    </div>
+    <div class="rates">
+      <span>↑ <b>1.2 MB/s</b></span>
+      <span>↓ <b>340 KB/s</b></span>
+    </div>
+    <div class="cmd"><kbd>Ctrl K</kbd> 命令</div>
+  </header>
+
+  <div class="body">
+
+    <nav class="rail" aria-label="节点">
+      <div class="rail-head"><span>策略组</span><span>延迟</span></div>
+
+      <div class="group">
+        <div class="group-title"><span class="caret">▾</span>Proxy</div>
+        <div class="node selected"><span class="tick"></span><span>HK-01</span><span class="lat">38 ms</span></div>
+        <div class="node"><span class="tick"></span><span>JP-02</span><span class="lat">61 ms</span></div>
+        <div class="node"><span class="tick"></span><span>US-07</span><span class="lat">142 ms</span></div>
+      </div>
+
+      <div class="group">
+        <div class="group-title"><span class="caret">▸</span>Auto</div>
+      </div>
+
+      <div class="group">
+        <div class="group-title"><span class="caret">▸</span>DIRECT</div>
+      </div>
+    </nav>
+
+    <main class="main">
+      <div class="grid-bar">
+        <span class="label">近 60 秒 · <b>18 条</b></span>
+        <div class="search"><span class="slash">/</span> 搜索域名或进程</div>
+        <div class="toggle"><span class="box"></span>只看活跃</div>
+      </div>
+
+      <div class="cols">
+        <span class="sorted c-time">时间</span>
+        <span class="c-proc">进程</span>
+        <span class="c-host">域名</span>
+        <span class="c-route">出站</span>
+        <span class="c-traffic">流量</span>
+        <span class="c-dur" style="text-align:right">时长</span>
+      </div>
+
+      <div class="rows">
+
+        <article class="row rejected">
+          <span class="time">13:42:07</span>
+          <span class="proc">QQ</span>
+          <span class="host">img.qq.com</span>
+          <span class="route route-cell"><span class="grp">REJECT</span></span>
+          <span class="traffic"><span class="up">↑0</span><span class="bar" style="--u:0%;--d:0%"></span><span>↓0</span></span>
+          <span class="dur">0s</span>
+        </article>
+
+        <article class="row rejected">
+          <span class="time">13:42:07</span>
+          <span class="proc">chrome</span>
+          <span class="host">ad.doubleclick.net</span>
+          <span class="route route-cell"><span class="grp">REJECT</span></span>
+          <span class="traffic"><span class="up">↑0</span><span class="bar" style="--u:0%;--d:0%"></span><span>↓0</span></span>
+          <span class="dur">0s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:42:03</span>
+          <span class="proc">Code</span>
+          <span class="host">api.anthropic.com</span>
+          <span class="route"><span class="grp">DIRECT</span></span>
+          <span class="traffic"><span class="up">↑6K</span><span class="bar" style="--u:1%;--d:3%"></span><span>↓88K</span></span>
+          <span class="dur">4s</span>
+        </article>
+
+        <article class="row ended">
+          <span class="time">13:41:58</span>
+          <span class="proc">explorer</span>
+          <span class="host">connectivity-check.windows.com</span>
+          <span class="route"><span class="grp">DIRECT</span></span>
+          <span class="traffic"><span class="up">↑1K</span><span class="bar" style="--u:1%;--d:1%"></span><span>↓2K</span></span>
+          <span class="dur">1s</span>
+        </article>
+
+        <article class="row ended">
+          <span class="time">13:41:56</span>
+          <span class="proc">svchost</span>
+          <span class="host">ctldl.windowsupdate.com</span>
+          <span class="route"><span class="grp">DIRECT</span></span>
+          <span class="traffic"><span class="up">↑2K</span><span class="bar" style="--u:1%;--d:1%"></span><span>↓14K</span></span>
+          <span class="dur">2s</span>
+        </article>
+
+        <article class="row active selected">
+          <span class="time">13:41:55</span>
+          <span class="proc">chrome</span>
+          <span class="host">github.com</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">HK-01</span></span>
+          <span class="traffic"><span class="up">↑12K</span><span class="bar" style="--u:1%;--d:15%"></span><span>↓2.1M</span></span>
+          <span class="dur">12s</span>
+        </article>
+
+        <div class="detail">
+          <div class="field"><span class="k">链路</span><span class="v chain"><span class="g">Proxy</span><span class="a">▸</span><span class="n">HK-01</span></span></div>
+          <div class="field"><span class="k">命中规则</span><span class="v rule">DOMAIN-SUFFIX<span class="payload">(github.com)</span></span></div>
+          <div class="field"><span class="k">进程</span><span class="v mono">C:\Program Files\Google\Chrome\Application\chrome.exe</span></div>
+          <div class="field"><span class="k">目标</span><span class="v mono">140.82.113.4:443 · TCP</span></div>
+          <div class="field"><span class="k">流量</span><span class="v mono">↑12.4 KB ↓2.14 MB</span></div>
+          <div class="field"><span class="k">起止</span><span class="v mono">13:41:55 → 进行中</span></div>
+        </div>
+
+        <article class="row ended">
+          <span class="time">13:41:54</span>
+          <span class="proc">SearchHost</span>
+          <span class="host">www.bing.com</span>
+          <span class="route"><span class="grp">DIRECT</span></span>
+          <span class="traffic"><span class="up">↑2K</span><span class="bar" style="--u:1%;--d:1%"></span><span>↓8K</span></span>
+          <span class="dur">3s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:45</span>
+          <span class="proc">chrome</span>
+          <span class="host">cdn.jsdelivr.net</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">US-07</span></span>
+          <span class="traffic"><span class="up">↑9K</span><span class="bar" style="--u:1%;--d:5%"></span><span>↓280K</span></span>
+          <span class="dur">22s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:42</span>
+          <span class="proc">Code</span>
+          <span class="host">registry.npmjs.org</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">HK-01</span></span>
+          <span class="traffic"><span class="up">↑18K</span><span class="bar" style="--u:1%;--d:8%"></span><span>↓640K</span></span>
+          <span class="dur">25s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:36</span>
+          <span class="proc">Spotify</span>
+          <span class="host">api.spotify.com</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">JP-02</span></span>
+          <span class="traffic"><span class="up">↑88K</span><span class="bar" style="--u:3%;--d:11%"></span><span>↓1.2M</span></span>
+          <span class="dur">31s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:34</span>
+          <span class="proc missing">—</span>
+          <span class="host">registry.yarnpkg.com</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">JP-02</span></span>
+          <span class="traffic"><span class="up">↑14K</span><span class="bar" style="--u:1%;--d:7%"></span><span>↓420K</span></span>
+          <span class="dur">33s</span>
+        </article>
+
+        <article class="row ended">
+          <span class="time">13:41:31</span>
+          <span class="proc">微信</span>
+          <span class="host">short.weixin.qq.com</span>
+          <span class="route"><span class="grp">DIRECT</span></span>
+          <span class="traffic"><span class="up">↑4K</span><span class="bar" style="--u:1%;--d:4%"></span><span>↓120K</span></span>
+          <span class="dur">18s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:29</span>
+          <span class="proc">WeChatAppEx</span>
+          <span class="host">dldir1.qq.com</span>
+          <span class="route"><span class="grp">DIRECT</span></span>
+          <span class="traffic"><span class="up">↑120K</span><span class="bar" style="--u:4%;--d:14%"></span><span>↓1.8M</span></span>
+          <span class="dur">38s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:27</span>
+          <span class="proc">chrome</span>
+          <span class="host">api.github.com</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">HK-01</span></span>
+          <span class="traffic"><span class="up">↑6K</span><span class="bar" style="--u:1%;--d:5%"></span><span>↓210K</span></span>
+          <span class="dur">40s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:23</span>
+          <span class="proc">chrome</span>
+          <span class="host">fonts.gstatic.com</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">HK-01</span></span>
+          <span class="traffic"><span class="up">↑8K</span><span class="bar" style="--u:1%;--d:6%"></span><span>↓340K</span></span>
+          <span class="dur">44s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:20</span>
+          <span class="proc">docker</span>
+          <span class="host">registry-1.docker.io</span>
+          <span class="route"><span class="grp">DIRECT</span></span>
+          <span class="traffic"><span class="up">↑240K</span><span class="bar" style="--u:5%;--d:32%"></span><span>↓9.8M</span></span>
+          <span class="dur">47s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:16</span>
+          <span class="proc">Telegram</span>
+          <span class="host">91.108.56.130</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">JP-02</span></span>
+          <span class="traffic"><span class="up">↑320K</span><span class="bar" style="--u:6%;--d:19%"></span><span>↓3.4M</span></span>
+          <span class="dur">51s</span>
+        </article>
+
+        <article class="row active">
+          <span class="time">13:41:09</span>
+          <span class="proc">steam</span>
+          <span class="host">cm.steamstatic.com</span>
+          <span class="route"><span class="grp">Proxy</span><span class="sep">▸</span><span class="node-name">US-07</span></span>
+          <span class="traffic"><span class="up">↑1.1M</span><span class="bar" style="--u:11%;--d:50%"></span><span>↓24M</span></span>
+          <span class="dur">58s</span>
+        </article>
+
+      </div>
+    </main>
+  </div>
+
+  <footer class="foot">
+    <span><kbd>Ctrl K</kbd>命令</span>
+    <span><kbd>/</kbd>搜索</span>
+    <span><kbd>↵</kbd>详情</span>
+    <span><kbd>A</kbd>只看活跃</span>
+    <span><kbd>Esc</kbd>关闭</span>
+    <span class="fail">近 5 分钟 <b>3</b> 次拨号失败 · <button class="loglink">查看日志</button></span>
+  </footer>
+</div>
+</body>
+</html>

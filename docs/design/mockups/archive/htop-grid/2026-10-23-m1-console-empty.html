@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aether — 内核未连接</title>
+<style>
+  /* ── tokens（与主视图一致） ─────────────────────────────── */
+  :root {
+    --ground:      #08090A;
+    --panel:       #0E1013;
+    --raise:       #16191D;
+    --raise-2:     #1B1F24;
+    --hairline:    #22262D;
+    --hairline-2:  #2C323A;
+    --text:        #D8D5CC;
+    --text-dim:    #949CA5;
+    --text-faint:  #828A93;
+    --accent:      #C9A227;
+    --accent-dim:  #8A7020;
+    --alert:       #C0473A;
+    --alert-text:  #D9604F;
+    --meter:       #1C2026;
+
+    --row-h: 28px;
+    --fs-main: 13px;
+    --fs-sub: 11px;
+    --fs-micro: 10px;
+    --rail-w: 240px;
+
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+            "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    --font-num: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--ground); color: var(--text);
+    font-family: var(--font); font-size: var(--fs-main);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: #3A3320; color: #F2EEE2; }
+  :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--hairline-2); border: 2px solid var(--ground); }
+
+  .app { display: grid; grid-template-rows: 48px 1fr 32px; height: 100vh; min-width: 760px; }
+
+  .summary {
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 16px; background: var(--panel);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .brand {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: .18em; text-transform: uppercase;
+  }
+  .brand .dot { width: 6px; height: 6px; background: var(--text-faint); border-radius: 50%; }
+  .state { display: flex; align-items: center; gap: 10px; }
+  .pill {
+    display: inline-flex; align-items: center; height: 20px; padding: 0 8px;
+    border: 1px solid var(--hairline-2); color: var(--text-dim);
+    font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase;
+  }
+  .pill.off { border-color: var(--hairline-2); color: var(--text-dim); }
+  .rates {
+    margin-left: auto; display: flex; gap: 18px;
+    font-family: var(--font-num); font-size: 12px; color: var(--text-faint);
+  }
+  .rates b { color: var(--text-dim); font-weight: 500; }
+  .cmd {
+    display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
+    border: 1px solid var(--hairline-2); color: var(--text-dim); font-size: var(--fs-micro);
+  }
+  .cmd kbd { font-family: var(--font-num); font-size: 10px; color: var(--text); }
+
+  .body { display: grid; grid-template-columns: var(--rail-w) 1fr; min-height: 0; }
+
+  .rail { background: var(--panel); padding: 12px 0 16px; overflow-y: auto; }
+  .rail-head {
+    display: flex; justify-content: space-between; padding: 0 14px 8px;
+    font-size: var(--fs-micro); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .group { padding: 4px 0 8px; }
+  .group-title {
+    display: flex; align-items: center; gap: 6px; padding: 4px 14px;
+    font-size: 12px; color: var(--text-faint);
+  }
+  .group-title .caret { width: 10px; font-size: 10px; }
+  .node {
+    display: grid; grid-template-columns: 2px 1fr auto; align-items: center; gap: 10px;
+    height: 28px; padding: 0 14px 0 18px; color: var(--text-faint);
+  }
+  .node .tick { height: 100%; background: transparent; }
+  .node .lat { font-family: var(--font-num); font-size: 11px; color: var(--text-faint); }
+
+  .main { display: grid; grid-template-rows: 36px 28px 1fr; min-width: 0; min-height: 0; }
+
+  .grid-bar {
+    display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    background: var(--ground); border-bottom: 1px solid var(--hairline);
+  }
+  .grid-bar .label {
+    font-size: var(--fs-micro); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .grid-bar .label b { color: var(--text-dim); font-weight: 600; }
+  .search {
+    margin-left: auto; display: flex; align-items: center; gap: 8px;
+    height: 24px; padding: 0 10px; min-width: 220px;
+    border: 1px solid var(--hairline-2); color: var(--text-faint); font-size: 12px;
+  }
+  .search .slash {
+    font-family: var(--font-num); font-size: 10px;
+    border: 1px solid var(--hairline-2); padding: 0 4px;
+  }
+
+  .cols {
+    display: grid;
+    grid-template-columns: 72px 120px minmax(220px, 1fr) 200px 140px 56px;
+    align-items: center;
+    height: 28px; padding: 0 16px;
+    background: var(--ground); border-bottom: 1px solid var(--hairline);
+    font-size: var(--fs-micro); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--text-faint); user-select: none;
+  }
+  .cols > span { padding-right: 12px; }
+  .cols .sorted { color: var(--text-dim); }
+  .cols .sorted::after { content: " ↓"; color: var(--accent); }
+
+  /* 空状态：保留列头与动作栏，解释为什么是空的 */
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 16px;
+  }
+  .empty h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    color: var(--text);
+  }
+  .empty p {
+    margin: 0;
+    max-width: 46ch;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+  .empty .actions { display: flex; align-items: center; gap: 14px; margin-top: 6px; }
+  .empty button {
+    font: inherit;
+    font-size: 12px;
+    height: 28px;
+    padding: 0 12px;
+    background: transparent;
+    border: 1px solid var(--accent-dim);
+    color: var(--accent);
+    cursor: default;
+  }
+  .empty button:hover { background: var(--raise); }
+  .empty .note {
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+  .empty .note b { color: var(--text-dim); font-weight: 500; }
+
+  .foot {
+    display: flex; align-items: center; gap: 18px; padding: 0 16px;
+    background: var(--panel); border-top: 1px solid var(--hairline);
+    font-size: var(--fs-micro); letter-spacing: .06em; color: var(--text-faint);
+  }
+  .foot kbd {
+    font-family: var(--font-num); border: 1px solid var(--hairline-2);
+    padding: 0 4px; margin-right: 5px; color: var(--text-dim);
+  }
+  .foot .fail { margin-left: auto; }
+</style>
+</head>
+<body>
+<!--
+THESIS: 断开态不是错误弹窗，而是网格自己说明为什么是空的。
+OWN-WORLD: 与主视图同一套地面、同一套列头、同一个黄铜强调，只是没有内容。
+STORY: 用户立刻知道「内核没起来、代理已关、点了就能启动」，而不是猜自己是不是配错了。
+FIRST VIEWPORT: 顶栏显示代理关；列头仍在；网格中央是三行说明与一个主操作。
+FORM: 主视图的空/断开变体（htop Console，seed key 468913f0）。
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance.
+-->
+<div class="app">
+
+  <header class="summary">
+    <div class="brand"><span class="dot"></span>AETHER</div>
+    <div class="state">
+      <span class="pill off">系统代理 关</span>
+      <span class="pill">—</span>
+    </div>
+    <div class="rates">
+      <span>↑ <b>0 B/s</b></span>
+      <span>↓ <b>0 B/s</b></span>
+    </div>
+    <div class="cmd"><kbd>Ctrl K</kbd> 命令</div>
+  </header>
+
+  <div class="body">
+    <nav class="rail" aria-label="节点">
+      <div class="rail-head"><span>策略组</span><span>延迟</span></div>
+      <div class="group">
+        <div class="group-title"><span class="caret">▸</span>Proxy</div>
+        <div class="node"><span class="tick"></span><span>HK-01</span><span class="lat">—</span></div>
+        <div class="node"><span class="tick"></span><span>JP-02</span><span class="lat">—</span></div>
+        <div class="node"><span class="tick"></span><span>US-07</span><span class="lat">—</span></div>
+      </div>
+      <div class="group">
+        <div class="group-title"><span class="caret">▸</span>Auto</div>
+      </div>
+      <div class="group">
+        <div class="group-title"><span class="caret">▸</span>DIRECT</div>
+      </div>
+    </nav>
+
+    <main class="main">
+      <div class="grid-bar">
+        <span class="label">近 60 秒 · <b>0 条</b></span>
+        <div class="search"><span class="slash">/</span> 搜索域名或进程</div>
+      </div>
+
+      <div class="cols">
+        <span class="sorted c-time">时间</span>
+        <span>进程</span>
+        <span>域名</span>
+        <span>出站</span>
+        <span>流量</span>
+        <span style="text-align:right">时长</span>
+      </div>
+
+      <div class="empty">
+        <h1>内核未连接</h1>
+        <p>系统代理已关闭。启动内核后，连接会出现在这里。配置已就绪：一份本地 Clash YAML，14 个策略组。</p>        <div class="actions">
+          <button>启动内核</button>
+          <span class="note">上次的系统代理设置<b>已还原</b></span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <footer class="foot">
+    <span><kbd>Ctrl K</kbd>命令</span>
+    <span><kbd>/</kbd>搜索</span>
+    <span class="fail">近 5 分钟 0 次拨号失败</span>
+  </footer>
+</div>
+</body>
+</html>

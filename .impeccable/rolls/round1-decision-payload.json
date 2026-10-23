@@ -1,0 +1,137 @@
+{
+  "title": "Choose the visual world",
+  "question": "这个产品的视觉世界：保留调音台通道条，换一个备选，还是重掷？",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Mixing Console",
+      "kicker": "THE ROLL",
+      "lineage": "1970s 模拟调音台 / 广播控制台",
+      "thesis": "每条连接是一个通道条：铭牌、表头、路由指示、状态灯。密度来自硬件，不来自表格。",
+      "palette": ["#0A0B0C", "#14161A", "#232830", "#E8E6E1", "#8A8F98", "#E8A33D", "#C4553B"],
+      "materials": ["anodized black panel", "engraved micro-labels", "LED bar meters", "no gloss"],
+      "viewport": "1280×800：顶栏是主控段（代理开关、模式、总表）；左栏 240px 是总线/节点；右侧是通道条堆叠，每行一条连接，行内一条细长的双向电平表。",
+      "risk": "如果把旋钮画成写实硬件，会变成插件皮肤；必须停留在排版与扁平色块层面。",
+      "raised": [
+        {
+          "from": "star-atlas",
+          "raise": "规则 payload 以低对比度作为底层，选中时上浮；层级由字号与柱形长度承担，不只靠颜色。"
+        },
+        {
+          "from": "acetate-manual",
+          "raise": "状态切换用 90ms 两帧步进、无缓动；选中行用 1px 硬阴影而不是辉光。"
+        },
+        {
+          "from": "character-goods-catalog",
+          "raise": "窄宽度下按整列丢弃（时长 → 流量 → 时间），绝不挤压所有列。"
+        }
+      ]
+    },
+    {
+      "id": "model-pick",
+      "label": "Flight Progress Strips",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "空管飞行进程条架",
+      "thesis": "每条连接是一张进程条：固定字段、固定位置、状态用色块标注；整架条子就是路由的时间线。",
+      "palette": ["#E9E4D8", "#2B2B28", "#C9A227", "#6B7F6E"],
+      "materials": ["paper strip", "brushed aluminum rack", "ink stamp"],
+      "viewport": "浅色纸质底，一行行窄条从架上垂下；当前连接被抽出一格，其余保持原位。",
+      "risk": "这是本类别最容易落地的方向，熟悉度就是它的上限。"
+    },
+    {
+      "id": "challenger-monochrome",
+      "label": "Monochrome Product",
+      "verdict": "competitive",
+      "lineage": "开发者工具的极简单色营销面",
+      "thesis": "一条精细的中性灰阶，一个强调色只出现四次；每个判断旁边都有界面证据。",
+      "palette": ["#FAFAFA", "#111111", "#2563EB"],
+      "materials": ["neutral scale", "hairline border", "radial frame"],
+      "viewport": "近黑底上只有灰阶与一个蓝点；数据即证据，装饰为零。",
+      "case": "受众识别度最高，但密度被留白吃掉，做运行界面偏松。",
+      "risk": "容易滑回通用开发者工具的默认脸。",
+      "hero": "https://impeccable.style/worlds/cards/digital-design-canon-monochrome-product-marketing-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/digital-design-canon-monochrome-product-marketing.webp"
+    },
+    {
+      "id": "challenger-transit",
+      "label": "Midnight Transit",
+      "verdict": "competitive",
+      "lineage": "午夜蓝珐琅地铁线路图",
+      "thesis": "策略组是线路，换乘站是组切换，节点是站名；一条连接就是一段可追踪的行程。",
+      "palette": ["#0B1B3A", "#F5F2EA", "#C8102E", "#0057B8", "#F2A900", "#00843D"],
+      "materials": ["enamel", "porcelain", "45/90-degree line discipline"],
+      "viewport": "午夜蓝底，四条彩线在中心交汇；选中一条连接时该线路最亮，其余保留上下文。",
+      "case": "在详情视图里是完美的路由隐喻，但两百条活跃连接会变成一碗面。",
+      "risk": "图会吞掉表，密集时不可读。",
+      "hero": "https://impeccable.style/worlds/cards/wayfinding-cartography-signage-midnight-transit-diagram-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/wayfinding-cartography-signage-midnight-transit-diagram.webp"
+    },
+    {
+      "id": "challenger-splitflap",
+      "label": "Split-flap Board",
+      "verdict": "competitive",
+      "lineage": "车站翻牌出发板",
+      "thesis": "固定字符格、行级翻字、列永不移动；变化本身成为可看的东西。",
+      "palette": ["#0F0F0F", "#F2F2F2", "#E0A100", "#8B1A1A"],
+      "materials": ["matte flap", "brushed steel frame", "amber row lamp"],
+      "viewport": "整块板就是列表：每行固定格位，数值用表格数字，状态改变时只重绘该行。",
+      "case": "行模型几乎完全吻合，500ms 刷新下的翻字动效是它的最大风险。",
+      "risk": "第一次惊艳，第五百次烦躁。",
+      "hero": "https://impeccable.style/worlds/cards/signals-instruments-split-flap-concourse-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/signals-instruments-split-flap-concourse.webp"
+    },
+    {
+      "id": "challenger-star-atlas",
+      "label": "Star Atlas",
+      "verdict": "declined",
+      "lineage": "天文学星图",
+      "palette": ["#0A122A", "#E8E6D9", "#C24A2A"],
+      "materials": ["chalk on navy", "red night-vision"],
+      "case": "融合失败：开发者不靠星图认路，行与行的对比在星图上消失。",
+      "kept": "变量编码：层级由大小与字重承担，不只靠颜色。",
+      "hero": "https://impeccable.style/worlds/cards/notation-diagram-systems-star-atlas-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/notation-diagram-systems-star-atlas.webp"
+    },
+    {
+      "id": "challenger-acetate",
+      "label": "Acetate Manual",
+      "verdict": "declined",
+      "lineage": "活页手册与醋酸透明模板",
+      "palette": ["#F2B705", "#FFFFFF", "#1A1A1A", "#FF4B1F"],
+      "materials": ["clear acetate", "punched holes", "hard edge shadow"],
+      "case": "融合失败：纸本的分层与手感搬运到实时控制台上会变成装饰。",
+      "kept": "运动纪律：90ms 两帧步进，没有缓动曲线。",
+      "hero": "https://impeccable.style/worlds/cards/rw-manual-acetate-tab-board-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/rw-manual-acetate-tab-board.webp"
+    },
+    {
+      "id": "challenger-catalog",
+      "label": "Character Goods",
+      "verdict": "declined",
+      "lineage": "角色周边目录",
+      "palette": ["#F7D9E3", "#FFFFFF", "#7A5CFA"],
+      "materials": ["pastel ground", "flat fill", "keyline"],
+      "case": "融合失败：违反“不能玩具化”这条硬约束。",
+      "kept": "整单元重排：窄屏按整列丢弃，不挤压。",
+      "hero": "https://impeccable.style/worlds/cards/pop-culture-shelf-character-goods-catalog-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/pop-culture-shelf-character-goods-catalog.webp"
+    }
+  ],
+  "reroll": {
+    "registers": ["safer", "bolder"]
+  },
+  "buildPath": {
+    "value": "code",
+    "toggle": false
+  },
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "现有代理客户端的标准做法：一个开关、一个节点列表、一个连接表格。",
+    "palette": ["#FFFFFF", "#111827", "#2563EB"],
+    "materials": ["clean grid", "system font", "switch"],
+    "viewport": "顶上一个开关，下面一个节点列表，再下面一个连接表格。",
+    "risk": "按定义与竞品无法区分。"
+  },
+  "steer": true
+}
