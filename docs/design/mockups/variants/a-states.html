@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aether — 仪表盘三态</title>
+<style>
+  :root {
+    --bg: #0A0B0D; --sidebar: #0C0D10; --card: #141619; --card-2: #181B1F;
+    --border: #23262B; --border-2: #2C3037;
+    --text: #E8E9EB; --dim: #9AA0A6; --faint: #7E858C;
+    --accent: #4A8CFF; --accent-bg: rgba(74,140,255,.12);
+    --accent-strong: #2F6FE0;
+    --success: #34D399; --danger: #F87171;
+    --radius: 14px; --radius-sm: 8px;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    --num: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #06070A; color: var(--text); font-family: var(--font); font-size: 13px; -webkit-font-smoothing: antialiased; }
+  page { display: block; padding: 0; }
+  .stamp {
+    height: 40px; display: flex; align-items: center; gap: 12px;
+    padding: 0 16px; color: var(--faint); font-size: 12px;
+    background: #06070A;
+  }
+  .stamp b { color: var(--text); font-weight: 600; font-size: 13px; }
+  .stamp span { color: var(--faint); }
+  .frame { width: 1280px; height: 800px; margin: 0 0 40px; overflow: hidden; }
+
+  .app { display: grid; grid-template-rows: 40px 1fr; height: 800px; background: var(--bg); }
+  .titlebar { display: flex; align-items: center; background: var(--sidebar); border-bottom: 1px solid var(--border); padding-left: 18px; user-select: none; }
+  .titlebar .mark { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(145deg, #2B2F36, #111316); border: 1px solid var(--border-2); margin-right: 9px; }
+  .titlebar .name { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--dim); }
+  .titlebar .spacer { flex: 1; height: 100%; }
+  .winbtns { display: flex; height: 100%; }
+  .winbtns span { width: 46px; display: grid; place-items: center; color: var(--dim); font-size: 11px; }
+  .winbtns .close { color: var(--dim); }
+
+  .shell { display: grid; grid-template-columns: 232px 1fr; min-height: 0; }
+  .side { background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 18px 12px 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 22px; }
+  .brand .logo { width: 34px; height: 34px; border-radius: 10px; background: #0E0F12; border: 1px solid var(--border-2); display: grid; place-items: center; color: var(--text); font-size: 15px; font-weight: 600; }
+  .brand .word { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+  nav { display: flex; flex-direction: column; gap: 2px; }
+  .navitem { display: flex; align-items: center; gap: 11px; height: 38px; padding: 0 11px; border-radius: var(--radius-sm); color: var(--dim); text-decoration: none; font-size: 13px; }
+  .navitem.active { background: var(--accent-bg); color: var(--accent); }
+  .navitem svg { width: 17px; height: 17px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; }
+  .side .grow { flex: 1; }
+  .side .meta { padding: 12px 11px 2px; border-top: 1px solid var(--border); color: var(--faint); font-size: 11px; display: flex; align-items: center; gap: 7px; }
+  .side .meta .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+  .side .meta .dot.off { background: var(--faint); }
+  .side .meta .dot.err { background: var(--danger); }
+
+  .main { padding: 20px 24px; overflow: hidden; min-height: 0; }
+  .header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .header h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -.02em; }
+  .status { display: flex; align-items: center; gap: 7px; color: var(--success); font-size: 13px; }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(52,211,153,.12); }
+  .status.off { color: var(--dim); }
+  .status.off .dot { background: var(--faint); box-shadow: none; }
+  .status.err { color: var(--danger); }
+  .status.err .dot { background: var(--danger); box-shadow: 0 0 0 3px rgba(248,113,113,.12); }
+  .header .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .seg { display: inline-flex; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button { font: inherit; font-size: 12px; height: 26px; padding: 0 13px; border: 0; border-radius: 7px; background: transparent; color: var(--dim); cursor: default; }
+  .seg button.on { background: var(--card-2); color: var(--text); }
+  .seg.disabled { opacity: .45; }
+  .pillbtn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid rgba(52,211,153,.35); background: rgba(52,211,153,.10); color: var(--success); font-size: 13px; }
+  .pillbtn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+  .pillbtn.off { border-color: var(--border-2); background: transparent; color: var(--dim); }
+  .pillbtn.off .dot { background: var(--faint); }
+  .cta { display: inline-flex; align-items: center; height: 34px; padding: 0 16px; border-radius: 10px; background: var(--accent-strong); color: #fff; font-size: 13px; font-weight: 500; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; min-width: 0; }
+  .card .label { font-size: 12px; color: var(--dim); }
+  .card .label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .hero { grid-column: span 2; }
+  .hero .node { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .hero .node b { font-size: 30px; font-weight: 650; letter-spacing: -.02em; }
+  .hero .node b.muted { color: var(--faint); }
+  .chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border-2); font-size: 11px; color: var(--dim); }
+  .hero .sub { font-size: 12px; color: var(--faint); margin-bottom: 16px; }
+  .healthline { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); margin-bottom: 8px; }
+  .healthline .pct { margin-left: auto; color: var(--success); font-family: var(--num); }
+  .healthline .pct.muted { color: var(--faint); }
+  .ticks { display: flex; gap: 2px; height: 22px; align-items: flex-end; margin-bottom: 18px; }
+  .ticks i { flex: 1; height: 100%; border-radius: 1px; background: var(--success); opacity: .85; }
+  .ticks.dim i { background: var(--border-2); opacity: 1; height: 40%; }
+  .ticks i.miss { height: 55%; background: var(--border-2); opacity: 1; }
+  .stats3 { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); padding-top: 14px; }
+  .stats3 .k { font-size: 11px; color: var(--faint); margin-bottom: 5px; }
+  .stats3 .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stats3 .v.muted { color: var(--faint); }
+
+  .core .big { font-size: 26px; font-weight: 650; letter-spacing: -.01em; margin: 14px 0 10px; font-variant-numeric: tabular-nums; }
+  .core .big.muted { color: var(--faint); }
+  .core .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip.solid { border-color: transparent; background: var(--card-2); color: var(--dim); }
+  .chip.solid.muted { color: var(--faint); }
+  .core .rows { margin-top: 16px; display: grid; gap: 8px; }
+  .core .rows div { display: flex; justify-content: space-between; font-size: 12px; color: var(--faint); }
+  .core .rows b { color: var(--dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .core .rows b.muted { color: var(--faint); }
+
+  .stat { display: flex; flex-direction: column; }
+  .stat .head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); margin-bottom: 10px; }
+  .stat .badge { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 11px; }
+  .stat .badge.down { background: rgba(74,140,255,.14); color: var(--accent); }
+  .stat .badge.up { background: rgba(52,211,153,.14); color: var(--success); }
+  .stat .badge.conn { background: rgba(251,191,36,.14); color: #FBBF24; }
+  .stat .badge.muted { background: var(--card-2); color: var(--faint); }
+  .stat .big { font-size: 28px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .stat .big span { font-size: 14px; font-weight: 500; color: var(--dim); margin-left: 4px; }
+  .stat .big.muted { color: var(--faint); }
+  .stat .foot { margin-top: auto; padding-top: 10px; font-size: 11px; color: var(--faint); }
+
+  .chart { grid-column: 1 / -1; position: relative; }
+  .chart .head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .chart .head .label { font-size: 13px; color: var(--text); font-weight: 500; }
+  .chart .legend { margin-left: auto; display: flex; gap: 16px; font-size: 11px; color: var(--faint); }
+  .chart .legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .chart .legend .d i { background: var(--accent); }
+  .chart .legend .u i { background: var(--success); }
+  .chart svg { display: block; width: 100%; height: 150px; }
+  .chart.empty svg { opacity: .35; }
+  .chart .note {
+    position: absolute; inset: 52px 0 0; display: grid; place-items: center;
+    font-size: 12px; color: var(--faint); pointer-events: none;
+  }
+
+  .errbox { grid-column: span 2; border-color: rgba(248,113,113,.28); }
+  .errbox .label { color: var(--danger); }
+  .errbox h2 { margin: 6px 0 6px; font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+  .errbox p { margin: 0 0 16px; font-size: 12px; color: var(--dim); line-height: 1.6; max-width: 62ch; }
+  .errbox .actions { display: flex; gap: 10px; }
+  .btn { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 8px; font-size: 12px; border: 1px solid var(--border-2); color: var(--text); background: transparent; }
+  .btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; font-weight: 500; }
+  .dimmed { opacity: .5; }
+</style>
+</head>
+<body>
+
+<!-- ══ 状态一：内核未启动 / 系统代理关 ══ -->
+<section class="stamp"><b>状态一 · 未启动</b><span>无内核、无代理、无数据；主操作是「启动内核」</span></section>
+<div class="frame">
+  <div class="app">
+    <div class="titlebar"><div class="mark"></div><div class="name">Aether</div><div class="spacer"></div><div class="winbtns"><span>—</span><span>▢</span><span class="close">✕</span></div></div>
+    <div class="shell">
+      <aside class="side">
+        <div class="brand"><div class="logo">A</div><div class="word">Aether</div></div>
+        <nav>
+          <a class="navitem active" href="#"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>仪表盘</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>节点</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/><circle cx="18" cy="12" r="2"/><circle cx="20" cy="17" r="2"/></svg>连接</a>
+        </nav>
+        <div class="grow"></div>
+        <nav>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>设置</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>日志</a>
+        </nav>
+        <div class="meta"><span class="dot off"></span>Version 0.1.0</div>
+      </aside>
+      <main class="main">
+        <div class="header">
+          <h1>仪表盘</h1>
+          <div class="status off"><span class="dot"></span>未连接</div>
+          <div class="right">
+            <span class="seg disabled"><button>规则</button><button>全局</button><button>直连</button></span>
+            <a class="cta" href="#">启动内核</a>
+          </div>
+        </div>
+        <div class="grid">
+          <section class="card hero">
+            <div class="label-row"><span class="label">当前节点</span></div>
+            <div class="node"><b class="muted">—</b></div>
+            <div class="sub">内核未运行 · 系统代理已关闭</div>
+            <div class="healthline">没有会话<span class="pct muted">—</span></div>
+            <div class="ticks dim"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="stats3">
+              <div><div class="k">会话时长</div><div class="v muted">—</div></div>
+              <div><div class="k">已用流量</div><div class="v muted">—</div></div>
+              <div><div class="k">工作模式</div><div class="v muted">—</div></div>
+            </div>
+          </section>
+          <section class="card core">
+            <div class="label-row"><span class="label">内核状态</span></div>
+            <div class="big muted">未启动</div>
+            <div class="chips"><span class="chip solid muted">mihomo v1.19.32</span><span class="chip solid muted">未分配端口</span></div>
+            <div class="rows">
+              <div><span>启动于</span><b class="muted">—</b></div>
+              <div><span>内存占用</span><b class="muted">—</b></div>
+              <div><span>进程守护</span><b class="muted">待启动</b></div>
+            </div>
+          </section>
+          <section class="card stat"><div class="head"><span class="badge muted">↓</span>下载速度</div><div class="big muted">0.00<span>MB/s</span></div><div class="foot">累计 —</div></section>
+          <section class="card stat"><div class="head"><span class="badge muted">↑</span>上传速度</div><div class="big muted">0.00<span>MB/s</span></div><div class="foot">累计 —</div></section>
+          <section class="card stat"><div class="head"><span class="badge muted">◉</span>活跃连接</div><div class="big muted">0</div><div class="foot">无内核</div></section>
+          <section class="card chart empty">
+            <div class="head"><span class="label">流量历史</span><span class="legend"><span class="d"><i></i>下载</span><span class="u"><i></i>上传</span></span></div>
+            <svg viewBox="0 0 1000 150" preserveAspectRatio="none" aria-hidden="true"><g stroke="#1A1D21" stroke-width="1"><line x1="0" y1="30" x2="1000" y2="30"/><line x1="0" y1="75" x2="1000" y2="75"/><line x1="0" y1="120" x2="1000" y2="120"/></g></svg>
+            <div class="note">启动内核后显示流量</div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 状态二：已连接、无流量 ══ -->
+<section class="stamp"><b>状态二 · 已连接、无流量</b><span>内核正常、代理已开，但当前没有连接；提示下一步做什么</span></section>
+<div class="frame">
+  <div class="app">
+    <div class="titlebar"><div class="mark"></div><div class="name">Aether</div><div class="spacer"></div><div class="winbtns"><span>—</span><span>▢</span><span class="close">✕</span></div></div>
+    <div class="shell">
+      <aside class="side">
+        <div class="brand"><div class="logo">A</div><div class="word">Aether</div></div>
+        <nav>
+          <a class="navitem active" href="#"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>仪表盘</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>节点</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/><circle cx="18" cy="12" r="2"/><circle cx="20" cy="17" r="2"/></svg>连接</a>
+        </nav>
+        <div class="grow"></div>
+        <nav>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>设置</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>日志</a>
+        </nav>
+        <div class="meta"><span class="dot"></span>Version 0.1.0</div>
+      </aside>
+      <main class="main">
+        <div class="header">
+          <h1>仪表盘</h1>
+          <div class="status"><span class="dot"></span>已连接</div>
+          <div class="right">
+            <span class="seg"><button class="on">规则</button><button>全局</button><button>直连</button></span>
+            <div class="pillbtn"><span class="dot"></span>系统代理 已开启</div>
+          </div>
+        </div>
+        <div class="grid">
+          <section class="card hero">
+            <div class="label-row"><span class="label">当前节点</span></div>
+            <div class="node"><b>HK-01</b><span class="chip">Proxy</span></div>
+            <div class="sub">规则模式 · TCP · 443</div>
+            <div class="healthline">最近 60 分钟 0 次失败 · 最近 38ms<span class="pct">100%</span></div>
+            <div class="ticks"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="stats3">
+              <div><div class="k">会话时长</div><div class="v">00:00:12</div></div>
+              <div><div class="k">已用流量</div><div class="v">0 B</div></div>
+              <div><div class="k">工作模式</div><div class="v">规则</div></div>
+            </div>
+          </section>
+          <section class="card core">
+            <div class="label-row"><span class="label">内核状态</span></div>
+            <div class="big">mihomo · v1.19.32</div>
+            <div class="chips"><span class="chip solid">运行中</span><span class="chip solid">端口 5566</span><span class="chip solid">3 个策略组</span></div>
+            <div class="rows">
+              <div><span>启动于</span><b>13:42:07</b></div>
+              <div><span>内存占用</span><b>64 MB</b></div>
+              <div><span>进程守护</span><b>正常</b></div>
+            </div>
+          </section>
+          <section class="card stat"><div class="head"><span class="badge down">↓</span>下载速度</div><div class="big">0.00<span>MB/s</span></div><div class="foot">累计 0 B</div></section>
+          <section class="card stat"><div class="head"><span class="badge up">↑</span>上传速度</div><div class="big">0.00<span>MB/s</span></div><div class="foot">累计 0 B</div></section>
+          <section class="card stat"><div class="head"><span class="badge conn">◉</span>活跃连接</div><div class="big">0</div><div class="foot">当前 0 条 · 最近 60 秒</div></section>
+          <section class="card chart empty">
+            <div class="head"><span class="label">流量历史</span><span class="legend"><span class="d"><i></i>下载</span><span class="u"><i></i>上传</span></span></div>
+            <svg viewBox="0 0 1000 150" preserveAspectRatio="none" aria-hidden="true"><g stroke="#1A1D21" stroke-width="1"><line x1="0" y1="30" x2="1000" y2="30"/><line x1="0" y1="75" x2="1000" y2="75"/><line x1="0" y1="120" x2="1000" y2="120"/></g><line x1="0" y1="146" x2="1000" y2="146" stroke="#4A8CFF" stroke-width="1.2" opacity=".5"/></svg>
+            <div class="note">暂无流量 · 访问任意网站试试</div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 状态三：内核异常 ══ -->
+<section class="stamp"><b>状态三 · 内核异常</b><span>连续崩溃后的错误态；说明原因、给两个动作、其余区域降级</span></section>
+<div class="frame">
+  <div class="app">
+    <div class="titlebar"><div class="mark"></div><div class="name">Aether</div><div class="spacer"></div><div class="winbtns"><span>—</span><span>▢</span><span class="close">✕</span></div></div>
+    <div class="shell">
+      <aside class="side">
+        <div class="brand"><div class="logo">A</div><div class="word">Aether</div></div>
+        <nav>
+          <a class="navitem active" href="#"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>仪表盘</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>节点</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/><circle cx="18" cy="12" r="2"/><circle cx="20" cy="17" r="2"/></svg>连接</a>
+        </nav>
+        <div class="grow"></div>
+        <nav>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>设置</a>
+          <a class="navitem" href="#"><svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>日志</a>
+        </nav>
+        <div class="meta"><span class="dot err"></span>Version 0.1.0</div>
+      </aside>
+      <main class="main">
+        <div class="header">
+          <h1>仪表盘</h1>
+          <div class="status err"><span class="dot"></span>内核异常</div>
+          <div class="right">
+            <span class="seg disabled"><button>规则</button><button>全局</button><button>直连</button></span>
+            <div class="pillbtn off"><span class="dot"></span>系统代理 已关闭</div>
+          </div>
+        </div>
+        <div class="grid">
+          <section class="card errbox">
+            <div class="label-row"><span class="label">内核异常退出</span></div>
+            <h2>10 分钟内第 3 次崩溃</h2>
+            <p>mihomo 在 13:42:07 以退出码 1 结束，自动重启已达上限。系统代理已自动还原，当前不经过 Aether。常见原因：配置里的节点不可用、端口被占用、或订阅已过期。</p>
+            <div class="actions"><a class="btn primary" href="#">重启内核</a><a class="btn" href="#">查看日志</a></div>
+          </section>
+          <section class="card core dimmed">
+            <div class="label-row"><span class="label">内核状态</span></div>
+            <div class="big muted">已停止</div>
+            <div class="chips"><span class="chip solid muted">退出码 1</span><span class="chip solid muted">重启 3 次</span></div>
+            <div class="rows"><div><span>最后启动</span><b class="muted">13:41:12</b></div><div><span>保留配置</span><b class="muted">上一份可用</b></div></div>
+          </section>
+          <section class="card stat dimmed"><div class="head"><span class="badge muted">↓</span>下载速度</div><div class="big muted">—</div><div class="foot">内核不可用</div></section>
+          <section class="card stat dimmed"><div class="head"><span class="badge muted">↑</span>上传速度</div><div class="big muted">—</div><div class="foot">内核不可用</div></section>
+          <section class="card stat dimmed"><div class="head"><span class="badge muted">◉</span>活跃连接</div><div class="big muted">—</div><div class="foot">内核不可用</div></section>
+          <section class="card chart empty dimmed">
+            <div class="head"><span class="label">流量历史</span><span class="legend"><span class="d"><i></i>下载</span><span class="u"><i></i>上传</span></span></div>
+            <svg viewBox="0 0 1000 150" preserveAspectRatio="none" aria-hidden="true"><g stroke="#1A1D21" stroke-width="1"><line x1="0" y1="30" x2="1000" y2="30"/><line x1="0" y1="75" x2="1000" y2="75"/><line x1="0" y1="120" x2="1000" y2="120"/></g></svg>
+            <div class="note">内核不可用 · 重启后恢复</div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

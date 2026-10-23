@@ -154,6 +154,21 @@
           "#F0F5FF"
         ]
       },
+      "accent-strong": {
+        "role": "primary",
+        "displayName": "Signal Blue Deep",
+        "canonical": "oklch(56.44% 0.1847 260.82)",
+        "tonalRamp": [
+          "#000827",
+          "#00276D",
+          "#074BB9",
+          "#3A7AEC",
+          "#7FAEFF",
+          "#B3CFFF",
+          "#D6E6FF",
+          "#F0F5FF"
+        ]
+      },
       "success": {
         "role": "secondary",
         "displayName": "Health Green",
@@ -171,7 +186,7 @@
       },
       "danger": {
         "role": "secondary",
-        "displayName": "Reserved Red",
+        "displayName": "Failure Red",
         "canonical": "oklch(71.06% 0.1661 22.22)",
         "tonalRamp": [
           "#1F0002",
@@ -259,6 +274,42 @@
         "value": "1280×800",
         "purpose": "The artifact's reference viewport: all four blocks plus the full 150px chart visible without scroll."
       }
+    ],
+    "states": [
+      {
+        "name": "connected",
+        "artifact": "docs/design/mockups/variants/a-cards.html",
+        "capture": "a-cards.png"
+      },
+      {
+        "name": "not-started / proxy off",
+        "artifact": "docs/design/mockups/variants/a-states.html",
+        "capture": "a-state-1-offline.png"
+      },
+      {
+        "name": "connected but idle",
+        "artifact": "docs/design/mockups/variants/a-states.html",
+        "capture": "a-state-2-idle.png"
+      },
+      {
+        "name": "kernel error",
+        "artifact": "docs/design/mockups/variants/a-states.html",
+        "capture": "a-state-3-error.png"
+      }
+    ],
+    "accentTiers": [
+      {
+        "name": "line",
+        "value": "#4A8CFF",
+        "token": "accent",
+        "usage": "Icons, focus ring, active nav text, chart strokes, legend dots, text selection. Never a surface fill. 5.60:1 on card."
+      },
+      {
+        "name": "fill",
+        "value": "#2F6FE0",
+        "token": "accent-strong",
+        "usage": "Background of the single primary action only, always under a #fff label. 4.70:1 with white; 3.86:1 on card as text, so it is never type."
+      }
     ]
   },
   "components": [
@@ -329,34 +380,68 @@
       "description": "22px fact chip. Outlined (1px border-2, transparent) for classification like Proxy; solid (card-2, no border) for facts like 运行中 or a peak rate. Never a filter, never selected.",
       "html": "<span class=\"ds-chip\">Proxy</span> <span class=\"ds-chip-solid\">运行中</span>",
       "css": ".ds-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border: 1px solid #2C3037; border-radius: 6px; background: transparent; font-size: 11px; color: #9AA0A6; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; } .ds-chip-solid { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; background: #181B1F; font-size: 11px; color: #9AA0A6; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; }"
+    },
+    {
+      "name": "Primary Action",
+      "kind": "button",
+      "refersTo": "cta",
+      "description": "The one solid blue in the product: a 34px header action filled with accent-strong (#2F6FE0) under a white label, shown as 启动内核 when nothing is running. White on accent-strong measures 4.70:1 (AA); the line blue never fills.",
+      "html": "<a class=\"ds-cta\" href=\"#\">启动内核</a>",
+      "css": ".ds-cta { display: inline-flex; align-items: center; height: 34px; padding: 0 16px; border-radius: 10px; background: #2F6FE0; color: #fff; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; font-weight: 500; text-decoration: none; } .ds-cta:hover { opacity: .92; } .ds-cta:focus-visible { outline: 2px solid #4A8CFF; outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Indicator",
+      "kind": "custom",
+      "description": "The header's state as one 7px dot plus its ring: green running, faint off with no ring, red failed. The label takes the dot's colour.",
+      "html": "<div class=\"ds-status ds-status--on\"><span class=\"ds-status-dot\"></span>已连接</div> <div class=\"ds-status ds-status--off\"><span class=\"ds-status-dot\"></span>未连接</div> <div class=\"ds-status ds-status--err\"><span class=\"ds-status-dot\"></span>内核异常</div>",
+      "css": ".ds-status { display: inline-flex; align-items: center; gap: 7px; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; font-size: 13px; color: #34D399; } .ds-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px rgba(52,211,153,.12); } .ds-status--off { color: #9AA0A6; } .ds-status--off .ds-status-dot { background: #7E858C; box-shadow: none; } .ds-status--err { color: #F87171; } .ds-status--err .ds-status-dot { background: #F87171; box-shadow: 0 0 0 3px rgba(248,113,113,.12); }"
+    },
+    {
+      "name": "Error Card",
+      "kind": "card",
+      "description": "The failure treatment: a two-track card with a 28% danger border, a danger label, a 22px cause headline, a 62ch cause paragraph and two 32px actions. It is the only red element on the screen.",
+      "html": "<section class=\"ds-error-card\"><div class=\"ds-error-label\">内核异常退出</div><h2>10 分钟内第 3 次崩溃</h2><p>mihomo 在 13:42:07 以退出码 1 结束，自动重启已达上限。系统代理已自动还原，当前不经过 Aether。常见原因：配置里的节点不可用、端口被占用、或订阅已过期。</p><div class=\"ds-error-actions\"><a class=\"ds-btn-primary\" href=\"#\">重启内核</a><a class=\"ds-btn-secondary\" href=\"#\">查看日志</a></div></section>",
+      "css": ".ds-error-card { grid-column: span 2; min-width: 0; background: #141619; border: 1px solid rgba(248,113,113,.28); border-radius: 14px; padding: 16px 18px; color: #E8E9EB; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif; } .ds-error-label { font-size: 12px; color: #F87171; margin-bottom: 12px; } .ds-error-card h2 { margin: 6px 0 6px; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; } .ds-error-card p { margin: 0 0 16px; font-size: 12px; color: #9AA0A6; line-height: 1.6; max-width: 62ch; } .ds-error-actions { display: flex; gap: 10px; } .ds-btn-primary { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border: 1px solid #2F6FE0; border-radius: 8px; background: #2F6FE0; color: #fff; font-family: inherit; font-size: 12px; font-weight: 500; text-decoration: none; } .ds-btn-primary:hover { opacity: .92; } .ds-btn-secondary { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border: 1px solid #2C3037; border-radius: 8px; background: transparent; color: #E8E9EB; font-family: inherit; font-size: 12px; text-decoration: none; } .ds-btn-secondary:hover { background: #181B1F; } .ds-btn-primary:focus-visible, .ds-btn-secondary:focus-visible { outline: 2px solid #4A8CFF; outline-offset: 2px; }"
     }
   ],
   "narrative": {
     "northStar": "The Instrument Cluster",
-    "overview": "Aether's first screen is a dashboard in the automotive sense: four instruments you can read from across the room, and a workshop door marked 「连接」 for when something is wrong. The window opens on a 40px title bar over a 232px rail over a three-column field of 14px-radius cards — current node, kernel status, three rate readings, and a 60-minute flow chart. The largest object on the screen is a node name at 30px. The second-largest things are numbers. Everything that explains why lives one level down, on the page the artifact only links to.\n\nThe material is near-black layered paper: four surfaces within five percentage points of lightness, separated by 1px hairlines rather than shadows, with a single blue that behaves like a signal lamp and a green that means \"healthy\". Density is no longer the argument — whitespace is. A card's label sits at 11–12px, its figure at 26–30px, and the space between them does the work a border used to do. Hover is a single tonal step; there is no elevation, no glass, no glow except the three-pixel halo around the connected dot.\n\nConfirmed rejections carried by the pivot: the dense htop-style grid is gone as a first surface (it survives as the 「连接」 page and is not documented from this artifact), and with it the brass-on-bone instrument palette, the 28px row lattice, and the zero-radius square. What was kept is the discipline: exactly one accent, tabular figures, and no decoration that does not report a fact.",
+    "overview": "Aether's first screen is a dashboard in the automotive sense: four instruments you can read from across the room, and a workshop door marked 「连接」 for when something is wrong. The window opens on a 40px title bar over a 232px rail over a three-column field of 14px-radius cards — current node, kernel status, three rate readings, and a 60-minute flow chart. The largest object on the screen is a node name at 30px. The second-largest things are numbers. Everything that explains why lives one level down, on the page the artifact only links to.\n\nThe material is near-black layered paper: four surfaces within five percentage points of lightness, separated by 1px hairlines rather than shadows, with a single blue that behaves like a signal lamp, a green that means \"healthy\", and a red that appears only when something has broken. Density is no longer the argument — whitespace is. A card's label sits at 11–12px, its figure at 26–30px, and the space between them does the work a border used to do. Hover is a single tonal step; there is no elevation, no glass, no glow except the three-pixel ring around the status dot.\n\nConfirmed rejections carried by the pivot: the dense htop-style grid is gone as a first surface (it survives as the 「连接」 page and is not documented from this artifact), and with it the brass-on-bone instrument palette, the 28px row lattice, and the zero-radius square. What was kept is the discipline: exactly one accent, tabular figures, and no decoration that does not report a fact.",
     "keyCharacteristics": [
       "Four blocks, one screen, no scroll at 1280×800.",
       "Card surfaces at 14px radius on four near-black tones; separation by 1px hairline, never by shadow.",
-      "One blue for structure and interaction; one green for health; no third hue in the surface.",
+      "One blue for action, one green for health, one red for failure — and the red shows only when something has broken.",
       "Figures 26–30px, labels 11–12px, and nothing in between.",
       "Every number is tabular; only the health percentage is set in mono.",
       "The mode switch (规则 / 全局 / 直连) is permanently in the top-right, beside the proxy pill.",
-      "Hover is one tonal step and it is instant; the artifact declares no transitions at all."
+      "Hover is one tonal step and it is instant; the artifact declares no transitions at all.",
+      "Status is a 7px dot and its 3px ring: green running, faint off, red failed.",
+      "Solid blue is one button per screen; one red card is the whole failure treatment."
     ],
     "rules": [
       {
-        "name": "The Blue Never Fills Rule",
-        "body": "Signal blue appears at full strength only as type, as a 2px chart stroke, as a dot, or as a focus ring. Any area of blue is the accent at 10–28% alpha. A solid blue button, bar or panel is not this system.",
+        "name": "The One Solid Blue Rule",
+        "body": "There is one solid blue action per screen, and it uses the fill blue, not the line blue. accent-strong (#2F6FE0) backs the single primary action — 启动内核 when nothing is running, 重启内核 after a crash — and always carries a white label (4.70:1). accent (#4A8CFF) is the line, icon, tint and active-text blue and never fills a surface. Every other blue area is the line blue at 10–28% alpha; a second solid button is a second primary.",
         "section": "colors"
       },
       {
         "name": "The Wash Ladder Rule",
-        "body": "Blue areas have four steps and they are not interchangeable: 10% for the chart area under the download line, 12% for the active nav row, 14% for a badge chip, 28% for text selection. A blue tint at any other alpha is off-system.",
+        "body": "Blue areas have four steps and they are not interchangeable: 10% for the chart area under the download line, 12% for the active nav row, 14% for a badge chip, 28% for text selection. The solid primary action is not a step on this ladder, and it is filled with accent-strong rather than this blue. A blue tint at any other alpha is off-system.",
         "section": "colors"
       },
       {
         "name": "The Green Is Health Rule",
         "body": "Green marks one fact — the product is working: connected, proxy on, kernel running, this minute was healthy, this is upload. It is never a decorative accent, never a hover, never a category colour.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Red Card Rule",
+        "body": "Failure red tints exactly one card: its 1px border at 28%, its label, the status dot and ring, and the status word. It never becomes a fill, a page tint, or a border on a card that is merely quiet.",
+        "section": "colors"
+      },
+      {
+        "name": "The Unknown Is An Em Dash Rule",
+        "body": "A value the product does not have is — in faint, never a fabricated 0. A value that is genuinely zero stays a number — 0.00 MB/s, 0 — and is merely coloured faint.",
         "section": "colors"
       },
       {
@@ -366,7 +451,7 @@
       },
       {
         "name": "The Big Number, Small Label Rule",
-        "body": "A card pairs a figure at 26–30px with its label at 11–12px. No 14–24px heading sits between them; if a card needs a middle size, it needs to be two cards.",
+        "body": "A card pairs a figure at 26–30px with its label at 11–12px. No 14–24px heading sits between them; if a card needs a middle size, it needs to be two cards. The one exception is the error card's 22px cause headline, which is prose rather than a figure.",
         "section": "typography"
       },
       {
@@ -411,7 +496,12 @@
       },
       {
         "name": "The Halo Is Status Rule",
-        "body": "A soft ring means \"alive\" and nothing else. It is one colour, one size, one 3px radius, attached to one dot.",
+        "body": "The ring means the state is live, and it takes only two colours: green while running, red after a failure. The off state has no ring. One size, 3px, one dot, never decoration.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Quarantine Rule",
+        "body": "When a subsystem is down its cards drop to 50% opacity rather than disappearing, so the layout does not jump. The card that carries the cause and the recovery action never dims, and nothing a user must act on may live inside a dimmed card: at 50% the dim tier measures 2.66:1 and faint 2.15:1 on the page.",
         "section": "elevation"
       },
       {
@@ -426,27 +516,32 @@
       }
     ],
     "dos": [
-      "Do pair every figure with an 11–12px label and skip the sizes between 13 and 26px on cards.",
+      "Do pair every figure with an 11–12px label; the only mid-size type allowed on a card is the error card's 22px cause headline.",
       "Do set figures in the UI face with tabular-nums; reach for mono only for the health percentage.",
-      "Do keep the mode switch and proxy pill in the header's right cluster at all times.",
+      "Do keep the mode switch in the header's right cluster at all times, paired with the proxy pill while a kernel runs and with the primary action when none does.",
       "Do separate surfaces with one tonal step plus 1px border (or border-2 for anything interactive).",
-      "Do tint blue only at 10 / 12 / 14 / 28% and use full-strength blue for type, 2px strokes and dots.",
+      "Do keep #4A8CFF for lines, tints, focus, dots and active nav text, and #2F6FE0 for the one solid fill that carries white text.",
       "Do let a card span exactly 1, 2 or 3 tracks of the three-column field with a 14px gap.",
       "Do keep the first viewport at four blocks with the chart fully visible at 1280×800.",
       "Do change hover by one tone and change it instantly, as the artifact does.",
-      "Do pin rate-card footers with margin-top:auto so the three footers sit on one baseline."
+      "Do pin rate-card footers with margin-top:auto so the three footers sit on one baseline.",
+      "Do show — in faint for a value you do not have, and a real number for a value that is zero.",
+      "Do give a failure exactly one red card and drop the rest of the field to 50% opacity.",
+      "Do keep the status dot at 7px and change only its colour and ring: green running, faint off, red failed."
     ],
     "donts": [
-      "Don't fill any surface with solid accent — blue areas are washes, never blocks.",
+      "Don't use the fill blue as text, an icon or a border — at 3.86:1 on card it is a fill only — and never put white on the line blue (3.24:1).",
+      "Don't use solid blue for anything but the single primary action; a second blue button is a second primary.",
+      "Don't use danger as a fill, a page tint, or a border on a card that is merely quiet.",
+      "Don't dim the card that carries the cause and the recovery action; dimming is for the subsystem that is unavailable.",
+      "Don't invent a number to avoid a dash — an unknown value is —, and a muted 0.00 is still a real zero.",
       "Don't use green for anything but health, on-state and the upload series.",
-      "Don't set a primary figure in faint — the third tier is annotation (sub-lines, footers, keys, legend), and every figure in the artifact is set in text.",
-      "Don't add a drop shadow, blur or backdrop to a card; the only halo belongs to the connected dot.",
-      "Don't invent a heading size between 14px and 24px to make a card louder.",
+      "Don't set a live figure in faint — the third tier is annotation; a faint figure is always a placeholder for data that is not there.",
+      "Don't add a drop shadow, blur or backdrop to a card; the only halo is the status dot's ring — green running, red failed.",
       "Don't give a chip a selected or filter state — chips are facts.",
       "Don't centre or right-align a card's primary figure; every card in the artifact is left-aligned, with only the kernel's values and the health percentage set right.",
       "Don't uppercase or track out Chinese labels; the title-bar wordmark is the only caps in the product.",
-      "Don't add a fourth card width or a responsive column squeeze — the field is three tracks, 14px apart.",
-      "Don't use the reserved danger red on this surface; nothing in the dashboard is red."
+      "Don't add a fourth card width or a responsive column squeeze — the field is three tracks, 14px apart."
     ]
   }
 }
