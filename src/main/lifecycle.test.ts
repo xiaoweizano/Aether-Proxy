@@ -49,6 +49,20 @@ describe('startup', () => {
     await startup(d as any)
     expect(d.calls).toEqual(['restore', 'config', 'core'])
   })
+
+  it('快照由存活的另一进程持有时不启动内核、不碰代理', async () => {
+    const d = deps()
+    ;(d.ownership.restoreOnStartupIfStale as any).mockImplementation(async () => {
+      d.calls.push('restore')
+      return 'in-use'
+    })
+    const result = await startup(d as any)
+    expect(d.calls).toEqual(['restore'])
+    expect(d.loadConfig).not.toHaveBeenCalled()
+    expect(d.core.start).not.toHaveBeenCalled()
+    expect(d.proxy.enable).not.toHaveBeenCalled()
+    expect(result).toEqual({ status: 'in-use', restore: 'in-use' })
+  })
 })
 
 describe('shutdown', () => {

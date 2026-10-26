@@ -10,12 +10,14 @@ export interface StartupDeps {
 }
 
 export interface StartupResult {
-  status: 'ready' | 'config-error' | 'core-error'
+  status: 'ready' | 'config-error' | 'core-error' | 'in-use'
   restore: 'none' | 'restored' | 'conflict' | 'in-use'
 }
 
 export async function startup(deps: StartupDeps): Promise<StartupResult> {
   const restore = await deps.ownership.restoreOnStartupIfStale()
+  // 另一个 Aether 进程仍持有系统代理：不接管内核，也不碰代理。
+  if (restore === 'in-use') return { status: 'in-use', restore }
 
   const cfg = await deps.loadConfig()
   if (!cfg.ok) return { status: 'config-error', restore }

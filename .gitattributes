@@ -1,0 +1,3 @@
+vendor/geodata/** binary
+vendor/*.zip binary
+*.exe binary
