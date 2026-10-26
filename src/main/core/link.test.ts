@@ -1,8 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { CoreLink } from './link'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { CoreLink, type ProxiesResponse } from './link'
 
 const BASE = 'http://127.0.0.1:9090'
 const SECRET = 's3cr3t-value'
+
+/** 真实 mihomo `/proxies` 响应：Go 类型名，GLOBAL 总在最前。 */
+function realProxies(): ProxiesResponse {
+  const raw = readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'proxies.json'), 'utf8')
+  return JSON.parse(raw) as ProxiesResponse
+}
 
 interface Call {
   url: string
@@ -52,15 +60,14 @@ describe('CoreLink', () => {
   })
 
   it('proxies 命中 /proxies 并原样返回策略组', async () => {
-    const payload = {
-      proxies: {
-        GLOBAL: { name: 'GLOBAL', type: 'select', now: 'Proxy', all: ['Proxy', 'DIRECT'] },
-        Proxy: { name: 'Proxy', type: 'select', now: 'HK', all: ['HK'], history: [] }
-      }
-    }
+    const payload = realProxies()
     const { fn, calls } = recorder(() => response(payload))
     const result = await link(fn).proxies()
-    expect(result.proxies.GLOBAL?.now).toBe('Proxy')
+    // 类型是 Go 名，不是 YAML 里的小写写法。
+    expect(result.proxies.GLOBAL?.type).toBe('Selector')
+    expect(result.proxies.Auto?.type).toBe('URLTest')
+    expect(result.proxies['HK-01']?.type).toBe('Shadowsocks')
+    expect(result.proxies.GLOBAL?.now).toBe('DIRECT')
     expect(calls[0]?.url).toBe(`${BASE}/proxies`)
     expect(header(calls[0]!, 'authorization')).toBe(`Bearer ${SECRET}`)
   })

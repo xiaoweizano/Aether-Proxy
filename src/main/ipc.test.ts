@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { CoreInfo } from '../shared/types'
@@ -8,7 +8,7 @@ import type { AppContext } from './bootstrap'
 import type { CoreSupervisor } from './core/supervisor'
 import type { SystemProxyController } from './proxy/controller'
 import type { ProxyOwnership } from './proxy/ownership'
-import type { CoreLink } from './core/link'
+import type { CoreLink, ProxiesResponse } from './core/link'
 import { CoreLink as RealCoreLink } from './core/link'
 import { IPC } from '../shared/ipc'
 import {
@@ -24,6 +24,16 @@ const CORE_INFO: CoreInfo = {
   version: 'v1.19.32',
   controllerPort: 9090,
   startedAt: 1_700_000_000_000
+}
+
+/**
+ * 真实 mihomo `/proxies` 响应（见 test/fixtures/proxies.json）：类型是 Go 名
+ * （Selector / URLTest / Shadowsocks / Direct），GLOBAL 永远存在且排在最前。
+ * 测试不再手写小写 `select` / `ss`，那种形状在真机上根本不会出现。
+ */
+function realProxies(): ProxiesResponse {
+  const raw = readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'proxies.json'), 'utf8')
+  return JSON.parse(raw) as ProxiesResponse
 }
 
 interface FakeIpc {
@@ -206,33 +216,37 @@ describe('statusGet', () => {
 })
 
 describe('proxiesGet', () => {
-  it('把内核策略组映射为白名单视图', async () => {
-    const payload = {
-      proxies: {
-        GLOBAL: { name: 'GLOBAL', type: 'select', now: 'Proxy', all: ['Proxy', 'DIRECT'] },
-        Proxy: { name: 'Proxy', type: 'select', now: 'HK', all: ['HK', 'US'], history: [{ delay: 120 }] },
-        HK: { name: 'HK', type: 'ss', history: [{ delay: 85 }, { delay: 90 }] },
-        US: { name: 'US', type: 'ss' },
-        DIRECT: { name: 'DIRECT', type: 'Direct' }
-      }
-    }
+  it('把真实形状的内核策略组映射为白名单视图', async () => {
+    const payload = realProxies()
     const fn = (async () => ({ ok: true, status: 200, json: async () => payload })) as unknown as typeof fetch
     const { ctx, ipc } = await harness()
     ctx.link = new RealCoreLink('http://127.0.0.1:9090', 's', fn)
 
     const groups = await invoke(ipc, IPC.proxiesGet)
+    // GLOBAL 排在最前，类型保持内核返回的 Go 名；延迟取节点 history 的最后一条。
     expect(groups).toEqual([
       {
         name: 'GLOBAL',
-        type: 'select',
-        now: 'Proxy',
-        nodes: [{ name: 'Proxy' }, { name: 'DIRECT' }]
+        type: 'Selector',
+        now: 'DIRECT',
+        nodes: [{ name: 'Proxy' }, { name: 'Auto' }, { name: 'DIRECT' }]
+      },
+      {
+        name: 'Auto',
+        type: 'URLTest',
+        now: 'DIRECT',
+        nodes: [{ name: 'HK-01', delay: 41 }, { name: 'US-01', delay: 120 }, { name: 'DIRECT' }]
       },
       {
         name: 'Proxy',
-        type: 'select',
-        now: 'HK',
-        nodes: [{ name: 'HK', delay: 90 }, { name: 'US' }]
+        type: 'Selector',
+        now: 'HK-01',
+        nodes: [
+          { name: 'HK-01', delay: 41 },
+          { name: 'US-01', delay: 120 },
+          { name: 'Auto' },
+          { name: 'DIRECT' }
+        ]
       }
     ])
   })
@@ -243,7 +257,7 @@ describe('proxiesGet', () => {
   })
 
   it('toProxyGroups 忽略缺少 all 的条目', () => {
-    expect(toProxyGroups({ proxies: { HK: { name: 'HK', type: 'ss' } } })).toEqual([])
+    expect(toProxyGroups({ proxies: { HK: { name: 'HK', type: 'Shadowsocks' } } })).toEqual([])
   })
 })
 
