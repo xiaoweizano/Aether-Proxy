@@ -106,6 +106,7 @@ async function harness(options: {
     coreInfo: { ...CORE_INFO },
     profile: { nodeCount: 3, groupCount: 1 },
     link,
+    stats: null,
     setMode(mode) {
       ctx.mode = mode
     },

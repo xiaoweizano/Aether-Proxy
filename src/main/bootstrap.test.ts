@@ -8,6 +8,7 @@ import type { ChildProcess } from 'node:child_process'
 import { bootstrap, type BootstrapOptions } from './bootstrap'
 import { FakePlatformProxy } from './proxy/fake'
 import { ProxyOwnership } from './proxy/ownership'
+import type { WebSocketLike } from './stats'
 
 const VALID_CONFIG = `proxies: []
 proxy-groups:
@@ -51,6 +52,36 @@ function okFetch(): typeof fetch {
   })) as unknown as typeof fetch
 }
 
+/** 记录 connect 调用并允许手动推进消息的最小 WS 替身。 */
+class FakeStatsSocket implements WebSocketLike {
+  readonly messages: ((data: unknown) => void)[] = []
+  readonly closes: (() => void)[] = []
+  readonly errors: ((err: unknown) => void)[] = []
+  closed = false
+
+  on(event: 'message', cb: (data: unknown) => void): void
+  on(event: 'close', cb: () => void): void
+  on(event: 'error', cb: (err: unknown) => void): void
+  on(
+    event: 'message' | 'close' | 'error',
+    cb: ((data: unknown) => void) | (() => void) | ((err: unknown) => void)
+  ): void {
+    if (event === 'message') this.messages.push(cb as (data: unknown) => void)
+    else if (event === 'close') this.closes.push(cb as () => void)
+    else this.errors.push(cb as (err: unknown) => void)
+  }
+
+  close(): void {
+    this.closed = true
+  }
+
+  push(up: number, down: number): void {
+    for (const cb of this.messages) {
+      cb(JSON.stringify({ up, down, upTotal: up * 10, downTotal: down * 10 }))
+    }
+  }
+}
+
 interface Harness {
   dir: string
   pp: FakePlatformProxy
@@ -64,6 +95,8 @@ async function harness(options: {
   pp?: FakePlatformProxy
   spawn?: () => ChildProcess
   validateFn?: NonNullable<BootstrapOptions['validateFn']>
+  statsConnect?: NonNullable<BootstrapOptions['statsConnect']>
+  onStatsSample?: NonNullable<BootstrapOptions['onStatsSample']>
 } = {}): Promise<Harness> {
   const config = options.config === undefined ? VALID_CONFIG : options.config
   const dir = await makeUserDir(config !== null, config ?? VALID_CONFIG)
@@ -87,7 +120,12 @@ async function harness(options: {
       spawnFn: spawnFn as unknown as BootstrapOptions['spawnFn'],
       fetchFn: okFetch(),
       platformProxy: pp,
-      validateFn: options.validateFn ?? (async () => ({ ok: true, output: 'ok' }))
+      validateFn: options.validateFn ?? (async () => ({ ok: true, output: 'ok' })),
+      // 默认不碰真实网络：单元测试里的内核端口并不存在，交给真实 ws 会反复重连。
+      statsConnect:
+        options.statsConnect ??
+        (() => new FakeStatsSocket()),
+      ...(options.onStatsSample === undefined ? {} : { onStatsSample: options.onStatsSample })
     }
   }
 }
@@ -509,5 +547,137 @@ rules:
     // 停内核时状态文件必须还在，否则强杀后无法识别残留 mihomo。
     expect(coreStateAtStop).toBe(true)
     expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+  })
+
+  it('内核就绪时暴露采集器，用 Bearer secret 连接 /traffic 并推送快照', async () => {
+    const calls: { url: string; headers: Record<string, string> }[] = []
+    const sockets: FakeStatsSocket[] = []
+    const samples: unknown[] = []
+    const h = await harness({
+      statsConnect: (url, options) => {
+        calls.push({ url, headers: options.headers })
+        const socket = new FakeStatsSocket()
+        sockets.push(socket)
+        return socket
+      },
+      onStatsSample: (sample) => samples.push(sample)
+    })
+    const ctx = await bootstrap(h.opts)
+
+    expect(ctx.stats).not.toBeNull()
+    expect(ctx.coreInfo?.controllerPort).toBeGreaterThan(0)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toBe(`ws://127.0.0.1:${ctx.coreInfo?.controllerPort}/traffic`)
+    expect(calls[0]?.headers).toEqual({ authorization: expect.stringMatching(/^Bearer .+$/) })
+
+    sockets[0]?.push(10, 20)
+    expect(samples).toHaveLength(1)
+    expect(ctx.stats?.snapshot()).toEqual({
+      up: 10,
+      down: 20,
+      upTotal: 100,
+      downTotal: 200,
+      history: [{ up: 10, down: 20 }]
+    })
+
+    await ctx.stopAll()
+    // 退出路径必须停掉采集器，否则重连定时器拖住事件循环。
+    expect(sockets[0]?.closed).toBe(true)
+  })
+
+  it('无配置时没有采集器，导入并重启后就有了', async () => {
+    const sockets: FakeStatsSocket[] = []
+    const h = await harness({
+      config: null,
+      statsConnect: () => {
+        const socket = new FakeStatsSocket()
+        sockets.push(socket)
+        return socket
+      }
+    })
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.stats).toBeNull()
+    expect(sockets).toHaveLength(0)
+
+    await mkdir(ctx.configDir, { recursive: true })
+    await writeFile(path.join(ctx.configDir, 'upstream.yaml'), VALID_CONFIG)
+    await ctx.restartCore()
+
+    expect(ctx.stats).not.toBeNull()
+    expect(sockets).toHaveLength(1)
+    await ctx.stopAll()
+    expect(sockets[0]?.closed).toBe(true)
+  })
+
+  it('重启内核复用同一个采集器，不重复建连', async () => {
+    const sockets: FakeStatsSocket[] = []
+    const h = await harness({
+      statsConnect: () => {
+        const socket = new FakeStatsSocket()
+        sockets.push(socket)
+        return socket
+      }
+    })
+    const ctx = await bootstrap(h.opts)
+    const collector = ctx.stats
+
+    await ctx.restartCore()
+
+    expect(ctx.stats).toBe(collector)
+    expect(sockets).toHaveLength(1)
+    await ctx.stopAll()
+  })
+
+  it('重启失败时停止并清空采集器，再次重启成功后复用同一实例', async () => {
+    const sockets: FakeStatsSocket[] = []
+    const h = await harness({
+      statsConnect: () => {
+        const socket = new FakeStatsSocket()
+        sockets.push(socket)
+        return socket
+      }
+    })
+    const ctx = await bootstrap(h.opts)
+    const collector = ctx.stats
+    expect(collector).not.toBeNull()
+
+    h.opts.validateFn = async () => ({ ok: false, output: 'bad' })
+    await expect(ctx.restartCore()).rejects.toThrow()
+    expect(ctx.stats).toBeNull()
+    expect(sockets[0]?.closed).toBe(true)
+
+    h.opts.validateFn = async () => ({ ok: true, output: 'ok' })
+    await ctx.restartCore()
+    expect(ctx.stats).toBe(collector)
+    expect(sockets).toHaveLength(2)
+    expect(sockets[1]?.closed).toBe(false)
+
+    await ctx.stopAll()
+  })
+
+  it('采集器不向快照暴露 secret 或 controller 地址', async () => {
+    const sockets: FakeStatsSocket[] = []
+    const samples: unknown[] = []
+    const h = await harness({
+      statsConnect: () => {
+        const socket = new FakeStatsSocket()
+        sockets.push(socket)
+        return socket
+      },
+      onStatsSample: (sample) => samples.push(sample)
+    })
+    const ctx = await bootstrap(h.opts)
+    const state = JSON.parse(await readFile(path.join(h.dir, 'core-state.json'), 'utf8')) as {
+      secret: string
+      port: number
+    }
+
+    sockets[0]?.push(1, 2)
+    const json = JSON.stringify(samples.at(-1))
+    expect(json).not.toContain(state.secret)
+    expect(json).not.toContain(String(state.port))
+    expect(json).not.toMatch(/secret|authorization|Bearer/i)
+
+    await ctx.stopAll()
   })
 })

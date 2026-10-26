@@ -17,6 +17,7 @@ import { FakePlatformProxy } from './proxy/fake'
 import type { PlatformProxy } from './proxy/platform'
 import { readSettings, writeSettings } from './settings'
 import { CoreLink } from './core/link'
+import { TrafficCollector, type StatsConnect, type TrafficSnapshot } from './stats'
 import type { Mode, CoreInfo } from '../shared/types'
 
 export interface BootstrapOptions {
@@ -34,6 +35,13 @@ export interface BootstrapOptions {
     homeDir: string,
     configPath: string
   ) => Promise<{ ok: boolean; output: string }>
+  /** 测试注入；缺省时用 `ws` 建立真实连接。 */
+  statsConnect?: StatsConnect
+  /**
+   * 采样回调。内核可能在窗口之后才起来（无配置 → 导入 → 重启），所以由 bootstrap
+   * 在创建采集器时直接接上；窗口侧再调一次 `stats.start()` 只会替换成等价的回调。
+   */
+  onStatsSample?: (sample: TrafficSnapshot) => void
 }
 
 export type AppStatus = 'no-config' | 'ready' | 'config-error' | 'core-error' | 'in-use'
@@ -60,6 +68,8 @@ export interface AppContext {
   link: CoreLink | null
   /** 当前内核信息；未运行时为 null。 */
   coreInfo: CoreInfo | null
+  /** `/traffic` 采集器；内核停止或重启失败后为 null。停止由装配层与 stopAll 负责。 */
+  stats: TrafficCollector | null
   /** 配置摘要（供状态页显示节点/策略组数量）；无配置时为 null。 */
   profile: { nodeCount: number; groupCount: number } | null
   /**
@@ -157,6 +167,23 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       link = new CoreLink(`http://127.0.0.1:${ep.controllerPort}`, ep.secret, opts.fetchFn)
     }
     return link
+  }
+
+  /**
+   * `/traffic` 采集器同样按会话复用：地址与 secret 不变，内核重启后靠自身的
+   * 断线重连恢复，不会在每次重启时丢掉已有的 60 点缓冲。
+   * 只在确定内核已起来之后调用。
+   */
+  let stats: TrafficCollector | null = null
+  const ensureStats = (controllerPort: number, secret: string): TrafficCollector => {
+    stats ??= new TrafficCollector({
+      url: `ws://127.0.0.1:${controllerPort}/traffic`,
+      secret,
+      ...(opts.statsConnect === undefined ? {} : { connect: opts.statsConnect })
+    })
+    // 内核这时已经确认起来了；start 幂等，重启成功后复用同一实例与缓冲。
+    stats.start(opts.onStatsSample)
+    return stats
   }
 
   // 用户期望的代理开关独立于所有权快照：proxy-state.json 正常退出时会被删除，
@@ -263,6 +290,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         port: prepared.controllerPort,
         secret: prepared.secret
       })
+      // 只有内核真的起来之后才有 /traffic 可连；采集器在这里创建并开始采样，
+      // 消费者（窗口推送）由装配层通过 onStatsSample 提供。
+      ensureStats(prepared.controllerPort, prepared.secret)
       return { ok: true, prepared, info }
     } catch (err) {
       console.warn('[aether] 内核启动失败：', describeError(err))
@@ -281,6 +311,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     proxyServer?: string | null
     link?: CoreLink | null
     coreInfo?: CoreInfo | null
+    stats?: TrafficCollector | null
     profile?: Prepared['profile']
   }
 
@@ -334,6 +365,10 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         ctx.coreInfo = null
         ctx.link = null
         ctx.proxyServer = null
+        // 内核没起来就没有可采集的流量：停掉并对上层暴露 null。实例本身保留，
+        // 下次重启成功后 ensureStats 会复用它（连同已有缓冲）。
+        ctx.stats?.stop()
+        ctx.stats = null
         // prepare 失败时 supervisor 可能已被替换（配置有误）；同步给调用方与 stopAll。
         ctx.supervisor = activeSupervisor
 
@@ -370,6 +405,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       ctx.link = prepared.link
       ctx.proxyServer = prepared.proxyServer
       ctx.supervisor = prepared.supervisor
+      ctx.stats = ensureStats(prepared.controllerPort, prepared.secret)
       await ctx.onCoreRestarted(info)
 
       // 重启后内核按 runtime.yaml 的模式启动；把本会话里用户选过的模式补回去。
@@ -412,6 +448,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       proxyServer: over.proxyServer ?? null,
       link: over.link ?? null,
       coreInfo: over.coreInfo ?? null,
+      stats: over.stats ?? null,
       profile: over.profile ?? null,
       restartCore: async () => {
         throw new Error('内核未运行，无法重启')
@@ -434,6 +471,13 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
           await activeSupervisor.stop()
         } catch (err) {
           errors.push(err)
+        }
+        // 采集器必须在退出路径上停下：否则 ws 的重连定时器会拖住事件循环，
+        // 进程无法随 app.quit() 一起结束。
+        try {
+          ctx.stats?.stop()
+        } catch {
+          // stop 不抛错；这里只防御性地不把清理失败算进致命错误。
         }
         try {
           await clearCoreState(coreStateFile)
@@ -492,6 +536,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     proxyServer: result.prepared.proxyServer,
     link: result.prepared.link,
     coreInfo: result.info,
+    stats,
     profile: result.prepared.profile
   })
 }
