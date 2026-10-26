@@ -76,11 +76,22 @@ child.once('exit', (code, signal) => {
       console.log(
         `[shot] 通过：${path.relative(repoRoot, output)}（${info.size} bytes）`
       )
-      // 成功后清理临时 profile；失败时保留，方便排查。
-      await rm(userData, { recursive: true, force: true })
     } catch (err) {
       console.error('[shot] 截图产物校验失败：', err)
       process.exitCode = 1
+      return
+    }
+    // 清理临时 profile 与截图结果无关：Windows 上残留的 Electron helper 会让
+    // rm 抛 EPERM/EBUSY，这里只警告，不能因此把一次成功的截图判成失败。
+    try {
+      await rm(userData, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 200
+      })
+    } catch (cleanupError) {
+      console.warn(`[shot] 临时 profile 未能清理，可手动删除：${userData}`, cleanupError)
     }
   })()
 })

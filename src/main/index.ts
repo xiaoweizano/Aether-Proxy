@@ -39,6 +39,12 @@ function pushStats(sample: TrafficSnapshot): void {
 }
 
 const SHOT_SETTLE_MS = 500
+/** 至少 1% 的像素不同于背景，避免「一个杂点」也算渲染成功。 */
+const SHOT_MIN_RATIO = 0.01
+/** 状态卡主按钮必须真的画出来：--accent #4A8CFF。 */
+const SHOT_ACCENT = { r: 74, g: 140, b: 255 } as const
+const SHOT_ACCENT_TOLERANCE = 24
+const SHOT_MIN_ACCENT_PIXELS = 10
 
 function shotOutputFile(): string {
   return (
@@ -48,17 +54,27 @@ function shotOutputFile(): string {
 }
 
 /**
- * 截图并做空白判定：`capturePage()` 在窗口没画出来时会给出空图或纯色图，
- * 两者都必须算失败，否则脚本会把「白屏」当成通过。
- * `toBitmap()` 是 BGRA，每 4 字节一个像素；逐像素比较而不是逐字节，
+ * 截图并做空白判定：`capturePage()` 在窗口没画出来时会给出空图、纯色图，
+ * 或只画出一两个杂点的近似空白图，三者都必须算失败，否则脚本会把「白屏」
+ * 当成通过。`toBitmap()` 是 BGRA，每 4 字节一个像素；逐像素比较而不是逐字节，
  * 否则同一个像素内部的 B/G/R 差异会被误当成「非空白」。
+ * 另外在中心区域找主按钮的强调色，确认状态卡真的渲染出来了；只用粗粒度的
+ * 中央条带，不绑定具体坐标，布局微调不会误报。
  */
 async function captureShot(win: BrowserWindow): Promise<void> {
   const image = await win.webContents.capturePage()
   if (image.isEmpty()) throw new Error('截图内容为空')
   const bitmap = image.toBitmap()
+  const size = image.getSize()
   const pixelCount = Math.floor(bitmap.length / 4)
-  if (pixelCount === 0) throw new Error('截图没有像素数据')
+  if (pixelCount === 0 || size.width === 0 || size.height === 0) {
+    throw new Error('截图没有像素数据')
+  }
+  // 防御性裁剪：位图长度与窗口尺寸不一致时不要把越界当成失败。
+  const width = Math.min(size.width, Math.floor(pixelCount / size.height))
+  if (width === 0) throw new Error('截图没有像素数据')
+  const height = Math.min(size.height, Math.floor(pixelCount / width))
+
   const first = bitmap.readUInt32LE(0)
   let different = 0
   for (let offset = 4; offset + 3 < bitmap.length; offset += 4) {
@@ -66,15 +82,59 @@ async function captureShot(win: BrowserWindow): Promise<void> {
   }
   if (different === 0) throw new Error('截图是纯色，判定为空白')
 
+  const ratio = different / pixelCount
+  if (ratio <= SHOT_MIN_RATIO) {
+    throw new Error(`截图有效像素只有 ${(ratio * 100).toFixed(2)}%，判定为空白`)
+  }
+
+  const left = Math.floor(width * 0.3)
+  const right = Math.floor(width * 0.7)
+  const top = Math.floor(height * 0.25)
+  const bottom = Math.floor(height * 0.75)
+  let accent = 0
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const offset = (y * width + x) * 4
+      const b = bitmap.readUInt8(offset)
+      const g = bitmap.readUInt8(offset + 1)
+      const r = bitmap.readUInt8(offset + 2)
+      if (
+        Math.abs(b - SHOT_ACCENT.b) <= SHOT_ACCENT_TOLERANCE &&
+        Math.abs(g - SHOT_ACCENT.g) <= SHOT_ACCENT_TOLERANCE &&
+        Math.abs(r - SHOT_ACCENT.r) <= SHOT_ACCENT_TOLERANCE
+      ) {
+        accent += 1
+      }
+    }
+  }
+  if (accent < SHOT_MIN_ACCENT_PIXELS) {
+    throw new Error('截图中心区域没有主按钮强调色，界面可能未渲染')
+  }
+
   const target = shotOutputFile()
   await mkdir(path.dirname(target), { recursive: true })
   const png = image.toPNG()
   await writeFile(target, png)
-  const { width, height } = image.getSize()
-  const ratio = ((different / pixelCount) * 100).toFixed(2)
   console.log(
-    `[aether] 截图 ${target} ${width}x${height} ${png.length} bytes 非空像素 ${ratio}%`
+    `[aether] 截图 ${target} ${width}x${height} ${png.length} bytes 非空像素 ${(ratio * 100).toFixed(2)}% 强调色 ${accent} px`
   )
+}
+
+/**
+ * 截图冒烟的失败路径也必须走退出清理：直接 `app.exit(1)` 会跳过 before-quit 里的
+ * stopAll，内核不会被终止、系统代理也不会还原——这是项目的硬要求。
+ * 不要把这里「简化」回 `app.exit(1)`。
+ */
+async function failShot(message: string, error?: unknown): Promise<void> {
+  if (error === undefined) console.error(message)
+  else console.error(message, error)
+  try {
+    await context?.stopAll()
+  } catch (cleanupError) {
+    console.error('[aether] 截图冒烟失败后的退出清理出错', cleanupError)
+  } finally {
+    app.exit(1)
+  }
 }
 
 function createWindow(startupStatus: AppContext['startupStatus']): void {
@@ -113,15 +173,11 @@ function createWindow(startupStatus: AppContext['startupStatus']): void {
       setTimeout(() => {
         void captureShot(win)
           .then(() => { app.quit() })
-          .catch((err: unknown) => {
-            console.error('[aether] 截图冒烟失败', err)
-            app.exit(1)
-          })
+          .catch((err: unknown) => failShot('[aether] 截图冒烟失败', err))
       }, SHOT_SETTLE_MS)
     })
     win.webContents.once('did-fail-load', (_event, code, description) => {
-      console.error(`[aether] 截图冒烟加载失败 ${code} ${description}`)
-      app.exit(1)
+      void failShot(`[aether] 截图冒烟加载失败 ${code} ${description}`)
     })
   }
 
