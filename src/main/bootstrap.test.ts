@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -28,12 +29,13 @@ async function makeUserDir(withConfig: boolean, configText = VALID_CONFIG): Prom
 }
 
 /** 让 CoreSupervisor 的握手走到 running，而不用真的 spawn mihomo。 */
-function fakeChild(): ChildProcess {
+function fakeChild(onKill?: () => void): ChildProcess {
   const child = new EventEmitter() as unknown as ChildProcess
   Object.assign(child, {
     pid: CORE_PID,
     exitCode: null,
     kill: vi.fn(() => {
+      onKill?.()
       ;(child as unknown as { exitCode: number | null }).exitCode = 0
       child.emit('exit', 0, null)
       return true
@@ -60,6 +62,8 @@ async function harness(options: {
   config?: string | null
   proxyEnabled?: boolean
   pp?: FakePlatformProxy
+  spawn?: () => ChildProcess
+  validateFn?: NonNullable<BootstrapOptions['validateFn']>
 } = {}): Promise<Harness> {
   const config = options.config === undefined ? VALID_CONFIG : options.config
   const dir = await makeUserDir(config !== null, config ?? VALID_CONFIG)
@@ -70,7 +74,7 @@ async function harness(options: {
     )
   }
   const pp = options.pp ?? new FakePlatformProxy({ enabled: false })
-  const spawnFn = vi.fn(() => fakeChild())
+  const spawnFn = vi.fn(options.spawn ?? (() => fakeChild()))
   return {
     dir,
     pp,
@@ -82,7 +86,8 @@ async function harness(options: {
       repoRoot: process.cwd(),
       spawnFn: spawnFn as unknown as BootstrapOptions['spawnFn'],
       fetchFn: okFetch(),
-      platformProxy: pp
+      platformProxy: pp,
+      validateFn: options.validateFn ?? (async () => ({ ok: true, output: 'ok' }))
     }
   }
 }
@@ -94,6 +99,7 @@ describe('bootstrap', () => {
     expect(ctx.startupStatus).toBe('no-config')
     expect(ctx.profileDir).toBeNull()
     expect(ctx.restore).toBe('none')
+    expect(ctx.proxyEnabled).toBe(false)
     expect(ctx.supervisor.status).toBe('stopped')
     expect(h.spawnFn).not.toHaveBeenCalled()
     await ctx.stopAll()
@@ -117,6 +123,7 @@ describe('bootstrap', () => {
     const ctx = await bootstrap(h.opts)
     expect(ctx.startupStatus).toBe('in-use')
     expect(ctx.restore).toBe('in-use')
+    expect(ctx.proxyEnabled).toBe(false)
     expect(ctx.supervisor.status).toBe('stopped')
     expect(h.spawnFn).not.toHaveBeenCalled()
     expect((await h.pp.getSystemProxy()).enabled).toBe(false)
@@ -134,6 +141,7 @@ rules:
     })
     const ctx = await bootstrap(h.opts)
     expect(ctx.startupStatus).toBe('config-error')
+    expect(ctx.proxyEnabled).toBe(false)
     expect(ctx.supervisor.status).toBe('stopped')
     expect(h.spawnFn).not.toHaveBeenCalled()
     await ctx.stopAll()
@@ -144,8 +152,47 @@ rules:
     const ctx = await bootstrap(h.opts)
     expect(ctx.startupStatus).toBe('config-error')
     expect(ctx.supervisor.status).toBe('stopped')
+    expect(ctx.proxyEnabled).toBe(false)
     expect(h.spawnFn).not.toHaveBeenCalled()
     await ctx.stopAll()
+  })
+
+  it('内核配置校验失败时返回 config-error，不启动内核也不碰代理', async () => {
+    const h = await harness({
+      proxyEnabled: true,
+      validateFn: async () => ({ ok: false, output: 'parse error' })
+    })
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.startupStatus).toBe('config-error')
+    expect(ctx.proxyEnabled).toBe(false)
+    expect(ctx.supervisor.status).toBe('stopped')
+    expect(h.spawnFn).not.toHaveBeenCalled()
+    expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+    await ctx.stopAll()
+  })
+
+  it('内核启动失败时返回 core-error，stopAll 清理状态且不留下内核', async () => {
+    const h = await harness({
+      proxyEnabled: true,
+      spawn: () => {
+        throw new Error('spawn failed')
+      }
+    })
+    await writeFile(
+      path.join(h.dir, 'core-state.json'),
+      JSON.stringify({ pid: 1, port: 2, secret: 'stale' })
+    )
+
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.startupStatus).toBe('core-error')
+    expect(ctx.proxyEnabled).toBe(false)
+    expect(ctx.supervisor.status).toBe('stopped')
+    expect(h.spawnFn).toHaveBeenCalledTimes(1)
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+
+    await ctx.stopAll()
+    expect(ctx.supervisor.status).toBe('stopped')
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
   })
 
   it('上次代理为开时启动内核后接管系统代理', async () => {
@@ -153,6 +200,7 @@ rules:
     const ctx = await bootstrap(h.opts)
     expect(ctx.startupStatus).toBe('ready')
     expect(ctx.restore).toBe('none')
+    expect(ctx.proxyEnabled).toBe(true)
     expect(h.spawnFn).toHaveBeenCalledTimes(1)
     const proxy = await h.pp.getSystemProxy()
     expect(proxy.enabled).toBe(true)
@@ -170,9 +218,32 @@ rules:
     const h = await harness({ proxyEnabled: false })
     const ctx = await bootstrap(h.opts)
     expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.proxyEnabled).toBe(false)
     expect(h.spawnFn).toHaveBeenCalledTimes(1)
     expect((await h.pp.getSystemProxy()).enabled).toBe(false)
     await ctx.stopAll()
+  })
+
+  it('恢复上次残留（restored）后按 settings 重新接管代理', async () => {
+    const pp = new FakePlatformProxy({ enabled: false })
+    const h = await harness({ proxyEnabled: true, pp })
+    const stateFile = path.join(h.dir, 'proxy-state.json')
+
+    const first = new ProxyOwnership(pp, stateFile)
+    await first.snapshotBeforeApply(await pp.getSystemProxy())
+    await pp.setSystemProxy({ server: '127.0.0.1:7890', bypass: [] })
+    await first.markApplied('127.0.0.1:7890', [])
+
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.restore).toBe('restored')
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.proxyEnabled).toBe(true)
+    const proxy = await pp.getSystemProxy()
+    expect(proxy.enabled).toBe(true)
+    expect(proxy.server).toMatch(/^127\.0\.0\.1:\d+$/)
+
+    await ctx.stopAll()
+    expect((await pp.getSystemProxy()).enabled).toBe(false)
   })
 
   it('检测到代理被他人改动（conflict）时不接管系统代理', async () => {
@@ -189,10 +260,36 @@ rules:
     const ctx = await bootstrap(h.opts)
     expect(ctx.restore).toBe('conflict')
     expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.proxyEnabled).toBe(false)
     expect(h.spawnFn).toHaveBeenCalledTimes(1)
     expect((await pp.getSystemProxy()).server).toBe('other:9999')
 
     await ctx.stopAll()
     expect((await pp.getSystemProxy()).server).toBe('other:9999')
+  })
+
+  it('stopAll 顺序：还原代理 → 停内核 → 清理内核状态', async () => {
+    const order: string[] = []
+    let coreStateAtStop = false
+    const h = await harness({ proxyEnabled: true })
+    h.spawnFn.mockImplementation(() =>
+      fakeChild(() => {
+        order.push('core-stop')
+        coreStateAtStop = existsSync(path.join(h.dir, 'core-state.json'))
+      })
+    )
+    const originalRestore = h.pp.restore.bind(h.pp)
+    h.pp.restore = async (state) => {
+      order.push('proxy-restore')
+      await originalRestore(state)
+    }
+
+    const ctx = await bootstrap(h.opts)
+    await ctx.stopAll()
+
+    expect(order).toEqual(['proxy-restore', 'core-stop'])
+    // 停内核时状态文件必须还在，否则强杀后无法识别残留 mihomo。
+    expect(coreStateAtStop).toBe(true)
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
   })
 })

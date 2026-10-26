@@ -27,6 +27,12 @@ export interface BootstrapOptions {
   fetchFn?: typeof fetch
   /** 测试注入；缺省时 Windows 用 loadWindowsProxy()。 */
   platformProxy?: PlatformProxy
+  /** 测试注入；缺省时执行真实的 `mihomo -t`。 */
+  validateFn?: (
+    binary: string,
+    homeDir: string,
+    configPath: string
+  ) => Promise<{ ok: boolean; output: string }>
 }
 
 export interface AppContext {
@@ -37,6 +43,9 @@ export interface AppContext {
   mode: Mode
   startupStatus: 'no-config' | 'ready' | 'config-error' | 'core-error' | 'in-use'
   restore: 'none' | 'restored' | 'conflict' | 'in-use'
+  /** 实际系统代理状态，不是 settings 里的期望值。 */
+  proxyEnabled: boolean
+  proxyError?: string
   stopAll(): Promise<void>
 }
 
@@ -69,6 +78,12 @@ function idleSupervisor(
   })
 }
 
+/** 只保留可读的短消息；错误对象可能带堆栈，也可能被上层拼进日志。 */
+function describeError(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err)
+  return text.slice(0, 300)
+}
+
 function stopAllOf(
   controller: SystemProxyController,
   supervisor: CoreSupervisor,
@@ -81,13 +96,15 @@ function stopAllOf(
     } catch (err) {
       errors.push(err)
     }
+    // 内核先真正停下，再删身份记录：否则进程在 SIGTERM 宽限期内被强杀时，
+    // mihomo 还活着，而唯一能识别它的 core-state.json 已经没了。
     try {
-      await clearCoreState(coreStateFile)
+      await supervisor.stop()
     } catch (err) {
       errors.push(err)
     }
     try {
-      await supervisor.stop()
+      await clearCoreState(coreStateFile)
     } catch (err) {
       errors.push(err)
     }
@@ -129,6 +146,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       mode: 'rule',
       startupStatus: 'in-use',
       restore,
+      proxyEnabled: false,
       stopAll: async () => {}
     }
   }
@@ -149,6 +167,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       mode: 'rule',
       startupStatus: 'no-config',
       restore,
+      proxyEnabled: false,
       stopAll: async () => {}
     }
   }
@@ -167,6 +186,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       mode: 'rule',
       startupStatus: 'config-error',
       restore,
+      proxyEnabled: false,
       stopAll: async () => {}
     }
   }
@@ -200,11 +220,13 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         mode: 'rule',
         startupStatus: 'config-error',
         restore,
+        proxyEnabled: false,
         stopAll: async () => {}
       }
     }
     await writeRuntime(profileDir, merged)
-    const validated = await validateConfig(binary, profileDir, configPath)
+    const validate = opts.validateFn ?? validateConfig
+    const validated = await validate(binary, profileDir, configPath)
     if (!validated.ok) {
       console.warn('[aether] 内核配置校验失败，已跳过启动')
       return {
@@ -215,6 +237,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         mode: 'rule',
         startupStatus: 'config-error',
         restore,
+        proxyEnabled: false,
         stopAll: async () => {}
       }
     }
@@ -228,6 +251,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       mode: 'rule',
       startupStatus: 'config-error',
       restore,
+      proxyEnabled: false,
       stopAll: async () => {}
     }
   }
@@ -247,6 +271,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       mode: 'rule',
       startupStatus: 'core-error',
       restore,
+      proxyEnabled: false,
       stopAll: async () => {
         await clearCoreState(coreStateFile)
       }
@@ -255,11 +280,20 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
 
   // 只有用户上次明确打开代理、且没有检测到他人改动时才接管系统代理。
   // `conflict` 表示系统代理已被其它程序改写，不能覆盖；`in-use` 已在上面提前返回。
+  let proxyEnabled = false
+  let proxyError: string | undefined
   if (settings.proxyEnabled && restore !== 'conflict') {
     try {
       await controller.enable(`127.0.0.1:${mixedPort}`)
     } catch (err) {
-      console.warn('[aether] 应用系统代理失败：', err instanceof Error ? err.message : String(err))
+      proxyError = describeError(err)
+    }
+    try {
+      // 上报实际状态，而不是「我们尝试过开代理」。
+      proxyEnabled = (await pp.getSystemProxy()).enabled === true
+    } catch (err) {
+      proxyEnabled = false
+      proxyError ??= describeError(err)
     }
   }
 
@@ -274,6 +308,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     mode,
     startupStatus: 'ready',
     restore,
+    proxyEnabled,
+    ...(proxyError === undefined ? {} : { proxyError }),
     stopAll: stopAllOf(controller, supervisor, coreStateFile)
   }
 }
