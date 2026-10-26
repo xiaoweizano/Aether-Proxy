@@ -39,7 +39,7 @@ interface Api {
   enableProxy(): Promise<unknown>
   disableProxy(): Promise<unknown>
   restartCore(): Promise<unknown>
-  importConfig(path: string): Promise<unknown>
+  importConfig(): Promise<unknown>
   onStats(cb: (sample: unknown) => void): () => void
 }
 
@@ -76,7 +76,7 @@ describe('preload', () => {
     await a.enableProxy()
     await a.disableProxy()
     await a.restartCore()
-    await a.importConfig('C:/tmp/conf.yaml')
+    await a.importConfig()
 
     expect(invoke.mock.calls).toEqual([
       [IPC.statusGet],
@@ -85,7 +85,7 @@ describe('preload', () => {
       [IPC.proxyEnable],
       [IPC.proxyDisable],
       [IPC.coreRestart],
-      [IPC.configImport, { sourcePath: 'C:/tmp/conf.yaml' }]
+      [IPC.configPickImport]
     ])
   })
 

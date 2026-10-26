@@ -78,6 +78,7 @@ interface Harness {
 async function harness(options: {
   proxyServer?: string | null
   linkStatus?: number | null
+  pickImportFile?: () => Promise<string | null>
 } = {}): Promise<Harness> {
   const dir = await mkdtemp(path.join(tmpdir(), 'aether-ipc-'))
   const controller = {
@@ -133,7 +134,10 @@ async function harness(options: {
   }
 
   const ipc = fakeIpc()
-  const deps = { settingsFile: path.join(dir, 'settings.json') }
+  const deps = {
+    settingsFile: path.join(dir, 'settings.json'),
+    ...(options.pickImportFile === undefined ? {} : { pickImportFile: options.pickImportFile })
+  }
   registerIpcHandlers(ipc, ctx, deps)
   return { dir, ctx, ipc, deps, controller, supervisor, stopAll }
 }
@@ -397,7 +401,8 @@ describe('registerUnavailableHandlers', () => {
       IPC.proxyEnable,
       IPC.proxyDisable,
       IPC.coreRestart,
-      IPC.configImport
+      IPC.configImport,
+      IPC.configPickImport
     ]
     expect([...ipc.handlers.keys()].sort()).toEqual([...expected].sort())
 
@@ -405,7 +410,13 @@ describe('registerUnavailableHandlers', () => {
     expect(status.status).toBe('core-error')
     expect(await invoke(ipc, IPC.proxiesGet)).toEqual([])
     expect(await invoke(ipc, IPC.modeSet, 'global')).toEqual({ ok: false, status: 0 })
-    for (const channel of [IPC.proxyEnable, IPC.proxyDisable, IPC.coreRestart, IPC.configImport]) {
+    for (const channel of [
+      IPC.proxyEnable,
+      IPC.proxyDisable,
+      IPC.coreRestart,
+      IPC.configImport,
+      IPC.configPickImport
+    ]) {
       const result = (await invoke(ipc, channel, { sourcePath: 'x' })) as {
         ok: boolean
         message: string
@@ -478,5 +489,68 @@ describe('configImport', () => {
     const result = (await invoke(h.ipc, IPC.configImport, {})) as { ok: boolean; message: string }
     expect(result.ok).toBe(false)
     expect(result.message).toBeTruthy()
+  })
+})
+
+describe('configPickImport', () => {
+  const GOOD_CONFIG = 'proxies: []\nproxy-groups:\n  - { name: P, type: select, proxies: [DIRECT] }\n'
+
+  it('选中合法配置后写 upstream.yaml，并提示需要重启', async () => {
+    const source = path.join(tmpdir(), `aether-pick-${Date.now()}.yaml`)
+    await writeFile(source, GOOD_CONFIG)
+    const h = await harness({ pickImportFile: async () => source })
+
+    expect(await invoke(h.ipc, IPC.configPickImport)).toEqual({ ok: true, needsRestart: true })
+    const written = await readFile(path.join(h.ctx.configDir, 'upstream.yaml'), 'utf8')
+    expect(written).toContain('proxy-groups')
+  })
+
+  it('取消对话框时返回 cancelled，且不写任何文件', async () => {
+    const pickImportFile = vi.fn(async () => null)
+    const h = await harness({ pickImportFile })
+
+    expect(await invoke(h.ipc, IPC.configPickImport)).toEqual({ ok: false, cancelled: true })
+    expect(pickImportFile).toHaveBeenCalledTimes(1)
+    expect(existsSync(path.join(h.ctx.configDir, 'upstream.yaml'))).toBe(false)
+  })
+
+  it('in-use 时先拒绝，根本不弹对话框', async () => {
+    const pickImportFile = vi.fn(async () => path.join(tmpdir(), 'never.yaml'))
+    const h = await harness({ pickImportFile })
+    h.ctx.startupStatus = 'in-use'
+
+    const result = (await invoke(h.ipc, IPC.configPickImport)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe('另一个实例正在运行')
+    expect(pickImportFile).not.toHaveBeenCalled()
+    expect(existsSync(path.join(h.ctx.configDir, 'upstream.yaml'))).toBe(false)
+  })
+
+  it('选中的不是合法 Clash 配置时返回消息且不覆盖现有配置', async () => {
+    const source = path.join(tmpdir(), `aether-pick-bad-${Date.now()}.yaml`)
+    await writeFile(source, 'not: a clash config\n')
+    const h = await harness({ pickImportFile: async () => source })
+
+    const result = (await invoke(h.ipc, IPC.configPickImport)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/不是合法的 Clash 配置/)
+    expect(existsSync(path.join(h.ctx.configDir, 'upstream.yaml'))).toBe(false)
+  })
+
+  it('对话框自身抛错时转成可读消息，不向渲染层抛异常', async () => {
+    const h = await harness({
+      pickImportFile: async () => {
+        throw new Error('对话框不可用')
+      }
+    })
+
+    expect(await invoke(h.ipc, IPC.configPickImport)).toEqual({ ok: false, message: '对话框不可用' })
+  })
+
+  it('没有注入选择框时不崩溃，返回明确消息', async () => {
+    const h = await harness()
+    const result = (await invoke(h.ipc, IPC.configPickImport)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe('无法打开文件选择框')
   })
 })

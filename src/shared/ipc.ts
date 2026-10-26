@@ -41,6 +41,11 @@ export interface ImportResult {
   message?: string
 }
 
+/** 渲染层只能发起「选文件」；路径由主进程的原生对话框产生。 */
+export type PickImportResult =
+  | { ok: true; needsRestart: true }
+  | { ok: false; cancelled?: true; message?: string }
+
 export interface StatsHistorySample {
   up: number
   down: number
@@ -61,6 +66,7 @@ export const IPC = {
   proxyDisable: 'proxy:disable',
   coreRestart: 'core:restart',
   configImport: 'config:import',
+  configPickImport: 'config:pick-import',
   statsPush: 'app:stats'
 } as const
 
@@ -74,7 +80,8 @@ export interface AetherApi {
   enableProxy(): Promise<SimpleResult>
   disableProxy(): Promise<SimpleResult>
   restartCore(): Promise<SimpleResult>
-  importConfig(sourcePath: string): Promise<ImportResult>
+  /** 主进程弹原生文件选择框；渲染层拿不到也不该拿本地路径。 */
+  importConfig(): Promise<PickImportResult>
   /** 订阅流量推送；返回取消订阅函数。 */
   onStats(cb: (sample: StatsSample) => void): () => void
 }

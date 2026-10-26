@@ -3,8 +3,8 @@ import { IPC } from '../shared/ipc'
 import type {
   AetherApi,
   AppStatusView,
-  ImportResult,
   ModeSetResult,
+  PickImportResult,
   ProxyGroupView,
   SimpleResult,
   StatsSample
@@ -18,8 +18,8 @@ const api: AetherApi = {
   enableProxy: () => ipcRenderer.invoke(IPC.proxyEnable) as Promise<SimpleResult>,
   disableProxy: () => ipcRenderer.invoke(IPC.proxyDisable) as Promise<SimpleResult>,
   restartCore: () => ipcRenderer.invoke(IPC.coreRestart) as Promise<SimpleResult>,
-  importConfig: (sourcePath: string) =>
-    ipcRenderer.invoke(IPC.configImport, { sourcePath }) as Promise<ImportResult>,
+  importConfig: () =>
+    ipcRenderer.invoke(IPC.configPickImport) as Promise<PickImportResult>,
   onStats: (cb) => {
     const listener = (_event: unknown, sample: StatsSample): void => cb(sample)
     ipcRenderer.on(IPC.statsPush, listener)

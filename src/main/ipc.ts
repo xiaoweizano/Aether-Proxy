@@ -5,6 +5,7 @@ import type {
   AppStatusView,
   ImportResult,
   ModeSetResult,
+  PickImportResult,
   ProxyGroupView,
   SimpleResult
 } from '../shared/ipc'
@@ -20,6 +21,12 @@ export interface IpcMainLike {
 
 export interface IpcDeps {
   settingsFile: string
+  /**
+   * 打开原生文件选择框，返回选中的路径；`null` 表示用户取消。
+   * 以函数注入而不是直接 import electron：测试环境不加载 Electron，
+   * 同时也把「渲染层从不出路径」约束在单一边界上。
+   */
+  pickImportFile?: () => Promise<string | null>
 }
 
 const MODES: readonly Mode[] = ['rule', 'global', 'direct']
@@ -113,6 +120,7 @@ export function registerUnavailableHandlers(ipcMain: IpcMainLike): void {
     ipcMain.handle(channel, (): SimpleResult => ({ ok: false, message }))
   }
   ipcMain.handle(IPC.configImport, (): ImportResult => ({ ok: false, message }))
+  ipcMain.handle(IPC.configPickImport, (): PickImportResult => ({ ok: false, message }))
 }
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps: IpcDeps): void {
@@ -192,6 +200,32 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
         : null
     if (sourcePath === null) return { ok: false, message: '缺少配置路径' }
     try {
+      await mkdir(ctx.configDir, { recursive: true })
+      await importFromFile(ctx.configDir, sourcePath)
+      return { ok: true, needsRestart: true }
+    } catch (err) {
+      return { ok: false, message: shortMessage(err) }
+    }
+  })
+
+  ipcMain.handle(IPC.configPickImport, async (): Promise<PickImportResult> => {
+    // 与 configImport 同一道闸：另一个实例占用配置时不能改写 upstream.yaml。
+    // 先拒绝再弹框，用户不会为一个注定失败的导入白选文件。
+    if (ctx.startupStatus === 'in-use') {
+      return { ok: false, message: '另一个实例正在运行' }
+    }
+    if (deps.pickImportFile === undefined) {
+      return { ok: false, message: '无法打开文件选择框' }
+    }
+    let sourcePath: string | null
+    try {
+      sourcePath = await deps.pickImportFile()
+    } catch (err) {
+      return { ok: false, message: shortMessage(err) }
+    }
+    if (sourcePath === null) return { ok: false, cancelled: true }
+    try {
+      // configDir 才是 upstream.yaml 的落点；no-config 时 profileDir 为 null。
       await mkdir(ctx.configDir, { recursive: true })
       await importFromFile(ctx.configDir, sourcePath)
       return { ok: true, needsRestart: true }

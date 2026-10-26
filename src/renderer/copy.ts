@@ -65,6 +65,34 @@ export const copy = {
     disconnected: '未连接',
     coreError: '内核异常'
   },
+  state: {
+    noConfig: {
+      title: '还没有配置',
+      detail: '导入一份 Clash 配置（YAML），重启内核后即可开始代理。',
+      importAction: '导入配置',
+      imported: '配置已导入，重启后生效',
+      restartAction: '重启内核'
+    },
+    configError: {
+      title: '配置无法使用',
+      detail: '当前配置没有通过校验。导入一份合法的 Clash 配置，再重启内核。',
+      importAction: '导入配置'
+    },
+    coreError: {
+      title: '内核异常',
+      detail: '代理内核没有正常运行。先尝试重启；仍然失败时请查看日志或导入新的配置。',
+      restartAction: '重启内核'
+    },
+    inUse: {
+      title: '另一个实例正在运行',
+      detail: '同一时间只能有一个 Aether 实例占用配置与系统代理。关闭另一个实例后再试。'
+    },
+    logsAction: '查看日志',
+    logsPlaceholder: '日志面板在下一阶段',
+    importFailed: '导入失败，请重试',
+    restartFailed: '重启失败，请重试',
+    apiUnavailable: '应用接口未就绪，请重启应用'
+  },
   mode: {
     label: '代理模式',
     rule: '规则',

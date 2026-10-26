@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import type { OpenDialogOptions } from 'electron'
 import path from 'node:path'
 import { bootstrap, type AppContext } from './bootstrap'
 import { registerIpcHandlers, registerUnavailableHandlers } from './ipc'
@@ -58,6 +59,23 @@ function createWindow(startupStatus: AppContext['startupStatus']): void {
   }
 }
 
+/**
+ * 渲染层是沙箱，`<input type=file>` 拿不到可用路径；导入必须经主进程原生对话框。
+ * 取消、没有选中文件都归一为 `null`，由 IPC 层转成 cancelled。
+ */
+async function pickImportFile(): Promise<string | null> {
+  const options: OpenDialogOptions = {
+    properties: ['openFile'],
+    filters: [{ name: 'Clash YAML', extensions: ['yaml', 'yml'] }]
+  }
+  const result =
+    mainWindow === null || mainWindow.isDestroyed()
+      ? await dialog.showOpenDialog(options)
+      : await dialog.showOpenDialog(mainWindow, options)
+  if (result.canceled) return null
+  return result.filePaths[0] ?? null
+}
+
 async function start(): Promise<void> {
   const userDataDir = app.getPath('userData')
   try {
@@ -71,7 +89,8 @@ async function start(): Promise<void> {
       onStatsSample: pushStats
     })
     registerIpcHandlers(ipcMain, context, {
-      settingsFile: path.join(userDataDir, 'settings.json')
+      settingsFile: path.join(userDataDir, 'settings.json'),
+      pickImportFile
     })
     createWindow(context.startupStatus)
   } catch (err) {

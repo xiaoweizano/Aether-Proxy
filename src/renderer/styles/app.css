@@ -682,3 +682,87 @@ body {
   font-size: var(--fs-label);
   text-align: center;
 }
+
+/* ── 非 ready 状态（无配置 / 配置错误 / 内核异常 / 被占用） ── */
+.state-panel {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+
+.state-card {
+  width: 100%;
+  max-width: 440px;
+  padding: var(--space-6);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.state-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-title);
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.state-detail {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+}
+
+.state-success,
+.state-error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-label);
+}
+
+.state-success {
+  color: var(--success);
+}
+
+.state-error {
+  color: var(--danger);
+}
+
+.state-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.state-action {
+  height: 34px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.state-action:hover:not(:disabled) {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+.state-action.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.state-action.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  color: var(--bg);
+}
+
+.state-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
