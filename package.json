@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "koffi": "^3.3.4",
     "yaml": "^2.6.1"
   },
   "devDependencies": {
