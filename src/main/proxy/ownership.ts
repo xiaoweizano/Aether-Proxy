@@ -35,7 +35,7 @@ export class ProxyOwnership {
     await writeFileAtomic(this.stateFile, JSON.stringify(saved, null, 2))
   }
 
-  private async hasSnapshot(): Promise<boolean> {
+  async hasSnapshot(): Promise<boolean> {
     return (await this.load()) !== null
   }
 
