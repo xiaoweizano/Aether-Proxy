@@ -56,6 +56,16 @@ describe('mergeConfig', () => {
     expect(out['find-process-mode']).toBe('always')
   })
 
+  it('proxy-providers / rule-providers 按 name 合并（对象 map，不是数组）', () => {
+    const out = mergeConfig(
+      { 'proxy-providers': { 'prov-a': { type: 'http' } } },
+      { 'proxy-providers': { 'prov-b': { type: 'file' } }, 'rule-providers': { 'rp-a': { type: 'http' } } },
+      inject
+    ) as any
+    expect(Object.keys(out['proxy-providers']).sort()).toEqual(['prov-a', 'prov-b'])
+    expect(out['rule-providers']).toEqual({ 'rp-a': { type: 'http' } })
+  })
+
   it('未知顶层键原样透传', () => {
     const out = mergeConfig({ 'geodata-mode': true }, {}, inject) as any
     expect(out['geodata-mode']).toBe(true)
