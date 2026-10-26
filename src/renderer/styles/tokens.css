@@ -11,6 +11,8 @@
   --text-faint: #7E858C;
   --accent: #4A8CFF;
   --accent-strong: #2F6FE0;
+  /* 实心蓝主操作上的字色：4.70:1，是系统里唯一的纯白。 */
+  --on-accent: #FFFFFF;
   --success: #34D399;
   --danger: #F87171;
   /* 图表专用：网格线只在流量图里出现，按 DESIGN.md 属于局部值。 */

@@ -41,8 +41,15 @@ function pushStats(sample: TrafficSnapshot): void {
 const SHOT_SETTLE_MS = 500
 /** 至少 1% 的像素不同于背景，避免「一个杂点」也算渲染成功。 */
 const SHOT_MIN_RATIO = 0.01
-/** 状态卡主按钮必须真的画出来：--accent #4A8CFF。 */
-const SHOT_ACCENT = { r: 74, g: 140, b: 255 } as const
+/**
+ * 状态卡主按钮必须真的画出来。DESIGN.md 的 One Solid Blue Rule 规定实心主操作用
+ * 填充蓝 `--accent-strong`，但线蓝 `--accent` 也可能出现在图标与激活态，两者都认，
+ * 免得设计系统一改颜色冒烟就误报（容差 24 覆盖不到两种蓝之间的差值，所以列两项）。
+ */
+const SHOT_ACCENTS = [
+  { r: 0x2f, g: 0x6f, b: 0xe0 }, // --accent-strong
+  { r: 0x4a, g: 0x8c, b: 0xff } // --accent
+] as const
 const SHOT_ACCENT_TOLERANCE = 24
 const SHOT_MIN_ACCENT_PIXELS = 10
 
@@ -99,9 +106,12 @@ async function captureShot(win: BrowserWindow): Promise<void> {
       const g = bitmap.readUInt8(offset + 1)
       const r = bitmap.readUInt8(offset + 2)
       if (
-        Math.abs(b - SHOT_ACCENT.b) <= SHOT_ACCENT_TOLERANCE &&
-        Math.abs(g - SHOT_ACCENT.g) <= SHOT_ACCENT_TOLERANCE &&
-        Math.abs(r - SHOT_ACCENT.r) <= SHOT_ACCENT_TOLERANCE
+        SHOT_ACCENTS.some(
+          (accent) =>
+            Math.abs(b - accent.b) <= SHOT_ACCENT_TOLERANCE &&
+            Math.abs(g - accent.g) <= SHOT_ACCENT_TOLERANCE &&
+            Math.abs(r - accent.r) <= SHOT_ACCENT_TOLERANCE
+        )
       ) {
         accent += 1
       }

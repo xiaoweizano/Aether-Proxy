@@ -750,16 +750,18 @@ body {
   color: var(--text);
 }
 
+/* One Solid Blue Rule：屏幕上唯一的实心蓝主操作，用填充蓝 + 白字，不是线蓝。 */
 .state-action.primary {
   border-color: transparent;
-  background: var(--accent);
-  color: var(--bg);
+  background: var(--accent-strong);
+  color: var(--on-accent);
   font-weight: 600;
 }
 
 .state-action.primary:hover:not(:disabled) {
   background: var(--accent-strong);
-  color: var(--bg);
+  color: var(--on-accent);
+  filter: brightness(1.12);
 }
 
 .state-action:disabled {
