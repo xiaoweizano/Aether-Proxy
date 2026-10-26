@@ -14,6 +14,7 @@ const HKEY_CURRENT_USER = 0x80000001
 const KEY_QUERY_VALUE = 0x0001
 const KEY_SET_VALUE = 0x0002
 const REG_SZ = 1
+const REG_EXPAND_SZ = 2
 const REG_DWORD = 4
 const ERROR_FILE_NOT_FOUND = 2
 const INTERNET_OPTION_REFRESH = 37
@@ -70,7 +71,7 @@ function queryValue(hkey: number, name: string): { type: number; data: Buffer } 
 
 function readString(hkey: number, name: string): string | undefined {
   const raw = queryValue(hkey, name)
-  if (!raw || raw.type !== REG_SZ) return undefined
+  if (!raw || (raw.type !== REG_SZ && raw.type !== REG_EXPAND_SZ)) return undefined
   return raw.data.toString('utf16le').replace(/\0+$/, '')
 }
 
