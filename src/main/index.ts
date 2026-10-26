@@ -9,7 +9,7 @@ function createWindow(): void {
     minHeight: 640,
     backgroundColor: '#0A0B0D',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false
@@ -17,7 +17,9 @@ function createWindow(): void {
   })
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event) => event.preventDefault())
-  win.loadFile(path.join(__dirname, '../renderer/index.html'))
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl) win.loadURL(devUrl)
+  else win.loadFile(path.join(__dirname, '../renderer/index.html'))
 }
 
 app.whenReady().then(createWindow)
