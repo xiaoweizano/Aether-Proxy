@@ -20,7 +20,44 @@ export const copy = {
   },
   dashboard: {
     title: '仪表盘',
-    connecting: '正在连接内核…'
+    node: {
+      label: '当前节点',
+      sub: (mode: string) => `${mode} · TCP`,
+      health: (delay: string) => `最近 60 分钟 0 次失败 · 最近 ${delay}`,
+      healthRate: '100%',
+      noSession: '没有会话',
+      session: '会话时长',
+      used: '已用流量',
+      mode: '工作模式'
+    },
+    core: {
+      label: '内核状态',
+      version: (version: string) => `mihomo · ${version}`,
+      running: '运行中',
+      stopped: '未启动',
+      port: (port: string) => `端口 ${port}`,
+      groups: (count: string) => `${count} 个策略组`,
+      startedAt: '启动于',
+      guard: '进程守护',
+      guardOk: '正常'
+    },
+    stats: {
+      down: '下载速度',
+      up: '上传速度',
+      connections: '活跃连接',
+      connectionsFoot: '连接页在下一阶段',
+      totalPrefix: '累计'
+    },
+    chart: {
+      title: '流量历史',
+      peak: '最高',
+      average: '平均',
+      downLegend: '下载',
+      upLegend: '上传',
+      idleNote: '暂无流量 · 访问任意网站试试',
+      offlineNote: '启动内核后显示流量',
+      label: '最近 60 秒流量曲线'
+    }
   },
   status: {
     connected: '已连接',

@@ -340,9 +340,345 @@ body {
   white-space: nowrap;
 }
 
-.connecting {
-  margin: var(--space-3) 0 0;
+/* ── 仪表盘卡片场 ─────────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--card-gap);
+}
+
+.card {
+  min-width: 0;
+  padding: var(--card-pad-y) var(--card-pad-x);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.card-label {
   color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.muted {
+  color: var(--text-faint);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: var(--chip-height);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-chip);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+}
+
+.chip.solid {
+  background: var(--card-2);
+  border-color: transparent;
+}
+
+.chip.solid.muted {
+  color: var(--text-faint);
+}
+
+.chip.solid.on {
+  color: var(--success);
+}
+
+/* ── 当前节点（hero） ─────────────────────────────────── */
+.hero {
+  grid-column: span 2;
+}
+
+.node-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.node-name {
+  font-size: var(--fs-node);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.hero-sub {
+  margin-bottom: var(--space-4);
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+.healthline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+/* DESIGN.md 里等宽字体唯一获准出现的地方：健康百分比。 */
+.health-pct {
+  margin-left: auto;
+  color: var(--success);
+  font-family: var(--num);
+  font-size: var(--fs-label);
+}
+
+.health-pct.muted {
+  color: var(--text-faint);
+}
+
+.ticks {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--tick-gap);
+  height: var(--tick-height);
+  margin-bottom: var(--card-pad-x);
+}
+
+.tick {
+  flex: 1;
+  height: 100%;
+  border-radius: var(--radius-tick);
+  background: var(--success);
+  opacity: 0.85;
+}
+
+/* 无历史时整条变暗且高度减半：不能被误读成「全绿」。 */
+.ticks.dim .tick {
+  height: 40%;
+  background: var(--border-2);
+  opacity: 1;
+}
+
+.stats3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.stat-key {
+  margin-bottom: var(--space-1);
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.stat-value {
+  font-size: var(--fs-substat);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 内核状态 ─────────────────────────────────────────── */
+.core-version {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--fs-core);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.core-rows {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.core-rows div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+.core-rows b {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.core-rows b.muted {
+  color: var(--text-faint);
+}
+
+/* ── 三张速率卡 ───────────────────────────────────────── */
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+.badge {
+  display: grid;
+  place-items: center;
+  width: var(--chip-height);
+  height: var(--chip-height);
+  border-radius: var(--radius-chip);
+  font-size: var(--fs-micro);
+}
+
+.badge.down {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.badge.up {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+
+.badge.conn {
+  background: var(--card-2);
+  color: var(--text-faint);
+}
+
+.stat-figure {
+  color: var(--text);
+  font-size: var(--fs-stat);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-figure.muted {
+  color: var(--text-faint);
+}
+
+.stat-unit {
+  margin-left: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-unit);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.stat-foot {
+  margin-top: auto;
+  padding-top: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/* ── 流量历史 ─────────────────────────────────────────── */
+.chart {
+  grid-column: 1 / -1;
+}
+
+.chart-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--space-3);
+}
+
+.chart-title {
+  color: var(--text);
   font-size: var(--fs-body);
-  line-height: 1.5;
+  font-weight: 500;
+}
+
+.chart-legend {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-4);
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.chart-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.legend-down i {
+  background: var(--accent);
+}
+
+.legend-up i {
+  background: var(--success);
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: var(--chart-height);
+}
+
+.chart-grid line {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.chart.empty .chart-grid line {
+  opacity: 0.35;
+}
+
+.chart-down,
+.chart-up {
+  fill: none;
+  stroke-width: var(--chart-line);
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-down {
+  stroke: var(--accent);
+}
+
+.chart-up {
+  stroke: var(--success);
+}
+
+.chart-area {
+  fill: color-mix(in srgb, var(--accent) 10%, transparent);
+  stroke: none;
+}
+
+.chart-baseline {
+  stroke: var(--accent);
+  stroke-width: var(--chart-baseline);
+  opacity: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-note {
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+  text-align: center;
 }

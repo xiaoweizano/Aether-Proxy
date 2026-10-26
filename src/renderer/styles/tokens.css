@@ -13,16 +13,23 @@
   --accent-strong: #2F6FE0;
   --success: #34D399;
   --danger: #F87171;
+  /* 图表专用：网格线只在流量图里出现，按 DESIGN.md 属于局部值。 */
+  --chart-grid: #1E2126;
 
   /* 圆角 */
   --radius-card: 14px;
   --radius-control: 10px;
   --radius-chip: 6px;
+  /* DESIGN.md：刻度条是全系统最方的形状。 */
+  --radius-tick: 1px;
 
   /* 字号 */
   --fs-title: 26px;
   --fs-node: 30px;
   --fs-stat: 28px;
+  --fs-core: 26px;
+  --fs-substat: 16px;
+  --fs-unit: 14px;
   --fs-body: 13px;
   --fs-label: 12px;
   --fs-micro: 11px;
@@ -34,6 +41,17 @@
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
+
+  /* 卡片场几何：14px 是卡片场唯一的间距（One Gap Rule）。 */
+  --card-gap: 14px;
+  --card-pad-y: 16px;
+  --card-pad-x: 18px;
+  --chart-height: 150px;
+  --tick-height: 22px;
+  --tick-gap: 2px;
+  --chip-height: 22px;
+  --chart-line: 2px;
+  --chart-baseline: 1.2px;
 
   /* 字体 */
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI", "PingFang SC", sans-serif;

@@ -41,9 +41,16 @@ export interface ImportResult {
   message?: string
 }
 
+export interface StatsHistorySample {
+  up: number
+  down: number
+}
+
 export interface StatsSample extends TrafficView {
   /** 内核内存（字节），取不到时为 undefined。 */
   memory?: number
+  /** 主进程维护的最近 60 个速率点；窗口重建后用它补齐曲线。 */
+  history?: StatsHistorySample[]
 }
 
 export const IPC = {
