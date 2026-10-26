@@ -226,10 +226,26 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
 ### Task 2: IPC 与 preload 白名单
 
 **Files:**
-- Modify: `src/shared/ipc.ts`
-- Create: `src/main/ipc.ts`, `src/main/ipc.test.ts`, `src/preload/index.ts`（重写）
+- Modify: `src/shared/ipc.ts`, `src/main/bootstrap.ts`（暴露 `link`）
+- Create: `src/main/core/link.ts`, `src/main/core/link.test.ts`, `src/main/ipc.ts`, `src/main/ipc.test.ts`, `src/preload/index.ts`（重写）
 
 **Interfaces:**
+```ts
+// src/main/core/link.ts — 唯一持有 baseUrl + secret 的客户端，只在主进程内使用
+export interface ProxiesResponse { proxies: Record<string, { name: string; type: string; now?: string; history?: { delay: number }[]; all?: string[] }> }
+export class CoreLink {
+  constructor(baseUrl: string, secret: string, fetchFn?: typeof fetch)
+  version(): Promise<{ version: string }>
+  proxies(): Promise<ProxiesResponse>
+  setMode(mode: Mode): Promise<{ ok: boolean; status: number }>
+  memory(): Promise<{ inuse: number }>
+  connections(): Promise<{ connections: unknown[]; downloadTotal: number; uploadTotal: number }>
+}
+```
+- `CoreLink` 在 bootstrap 成功启动内核后构造（`http://127.0.0.1:${controllerPort}`），加入 `AppContext.link`。
+- `AppContext.mode` 变为可变（`setMode(mode)`），由 IPC 更新。
+- IPC 视图类型与通道见下；`AppStatusView.proxyEnabled` 取 `AppContext.proxyEnabled`。
+- `proxyEnable` / `proxyDisable` 处理成功后 MUST 调 `writeSettings(settingsFile, { proxyEnabled })` 并更新 `ctx.proxyEnabled`。
 ```ts
 // src/shared/ipc.ts
 export interface AppStatusView {
