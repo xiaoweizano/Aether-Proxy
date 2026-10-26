@@ -1737,7 +1737,7 @@ git commit -m "feat(core): 孤儿内核判定（仅凭旧 secret）"
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { FakePlatformProxy } from './fake'
@@ -1768,7 +1768,7 @@ describe('ProxyOwnership', () => {
   it('正常退出按快照完整还原', async () => {
     const own = new ProxyOwnership(pp, path.join(dir, 'proxy-state.json'))
     const before = await pp.getSystemProxy()
-    await own.snapshotBeforeApply(before)
+    await own.snapshotBeforeApply(before, '127.0.0.1:5566')
     await pp.setSystemProxy({ server: '127.0.0.1:5566', bypass: ['localhost', '127.0.0.0/8'] })
     await own.restoreOnExit()
     expect(await pp.getSystemProxy()).toEqual(before)
@@ -1777,7 +1777,7 @@ describe('ProxyOwnership', () => {
   it('启动时发现残留且状态未被改动 → restored', async () => {
     const stateFile = path.join(dir, 'proxy-state.json')
     const first = new ProxyOwnership(pp, stateFile)
-    await first.snapshotBeforeApply(await pp.getSystemProxy())
+    await first.snapshotBeforeApply(await pp.getSystemProxy(), '127.0.0.1:5566')
     await pp.setSystemProxy({ server: '127.0.0.1:5566', bypass: [] })
 
     const second = new ProxyOwnership(pp, stateFile)
@@ -1788,12 +1788,37 @@ describe('ProxyOwnership', () => {
   it('状态被他人修改 → conflict，且不覆盖', async () => {
     const stateFile = path.join(dir, 'proxy-state.json')
     const first = new ProxyOwnership(pp, stateFile)
-    await first.snapshotBeforeApply(await pp.getSystemProxy())
+    await first.snapshotBeforeApply(await pp.getSystemProxy(), '127.0.0.1:5566')
     await pp.setSystemProxy({ server: '127.0.0.1:5566', bypass: [] })
     await pp.setSystemProxy({ server: 'other:9999', bypass: [] })
 
     const second = new ProxyOwnership(pp, stateFile)
     expect(await second.restoreOnStartupIfStale()).toBe('conflict')
+    expect((await pp.getSystemProxy()).server).toBe('other:9999')
+  })
+
+  it('快照不属于 Aether 时忽略并返回 none', async () => {
+    const stateFile = path.join(dir, 'proxy-state.json')
+    await writeFile(stateFile, JSON.stringify({ owner: 'someone-else', enabled: true }), 'utf8')
+    const own = new ProxyOwnership(pp, stateFile)
+    expect(await own.restoreOnStartupIfStale()).toBe('none')
+  })
+
+  it('已有快照时重复调用不会覆盖原状态', async () => {
+    const own = new ProxyOwnership(pp, path.join(dir, 'proxy-state.json'))
+    await own.snapshotBeforeApply(await pp.getSystemProxy(), '127.0.0.1:5566')
+    await pp.setSystemProxy({ server: '127.0.0.1:5566', bypass: [] })
+    await own.snapshotBeforeApply(await pp.getSystemProxy(), '127.0.0.1:5566')
+    await own.restoreOnExit()
+    expect((await pp.getSystemProxy()).server).toBe('corp:8080')
+  })
+
+  it('退出时若代理已被他人修改则不覆盖', async () => {
+    const own = new ProxyOwnership(pp, path.join(dir, 'proxy-state.json'))
+    await own.snapshotBeforeApply(await pp.getSystemProxy(), '127.0.0.1:5566')
+    await pp.setSystemProxy({ server: '127.0.0.1:5566', bypass: [] })
+    await pp.setSystemProxy({ server: 'other:9999', bypass: [] })
+    await own.restoreOnExit()
     expect((await pp.getSystemProxy()).server).toBe('other:9999')
   })
 })
@@ -1851,9 +1876,10 @@ export class FakePlatformProxy implements PlatformProxy {
 `src/main/proxy/ownership.ts`：
 
 ```ts
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import type { ProxyState } from '../../shared/types'
 import type { PlatformProxy } from './platform'
+import { writeFileAtomic } from '../config/atomic'
 
 interface SavedState extends ProxyState {
   owner: 'aether'
@@ -1871,8 +1897,10 @@ export class ProxyOwnership {
   ) {}
 
   async snapshotBeforeApply(state: ProxyState, appliedServer: string): Promise<void> {
+    // 已有本应用的快照时不再覆盖：第二次调用拿到的"原状态"已经是 Aether 写入的地址。
+    if (await this.hasSnapshot()) return
     const saved: SavedState = { ...state, owner: 'aether', pid: this.pid, at: this.now(), appliedServer }
-    await writeFile(this.stateFile, JSON.stringify(saved, null, 2), 'utf8')
+    await writeFileAtomic(this.stateFile, JSON.stringify(saved, null, 2))
   }
 
   private async load(): Promise<SavedState | null> {
@@ -1893,7 +1921,7 @@ export class ProxyOwnership {
       await rm(this.stateFile, { force: true })
       return 'conflict'
     }
-    await this.pp.restore(saved)
+    await this.pp.restore(toProxyState(saved))
     await rm(this.stateFile, { force: true })
     return 'restored'
   }
@@ -1901,7 +1929,11 @@ export class ProxyOwnership {
   async restoreOnExit(): Promise<void> {
     const saved = await this.load()
     if (!saved) return
-    await this.pp.restore(saved)
+    const current = await this.pp.getSystemProxy()
+    // 会话期间若别的程序改了代理，不要覆盖它；只清理自己的标记。
+    if (current.enabled && current.server === saved.appliedServer) {
+      await this.pp.restore(toProxyState(saved))
+    }
     await rm(this.stateFile, { force: true })
   }
 }
