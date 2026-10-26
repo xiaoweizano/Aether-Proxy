@@ -75,4 +75,33 @@ describe('mergeConfig', () => {
     const out = mergeConfig({ 'log-level': 'info' }, {}, inject) as any
     expect(out['log-level']).toBe('warning')
   })
+
+  it('入站面收口：删除 port/socks-port/listeners、强制 allow-lan=false', () => {
+    const out = mergeConfig(
+      {
+        port: 7891,
+        'socks-port': 7892,
+        listeners: [{ name: 'lan', type: 'http', port: 7893 }],
+        'allow-lan': true
+      },
+      {},
+      inject
+    ) as any
+    expect(out.port).toBeUndefined()
+    expect(out['socks-port']).toBeUndefined()
+    expect(out.listeners).toBeUndefined()
+    expect(out['allow-lan']).toBe(false)
+  })
+
+  it('只删除 dns.listen，保留其余 dns 配置', () => {
+    const out = mergeConfig(
+      { dns: { enable: true, listen: '0.0.0.0:53', 'enhanced-mode': 'fake-ip', nameserver: ['223.5.5.5'] } },
+      {},
+      inject
+    ) as any
+    expect(out.dns.listen).toBeUndefined()
+    expect(out.dns.enable).toBe(true)
+    expect(out.dns['enhanced-mode']).toBe('fake-ip')
+    expect(out.dns.nameserver).toEqual(['223.5.5.5'])
+  })
 })

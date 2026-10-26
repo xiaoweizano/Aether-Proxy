@@ -75,5 +75,15 @@ export function mergeConfig(
   delete base['redir-port']
   delete base['tproxy-port']
 
+  // 入站面收口：M1 只通过 mixed-port 服务本机，不允许局域网监听、
+  // 额外的 http/socks 端口或任意 listeners 把内核暴露出去。
+  delete base.port
+  delete base['socks-port']
+  delete base.listeners
+  base['allow-lan'] = false
+
+  // DNS 监听端口同样属于入站面；其余 dns 配置（增强模式、nameserver）保留。
+  if (isObject(base.dns)) delete base.dns.listen
+
   return base
 }
