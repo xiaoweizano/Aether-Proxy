@@ -11,12 +11,14 @@ const MODES: { mode: Mode; label: string }[] = [
 
 export interface ModeSwitchProps {
   value: Mode
+  /** 没有内核时不显示选中段，也不能发 IPC（disabled，不是隐藏）。 */
+  disabled?: boolean
   onChange?(mode: Mode): void
   setMode?(mode: Mode): Promise<ModeSetResult>
 }
 
 /** 规则 / 全局 / 直连；点击先乐观选中，失败回滚并留下一条错误。 */
-export function ModeSwitch({ value, onChange, setMode }: ModeSwitchProps) {
+export function ModeSwitch({ value, disabled = false, onChange, setMode }: ModeSwitchProps) {
   const [selected, setSelected] = useState<Mode>(value)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
@@ -28,7 +30,7 @@ export function ModeSwitch({ value, onChange, setMode }: ModeSwitchProps) {
   }, [value])
 
   async function choose(mode: Mode): Promise<void> {
-    if (mode === selected || pending) return
+    if (disabled || mode === selected || pending) return
     const previous = confirmed.current
     setSelected(mode)
     setError(null)
@@ -54,13 +56,18 @@ export function ModeSwitch({ value, onChange, setMode }: ModeSwitchProps) {
 
   return (
     <div className="mode-switch-shell">
-      <div className="mode-switch" role="group" aria-label={copy.mode.label}>
+      <div
+        className={disabled ? 'mode-switch disabled' : 'mode-switch'}
+        role="group"
+        aria-label={copy.mode.label}
+      >
         {MODES.map((option) => (
           <button
             key={option.mode}
             type="button"
             className="mode-switch-option"
-            aria-pressed={selected === option.mode}
+            aria-pressed={!disabled && selected === option.mode}
+            disabled={disabled}
             onClick={() => {
               void choose(option.mode)
             }}

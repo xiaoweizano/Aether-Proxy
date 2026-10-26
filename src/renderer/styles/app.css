@@ -79,29 +79,6 @@ body {
   color: var(--text-dim);
 }
 
-.titlebar-spacer {
-  flex: 1;
-  height: 100%;
-}
-
-.window-buttons {
-  display: flex;
-  height: 100%;
-}
-
-.window-button {
-  width: 46px;
-  display: grid;
-  place-items: center;
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
-}
-
-.window-button:hover {
-  background: var(--card-2);
-  color: var(--text);
-}
-
 /* ── 侧栏 ─────────────────────────────────────────────── */
 .sidebar {
   display: flex;
@@ -194,11 +171,20 @@ body {
   font-size: var(--fs-micro);
 }
 
+/* 侧栏版本点重复顶栏状态，低一级：ready 绿、失败红、其余灰（无 ring）。 */
 .sidebar-meta-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.sidebar-meta-dot.ready {
   background: var(--success);
+}
+
+.sidebar-meta-dot.error {
+  background: var(--danger);
 }
 
 /* ── 主内容 ───────────────────────────────────────────── */
@@ -280,6 +266,11 @@ body {
   border-radius: var(--radius-control);
 }
 
+/* 没有内核：整组降到 45% 透明度，且没有任何选中段（disabled，不隐藏）。 */
+.mode-switch.disabled {
+  opacity: 0.45;
+}
+
 .mode-switch-option {
   height: 26px;
   padding: 0 13px;
@@ -292,8 +283,12 @@ body {
   cursor: pointer;
 }
 
-.mode-switch-option:hover {
+.mode-switch-option:hover:not(:disabled) {
   color: var(--text);
+}
+
+.mode-switch-option:disabled {
+  cursor: default;
 }
 
 .mode-switch-option[aria-pressed='true'] {
@@ -314,6 +309,12 @@ body {
   font: inherit;
   font-size: var(--fs-body);
   cursor: pointer;
+}
+
+/* 与模式切换同一档：没有内核时禁用并降透明度，不显示「已开启」的绿。 */
+.proxy-pill:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .proxy-dot {

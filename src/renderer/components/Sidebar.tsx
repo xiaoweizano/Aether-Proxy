@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
+import type { AppStatusView } from '../../shared/ipc'
 import { copy } from '../copy'
+import { statusTone } from '../status'
 
 function DashboardIcon() {
   return (
@@ -84,7 +86,13 @@ function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
   )
 }
 
-export function Sidebar() {
+export interface SidebarProps {
+  status: AppStatusView | null
+}
+
+export function Sidebar({ status }: SidebarProps) {
+  // 版本点重复顶栏的状态，只是低一级：ready 绿、失败红、其余灰。
+  const tone = statusTone(status)
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -97,7 +105,7 @@ export function Sidebar() {
       <div className="sidebar-grow" />
       <NavGroup label={copy.nav.labelSecondary} items={secondaryNav} />
       <div className="sidebar-meta">
-        <span className="sidebar-meta-dot" aria-hidden="true" />
+        <span className={`sidebar-meta-dot ${tone}`} aria-hidden="true" />
         {copy.version}
       </div>
     </aside>

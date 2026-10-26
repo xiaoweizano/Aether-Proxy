@@ -1,17 +1,14 @@
 import { copy } from '../copy'
 
-/** 纯装饰的 Windows 标题栏；窗口控制逻辑尚未接入。 */
+/**
+ * 原生窗口边框仍然保留，所以这里只画品牌标识，不画假的 — ▢ ✕。
+ * 真正的窗口控制要经 IPC 接入，排在下一个计划。
+ */
 export function TitleBar() {
   return (
     <header className="titlebar">
       <span className="titlebar-mark" aria-hidden="true" />
       <span className="titlebar-name">{copy.app.name}</span>
-      <span className="titlebar-spacer" />
-      <div className="window-buttons" aria-hidden="true">
-        <span className="window-button">{copy.window.minimize}</span>
-        <span className="window-button">{copy.window.maximize}</span>
-        <span className="window-button">{copy.window.close}</span>
-      </div>
     </header>
   )
 }

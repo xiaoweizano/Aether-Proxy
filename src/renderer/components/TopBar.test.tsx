@@ -49,4 +49,44 @@ describe('TopBar', () => {
 
     expect(await screen.findByText(/切换失败/)).toBeInTheDocument()
   })
+
+  it('非 ready 时禁用模式切换与代理开关，且不发 IPC', async () => {
+    const enableProxy = vi.fn(async () => ({ ok: true }))
+    const setMode = vi.fn(async () => ({ ok: true, status: 204 }))
+    window.aether = makeAether({ enableProxy, setMode })
+    render(<TopBar status={{ ...readyStatus, status: 'no-config' }} />)
+
+    const modes = [
+      screen.getByRole('button', { name: copy.mode.rule }),
+      screen.getByRole('button', { name: copy.mode.global }),
+      screen.getByRole('button', { name: copy.mode.direct })
+    ]
+    for (const button of modes) {
+      expect(button).toBeDisabled()
+      // 没有内核时不显示任何选中段，即使状态里带着一个模式值。
+      expect(button).toHaveAttribute('aria-pressed', 'false')
+    }
+
+    const pill = screen.getByRole('button', { name: copy.proxy.off })
+    expect(pill).toBeDisabled()
+    expect(pill).toHaveAttribute('aria-pressed', 'false')
+    expect(pill).not.toHaveClass('on')
+
+    await userEvent.click(pill)
+    await userEvent.click(modes[0]!)
+
+    expect(enableProxy).not.toHaveBeenCalled()
+    expect(setMode).not.toHaveBeenCalled()
+  })
+
+  it('ready 时模式切换与代理开关可用', () => {
+    render(<TopBar status={readyStatus} />)
+
+    expect(screen.getByRole('button', { name: copy.mode.rule })).toBeEnabled()
+    expect(screen.getByRole('button', { name: copy.mode.rule })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByRole('button', { name: copy.proxy.off })).toBeEnabled()
+  })
 })

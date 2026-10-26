@@ -18,7 +18,7 @@ export function App() {
     <div className="app">
       <TitleBar />
       <div className="shell">
-        <Sidebar />
+        <Sidebar status={status} />
         <main className="main">
           <TopBar
             status={status}

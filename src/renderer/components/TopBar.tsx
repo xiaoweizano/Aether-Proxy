@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AppStatusView } from '../../shared/ipc'
 import { copy } from '../copy'
+import { statusTone, type StatusTone } from '../status'
 import { ModeSwitch } from './ModeSwitch'
 
 export interface TopBarProps {
@@ -9,22 +10,23 @@ export interface TopBarProps {
   onRefresh?(): void
 }
 
-type StatusTone = 'ready' | 'error' | 'idle'
-
 function statusLine(status: AppStatusView | null): { label: string; tone: StatusTone } {
-  if (status?.status === 'ready') return { label: copy.status.connected, tone: 'ready' }
-  if (status?.status === 'core-error') return { label: copy.status.coreError, tone: 'error' }
-  return { label: copy.status.disconnected, tone: 'idle' }
+  const tone = statusTone(status)
+  if (tone === 'ready') return { label: copy.status.connected, tone }
+  if (tone === 'error') return { label: copy.status.coreError, tone }
+  return { label: copy.status.disconnected, tone }
 }
 
 export function TopBar({ status, onRefresh }: TopBarProps) {
   const [proxyError, setProxyError] = useState<string | null>(null)
   const [proxyPending, setProxyPending] = useState(false)
   const line = statusLine(status)
-  const proxyOn = status?.proxyEnabled === true
+  // 没有内核时模式与系统代理都没有真实能力：控件禁用（不隐藏），也不显示选中段。
+  const ready = status?.status === 'ready'
+  const proxyOn = ready && status?.proxyEnabled === true
 
   async function toggleProxy(): Promise<void> {
-    if (proxyPending) return
+    if (!ready || proxyPending) return
     setProxyPending(true)
     setProxyError(null)
     try {
@@ -53,6 +55,7 @@ export function TopBar({ status, onRefresh }: TopBarProps) {
       <div className="topbar-right">
         <ModeSwitch
           value={status?.mode ?? 'rule'}
+          disabled={!ready}
           onChange={() => {
             onRefresh?.()
           }}
@@ -61,6 +64,7 @@ export function TopBar({ status, onRefresh }: TopBarProps) {
           type="button"
           className={proxyOn ? 'proxy-pill on' : 'proxy-pill'}
           aria-pressed={proxyOn}
+          disabled={!ready}
           onClick={() => {
             void toggleProxy()
           }}

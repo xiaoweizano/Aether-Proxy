@@ -4,11 +4,6 @@ export const copy = {
     name: 'Aether',
     logo: 'A'
   },
-  window: {
-    minimize: '—',
-    maximize: '▢',
-    close: '✕'
-  },
   nav: {
     labelPrimary: '主导航',
     labelSecondary: '辅助导航',
