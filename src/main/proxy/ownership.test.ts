@@ -65,4 +65,22 @@ describe('ProxyOwnership', () => {
     const own = new ProxyOwnership(pp, stateFile)
     expect(await own.restoreOnStartupIfStale()).toBe('none')
   })
+
+  it('已有快照时重复调用不会覆盖原状态', async () => {
+    const own = new ProxyOwnership(pp, path.join(dir, 'proxy-state.json'))
+    await own.snapshotBeforeApply(await pp.getSystemProxy(), '127.0.0.1:5566')
+    await pp.setSystemProxy({ server: '127.0.0.1:5566', bypass: [] })
+    await own.snapshotBeforeApply(await pp.getSystemProxy(), '127.0.0.1:5566')
+    await own.restoreOnExit()
+    expect((await pp.getSystemProxy()).server).toBe('corp:8080')
+  })
+
+  it('退出时若代理已被他人修改则不覆盖', async () => {
+    const own = new ProxyOwnership(pp, path.join(dir, 'proxy-state.json'))
+    await own.snapshotBeforeApply(await pp.getSystemProxy(), '127.0.0.1:5566')
+    await pp.setSystemProxy({ server: '127.0.0.1:5566', bypass: [] })
+    await pp.setSystemProxy({ server: 'other:9999', bypass: [] })
+    await own.restoreOnExit()
+    expect((await pp.getSystemProxy()).server).toBe('other:9999')
+  })
 })

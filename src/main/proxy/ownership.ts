@@ -29,8 +29,14 @@ export class ProxyOwnership {
   ) {}
 
   async snapshotBeforeApply(state: ProxyState, appliedServer: string): Promise<void> {
+    // 已有本应用的快照时不再覆盖：第二次调用拿到的"原状态"已经是 Aether 写入的地址。
+    if (await this.hasSnapshot()) return
     const saved: SavedState = { ...state, owner: 'aether', pid: this.pid, at: this.now(), appliedServer }
     await writeFileAtomic(this.stateFile, JSON.stringify(saved, null, 2))
+  }
+
+  private async hasSnapshot(): Promise<boolean> {
+    return (await this.load()) !== null
   }
 
   private async load(): Promise<SavedState | null> {
@@ -59,7 +65,11 @@ export class ProxyOwnership {
   async restoreOnExit(): Promise<void> {
     const saved = await this.load()
     if (!saved) return
-    await this.pp.restore(toProxyState(saved))
+    const current = await this.pp.getSystemProxy()
+    // 会话期间若别的程序改了代理，不要覆盖它；只清理自己的标记。
+    if (current.enabled && current.server === saved.appliedServer) {
+      await this.pp.restore(toProxyState(saved))
+    }
     await rm(this.stateFile, { force: true })
   }
 }
