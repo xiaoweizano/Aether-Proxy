@@ -279,7 +279,7 @@ it('status 视图不包含敏感字段', async () => {
 - Modify: `package.json`（`dev` 前置 token 检查）
 
 **Interfaces:**
-- `tokens.css` 定义：地面/面板/卡片/边框/文字三档/两条蓝/健康绿/危险红、13/12/11/10px、14/10/8/7/6px 圆角、14px 间距基准。
+- `tokens.css` 必须定义且只使用这些名字（后续任务只允许引用它们）：`--bg #0A0B0D`、`--sidebar #0C0D10`、`--card #141619`、`--card-2 #181B1F`、`--border #23262B`、`--border-2 #2C3037`、`--text #E8E9EB`、`--text-dim #9AA0A6`、`--text-faint #7E858C`、`--accent #4A8CFF`、`--accent-strong #2F6FE0`、`--success #34D399`、`--danger #F87171`；`--radius-card 14px`、`--radius-chip 6px`、`--radius-control 10px`；`--fs-body 13px`、`--fs-label 12px`、`--fs-micro 11px`、`--fs-title 26px`、`--fs-node 30px`、`--fs-stat 28px`；`--space-1 4px` … `--space-6 24px`（4/8/12/16/20/24）。
 - `App.tsx`：`<div class="app"><TitleBar/><Sidebar/><main/></div>`。
 - `check-tokens.mjs`：扫描 `src/renderer/**/*.{ts,tsx,css}`，除 `tokens.css` 外出现 `#[0-9a-f]{3,8}` 或 `font-size:\s*\d+px` 即退出 1。
 
