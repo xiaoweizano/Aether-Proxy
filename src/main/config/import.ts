@@ -1,8 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import YAML from 'yaml'
-
-export { createProfile } from './paths'
+import { writeFileAtomic } from './atomic'
 
 function assertClashConfig(text: string): void {
   let parsed: unknown
@@ -20,7 +19,7 @@ function assertClashConfig(text: string): void {
 export async function importFromFile(profileDir: string, sourcePath: string): Promise<void> {
   const text = await readFile(sourcePath, 'utf8')
   assertClashConfig(text)
-  await writeFile(path.join(profileDir, 'upstream.yaml'), text, 'utf8')
+  await writeFileAtomic(path.join(profileDir, 'upstream.yaml'), text)
 }
 
 export async function importFromUrl(
@@ -32,5 +31,5 @@ export async function importFromUrl(
   if (!res.ok) throw new Error(`订阅地址返回 ${res.status}`)
   const text = await res.text()
   assertClashConfig(text)
-  await writeFile(path.join(profileDir, 'upstream.yaml'), text, 'utf8')
+  await writeFileAtomic(path.join(profileDir, 'upstream.yaml'), text)
 }

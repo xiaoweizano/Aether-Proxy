@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createProfile, importFromFile, importFromUrl } from './import'
+import { importFromFile, importFromUrl } from './import'
+import { createProfile } from './paths'
 
 let root: string
 beforeEach(async () => { root = await mkdtemp(path.join(tmpdir(), 'aether-import-')) })
