@@ -39,6 +39,16 @@ export class ProxyOwnership {
     return (await this.load()) !== null
   }
 
+  async getAppliedServer(): Promise<string | null> {
+    return (await this.load())?.appliedServer ?? null
+  }
+
+  async repointAppliedServer(server: string): Promise<void> {
+    const saved = await this.load()
+    if (!saved) return
+    await writeFileAtomic(this.stateFile, JSON.stringify({ ...saved, appliedServer: server }, null, 2))
+  }
+
   private async load(): Promise<SavedState | null> {
     try {
       const parsed = JSON.parse(await readFile(this.stateFile, 'utf8')) as SavedState

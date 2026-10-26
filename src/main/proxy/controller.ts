@@ -1,7 +1,7 @@
 import type { PlatformProxy } from './platform'
 import type { ProxyOwnership } from './ownership'
 
-export const DEFAULT_BYPASS = ['localhost', '127.0.0.0/8', '::1', '<local>']
+export const DEFAULT_BYPASS = ['localhost', '127.0.0.0/8', '::1', '<local>'] as const
 
 export class SystemProxyController {
   constructor(
@@ -13,8 +13,13 @@ export class SystemProxyController {
     const current = await this.pp.getSystemProxy()
     if (!(await this.ownership.hasSnapshot())) {
       await this.ownership.snapshotBeforeApply(current, server)
+    } else {
+      const applied = await this.ownership.getAppliedServer()
+      if (applied !== null && applied !== server) {
+        await this.ownership.repointAppliedServer(server)
+      }
     }
-    await this.pp.setSystemProxy({ server, bypass: DEFAULT_BYPASS })
+    await this.pp.setSystemProxy({ server, bypass: [...DEFAULT_BYPASS] })
   }
 
   async disable(): Promise<void> {

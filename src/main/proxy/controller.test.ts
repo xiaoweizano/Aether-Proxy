@@ -32,6 +32,14 @@ describe('SystemProxyController', () => {
     expect((await pp.getSystemProxy()).server).toBe('corp:8080')
   })
 
+  it('切换端口后仍能在退出时还原原状态', async () => {
+    const ctl = new SystemProxyController(pp, ownership)
+    await ctl.enable('127.0.0.1:5566')
+    await ctl.enable('127.0.0.1:7890')
+    await ctl.disable()
+    expect((await pp.getSystemProxy()).server).toBe('corp:8080')
+  })
+
   it('bypass 使用固定的回环与局域网列表', async () => {
     const ctl = new SystemProxyController(pp, ownership)
     await ctl.enable('127.0.0.1:5566')
