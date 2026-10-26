@@ -2687,9 +2687,18 @@ git commit -m "test: 真实 mihomo 冒烟链路"
 
 ## 执行记录
 
-（Task 12 完成后在此填写：mihomo 版本、握手耗时、curl 状态码、遇到的偏差。）
+（Task 12 完成于 2026-10-26，真实 mihomo 冒烟已跑通。）
+
+- **内核版本**：`Mihomo Meta v1.19.32 windows amd64 with go1.26.8`（release 资产 `mihomo-windows-amd64-v1.19.32.zip`）。
+- **锁定哈希**：zip 为 `1ac84e795b5b915446e20139677fb6cc013a0778e876e8d4c96f994750b4c4a3`，与 GitHub API 的 `assets[].digest` 一致；解包后的 `vendor/mihomo.exe` SHA-256 为 `beb9878924d7bd38c67176b441ab5e668cc378bfe751c8dc8fef3eb5aaf566d5`（写入 `vendor/mihomo.sha256`）。
+- **配置校验**：`mihomo -t` 输出 `configuration file ... test is successful`。
+- **握手**：约 243 ms 拿到 `{ meta: true, version: 'v1.19.32' }`。
+- **通过代理请求**：`curl -x http://127.0.0.1:<mixed-port> http://www.gstatic.com/generate_204` 返回 `502`（代理进程已接管请求，上游不可达是预期结果），脚本最后打印 `smoke ok`。
+- **清理**：spawn 的内核在 `finally` 中 SIGTERM 退出（输出 `core exited SIGTERM`），事后按命令行确认无 `aether-smoke` 残留进程。
+- **偏差**：① 直连 GitHub release 资产速度约 15 KB/s，改走 `ghfast.top` 镜像下载，并用 GitHub API 的官方 digest 校验通过；② 样本中的 `nameserver-policy: geosite:cn` 会触发 GeoSite.dat 在线下载并等待 90 秒超时，改为等价的 `'+.cn'` 字面后缀，保持样本脱敏且离线可跑；③ 冒烟脚本用绝对路径定位内核与样本，并在 `finally` 中等待子进程真正退出。
 
 ---
+
 
 ## 覆盖对照
 
