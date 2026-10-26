@@ -250,10 +250,11 @@ class ProxyOwnership {
 这是这一品类最危险的事故：应用崩溃后系统代理仍指向一个已死的端口，用户整台机器断网。
 
 - 应用代理**之前**，把完整的原状态（`enabled` / `server` / `bypass` / **`autoConfigUrl`** / **`autoDetect`**）和一个 `owner: aether` 标记写入 `<userData>/proxy-state.json`，并记录 pid 与时间戳。**PAC 字段必须进快照**——只存 enabled/server/bypass 会导致还原时静默丢掉自动配置。
+- 原快照**不可变**；另存一个 `applied` 记录（Aether 实际写入的 server/bypass），只在代理写入成功后更新。启动与退出时用它做完整比对（server、无 PAC、AutoDetect 关闭、bypass 一致），任何一项不符就视为他人修改，不覆盖。
 - 正常退出：还原代理 → 删除标记文件。
 - **启动时**：若标记文件存在且不是本进程写的，判定为上次异常退出，自动还原并提示「已恢复上次的系统代理设置」。
 - 若标记存在但当前系统代理已被别的程序改过（`getSystemProxy` 与快照不符），**不要覆盖**，只提示并清除标记。
-- 孤儿内核：`proxy-state.json` 同时记录 mihomo 的 pid、`external-controller` 端口和**当次的 secret**。启动时若端口被占用，先用旧 secret 请求 `/version`：
+- 孤儿内核：内核状态记录在**独立的** `<userData>/core-state.json`（mihomo 的 pid、`external-controller` 端口、当次的 secret），不放进 `proxy-state.json`——后者在正常退出时会被删除，而孤儿识别需要保留上一次内核的记录。启动时若端口被占用，先用旧 secret 请求 `/version`：
   - 返回 200 → 这是上次遗留的内核，复用或提示用户终止；
   - 返回 401/404 → 是别的程序，另选端口启动，不干扰；
   - 连接被拒或超时 → 无法判定，同样另选端口。
