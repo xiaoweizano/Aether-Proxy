@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "shot": "electron-vite build && node scripts/app-shot.mjs",
     "pretest": "npm run check:tokens",
     "test": "vitest run",
     "test:watch": "vitest",
