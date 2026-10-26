@@ -16,16 +16,19 @@ describe('StatePanel', () => {
     expect(screen.queryByRole('button', { name: copy.state.coreError.restartAction })).toBeNull()
   })
 
-  it('config-error：导入主操作 + 查看日志占位', () => {
+  it('config-error：导入主操作 + 重启次操作 + 查看日志占位', () => {
     render(<StatePanel status="config-error" />)
 
     expect(screen.getByText(copy.state.configError.title)).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: copy.state.configError.importAction })
     ).toBeEnabled()
+    expect(screen.getByRole('button', { name: copy.state.coreError.restartAction })).toBeEnabled()
     const logs = screen.getByRole('button', { name: copy.state.logsAction })
     expect(logs).toBeDisabled()
     expect(logs).toHaveAttribute('title', copy.state.logsPlaceholder)
+    // 占位说明也要可见，不能只藏在 title 里。
+    expect(screen.getByText(copy.state.logsPlaceholder)).toBeInTheDocument()
   })
 
   it('core-error：重启主操作 + 查看日志占位', () => {
@@ -36,6 +39,7 @@ describe('StatePanel', () => {
     const logs = screen.getByRole('button', { name: copy.state.logsAction })
     expect(logs).toBeDisabled()
     expect(logs).toHaveAttribute('title', copy.state.logsPlaceholder)
+    expect(screen.getByText(copy.state.logsPlaceholder)).toBeInTheDocument()
   })
 
   it('in-use：只有说明，没有任何操作，尤其没有重启内核', () => {
@@ -87,6 +91,28 @@ describe('StatePanel', () => {
     await userEvent.click(screen.getByRole('button', { name: copy.state.coreError.restartAction }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('内核握手超时')
+  })
+
+  it('导入成功后重启失败：回到可重新导入的操作集，成功提示消失', async () => {
+    const importConfig = vi.fn(async () => ({ ok: true as const, needsRestart: true as const }))
+    const restartCore = vi.fn(async () => ({ ok: false as const, message: '配置有误，无法启动内核' }))
+    render(
+      <StatePanel status="config-error" importConfig={importConfig} restartCore={restartCore} />
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', { name: copy.state.configError.importAction })
+    )
+    expect(await screen.findByText(copy.state.noConfig.imported)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.noConfig.restartAction }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('配置有误，无法启动内核')
+    expect(screen.queryByText(copy.state.noConfig.imported)).toBeNull()
+    expect(
+      screen.getByRole('button', { name: copy.state.configError.importAction })
+    ).toBeEnabled()
+    expect(screen.getByRole('button', { name: copy.state.coreError.restartAction })).toBeEnabled()
   })
 
   it('未注入回调时走 window.aether', async () => {

@@ -62,11 +62,15 @@ export function StatePanel({
       const result = await call()
       if (!result.ok) {
         // 取消不是错误：用户主动关掉了对话框，界面保持原样。
-        if (result.cancelled !== true) setError(result.message ?? copy.state.importFailed)
+        if (result.cancelled !== true) {
+          setImported(false)
+          setError(result.message ?? copy.state.importFailed)
+        }
         return
       }
       setImported(true)
     } catch (err) {
+      setImported(false)
       setError(describe(err, copy.state.importFailed))
     } finally {
       setBusy(false)
@@ -82,11 +86,16 @@ export function StatePanel({
       if (call === undefined) throw new Error(copy.state.apiUnavailable)
       const result = await call()
       if (!result.ok) {
+        // 重启失败就回到该状态的常规操作集：清掉「已导入」，
+        // 否则 config-error 会卡在只剩重启按钮的死胡同里。
+        setImported(false)
         setError(result.message ?? copy.state.restartFailed)
         return
       }
+      setImported(false)
       onRefresh?.()
     } catch (err) {
+      setImported(false)
       setError(describe(err, copy.state.restartFailed))
     } finally {
       setBusy(false)
@@ -95,14 +104,17 @@ export function StatePanel({
 
   function logsButton() {
     return (
-      <button
-        type="button"
-        className="state-action"
-        disabled
-        title={copy.state.logsPlaceholder}
-      >
-        {copy.state.logsAction}
-      </button>
+      <span className="state-logs">
+        <button
+          type="button"
+          className="state-action"
+          disabled
+          title={copy.state.logsPlaceholder}
+        >
+          {copy.state.logsAction}
+        </button>
+        <span className="state-note">{copy.state.logsPlaceholder}</span>
+      </span>
     )
   }
 
@@ -156,6 +168,16 @@ export function StatePanel({
           >
             {copy.state.configError.importAction}
           </button>
+          <button
+            type="button"
+            className="state-action"
+            onClick={() => {
+              void runRestart()
+            }}
+            disabled={busy}
+          >
+            {copy.state.coreError.restartAction}
+          </button>
           {logsButton()}
         </div>
       )
@@ -183,7 +205,7 @@ export function StatePanel({
       <div className="state-card">
         <h2 className="state-title">{text.title}</h2>
         <p className="state-detail">{text.detail}</p>
-        {imported && (
+        {imported && shownError === null && (
           <p className="state-success" role="status">
             {copy.state.noConfig.imported}
           </p>

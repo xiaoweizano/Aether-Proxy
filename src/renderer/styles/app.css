@@ -766,3 +766,14 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+
+.state-logs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.state-note {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}

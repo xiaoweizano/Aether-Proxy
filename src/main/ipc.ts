@@ -123,6 +123,22 @@ export function registerUnavailableHandlers(ipcMain: IpcMainLike): void {
   ipcMain.handle(IPC.configPickImport, (): PickImportResult => ({ ok: false, message }))
 }
 
+type ImportOutcome =
+  | { ok: true; needsRestart: true }
+  | { ok: false; message: string }
+
+/** 两个导入通道共用的落盘步骤：目录按需创建，失败只回短消息。 */
+async function importIntoConfigDir(ctx: AppContext, sourcePath: string): Promise<ImportOutcome> {
+  try {
+    // configDir 才是 upstream.yaml 的落点；no-config 时 profileDir 为 null。
+    await mkdir(ctx.configDir, { recursive: true })
+    await importFromFile(ctx.configDir, sourcePath)
+    return { ok: true, needsRestart: true }
+  } catch (err) {
+    return { ok: false, message: shortMessage(err) }
+  }
+}
+
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps: IpcDeps): void {
   ipcMain.handle(IPC.statusGet, () => buildStatusView(ctx))
 
@@ -199,13 +215,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
         ? (arg as { sourcePath: string }).sourcePath
         : null
     if (sourcePath === null) return { ok: false, message: '缺少配置路径' }
-    try {
-      await mkdir(ctx.configDir, { recursive: true })
-      await importFromFile(ctx.configDir, sourcePath)
-      return { ok: true, needsRestart: true }
-    } catch (err) {
-      return { ok: false, message: shortMessage(err) }
-    }
+    return importIntoConfigDir(ctx, sourcePath)
   })
 
   ipcMain.handle(IPC.configPickImport, async (): Promise<PickImportResult> => {
@@ -224,13 +234,6 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
       return { ok: false, message: shortMessage(err) }
     }
     if (sourcePath === null) return { ok: false, cancelled: true }
-    try {
-      // configDir 才是 upstream.yaml 的落点；no-config 时 profileDir 为 null。
-      await mkdir(ctx.configDir, { recursive: true })
-      await importFromFile(ctx.configDir, sourcePath)
-      return { ok: true, needsRestart: true }
-    } catch (err) {
-      return { ok: false, message: shortMessage(err) }
-    }
+    return importIntoConfigDir(ctx, sourcePath)
   })
 }
