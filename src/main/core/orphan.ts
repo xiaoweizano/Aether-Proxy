@@ -1,7 +1,6 @@
 export interface OrphanInput {
   port: number
   oldSecret: string
-  expectedConfigHash: string
   fetchFn?: typeof fetch
 }
 
@@ -14,10 +13,8 @@ export async function classifyOrphan(input: OrphanInput): Promise<'ours' | 'fore
       signal: AbortSignal.timeout(1500)
     })
   } catch {
+    // 超时同样落到 none：调用方不能把 none 当成"端口空闲"，应另选端口。
     return 'none'
   }
-  if (res.status === 401 || res.status === 404) return 'foreign'
-  if (!res.ok) return 'foreign'
-  const body = (await res.json().catch(() => ({}))) as { configHash?: string }
-  return body.configHash === input.expectedConfigHash ? 'ours' : 'foreign'
+  return res.ok ? 'ours' : 'foreign'
 }
