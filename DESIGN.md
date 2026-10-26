@@ -261,7 +261,8 @@ The three rate cards each give their badge a tinted chip: blue at 14% for downlo
 - **Body** (400, 13px): nav items, 已连接, and the proxy pill; a 500-weight 13px variant is the chart card's title.
 - **Label** (400, 12px): card labels (当前节点, 内核状态, 下载速度), hero sub-line, health line, kernel row keys, segmented-control options, and the error card's cause paragraph at 1.6 leading on a 62ch measure.
 - **Micro** (400, 11px): chips, stat footers, the three hero stat keys, badge glyphs, chart legend, version line, window-button glyphs.
-- **Mono** (400, 12px, Cascadia Mono, tabular): the health percentage, 100%, in `success`. That is the entire use.
+- **Mono** (400, 12px, Cascadia Mono, tabular): the health percentage — `—` in `faint` while no health source exists, `success` once one does. That is the entire use.
+- **Faces** are tokens, not values: `--font` (Segoe UI Variable Text → Segoe UI → system-ui → 微软雅黑 UI → PingFang SC → sans-serif) and `--num` (Cascadia Mono → Consolas → ui-monospace → monospace) in `src/renderer/styles/tokens.css`. Nothing else declares a family.
 
 ### Named Rules
 
@@ -359,7 +360,7 @@ The header's state is one 7px dot set 7px from its words at 13px. Running: green
 
 14px radius, `card` fill, 1px `border`, `16px 18px` padding, no shadow. The label row is 12px `dim` with an optional 24px icon button at the far right; the icon button rests with a transparent border in `faint` and on hover gains a 1px `border-2` outline and `text` colour — no fill change.
 
-- **Current node (hero, spans 2):** 30px node name with a 22px chip at its baseline; a 12px `faint` sub-line (mode · transport · port) with the transport in `dim`; a health line (12px `dim`, percentage right-aligned in 12px mono `success`); the 60-tick strip; then the three-column stat row.
+- **Current node (hero, spans 2):** 30px node name with a 22px chip at its baseline; a 12px `faint` sub-line (mode · transport · port) with the transport in `dim`; a health line (12px `dim`, percentage right-aligned in 12px mono — `—` in `faint` while no health source exists); the 60-tick strip; then the three-column stat row.
 - **Kernel (1):** 26px version line, a wrapping row of three solid chips (运行中 / 端口 / 策略组), then three key/value rows at 12px — key in `faint`, value in `dim` at 500 with tabular figures, right-aligned.
 - **Rate cards (1 each):** a 22px tinted badge with a direction arrow, the 12px label, the 28px figure with a 14px `dim` unit, and a footer pinned to the bottom. Each card carries one primary figure.
 - **Traffic chart (spans 3):** 13px title, two solid chips for peak and average, a right-aligned legend of 8px dots and 11px `faint` labels; then a 150px chart. Download is a 2px `accent` line over a 10% wash; upload is a 2px `success` line with no fill; four 1px gridlines in #1E2126, no axes, no labels, no y-scale.
@@ -374,7 +375,9 @@ When there is no data the figure is replaced rather than hidden: the hero node n
 
 ### 60-tick health strip
 
-Sixty 1px-radius bars, `flex:1` each, 2px apart, 22px tall, aligned to the bottom. Live: green at 85% for a healthy minute, with a missed minute drawn as a 55%-height `border-2` stub at full opacity. With no kernel the whole strip becomes 40%-height `border-2` bars — same geometry, no green — so "no history" cannot be mistaken for "healthy". Height carries the miss, colour carries the health; the strip is `aria-hidden` because the sentence above it already says 0 次失败.
+Sixty 1px-radius bars, `flex:1` each, 2px apart, 22px tall, aligned to the bottom. Live: green at 85% for a healthy minute, with a missed minute drawn as a 55%-height `border-2` stub at full opacity. With no kernel the whole strip becomes 40%-height `border-2` bars — same geometry, no green — so "no history" cannot be mistaken for "healthy". Height carries the miss, colour carries the health; the strip is `aria-hidden` because the sentence above it already says the count.
+
+**Unknown, not healthy, by default.** v1 has no per-minute health source: mihomo reports a per-node delay but no failure history. Until one exists the strip renders in its dim form (40%-height `border-2`) and the health line states the absence — `最近 60 分钟 —`, plus `· 最近 480ms` when a delay is known — while the metric itself stays `—` in `faint`. A green strip is a claim, and the product may not make it without the data.
 
 ### Empty chart and idle state
 
@@ -386,7 +389,9 @@ The failure state's only red element, spanning two tracks where the hero sits. S
 
 ### State coverage
 
-Four states are drawn and only four: connected (`a-cards.html`), not started with the proxy off, connected but idle, and kernel error (`a-states.html`). Degraded, reconnecting, invalid-config and TUN states have no recorded treatment — they must be designed, not inferred from these four.
+Four states are drawn and only four: connected (`a-cards.html`), not started with the proxy off, connected but idle, and kernel error (`a-states.html`). Degraded, reconnecting and TUN states have no recorded treatment — they must be designed, not inferred from these four.
+
+**Shipped in v1** (`src/renderer/components/StatePanel.tsx`) so far: `no-config`, `config-error`, `core-error` and `in-use`. One deliberate departure from the states sheet — the panel is a single neutral card, not the red error card described above. Red is reserved for a *cause that has already been named*; these four are all "nothing is running yet, here is the way forward", so they share one calm card, a 26px title, a 13px `dim` detail line, and at most one primary `accent` button. The red cause card stays specified for a kernel that dies *while the user is watching* — a later milestone, once exit codes and the failure log are wired. Copy for all four lives in `src/renderer/copy.ts` under `state`.
 
 ## Do's and Don'ts
 
