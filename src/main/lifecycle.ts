@@ -1,6 +1,6 @@
 export interface StartupDeps {
   ownership: {
-    restoreOnStartupIfStale(): Promise<'none' | 'restored' | 'conflict'>
+    restoreOnStartupIfStale(): Promise<'none' | 'restored' | 'conflict' | 'in-use'>
   }
   loadConfig(): Promise<{ ok: boolean; error?: string }>
   core: { start(): Promise<unknown> }
@@ -11,7 +11,7 @@ export interface StartupDeps {
 
 export interface StartupResult {
   status: 'ready' | 'config-error' | 'core-error'
-  restore: 'none' | 'restored' | 'conflict'
+  restore: 'none' | 'restored' | 'conflict' | 'in-use'
 }
 
 export async function startup(deps: StartupDeps): Promise<StartupResult> {
