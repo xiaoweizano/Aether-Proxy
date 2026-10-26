@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { FakePlatformProxy } from './fake'
@@ -57,5 +57,12 @@ describe('ProxyOwnership', () => {
     const second = new ProxyOwnership(pp, stateFile)
     expect(await second.restoreOnStartupIfStale()).toBe('conflict')
     expect((await pp.getSystemProxy()).server).toBe('other:9999')
+  })
+
+  it('快照不属于 Aether 时忽略并返回 none', async () => {
+    const stateFile = path.join(dir, 'proxy-state.json')
+    await writeFile(stateFile, JSON.stringify({ owner: 'someone-else', enabled: true }), 'utf8')
+    const own = new ProxyOwnership(pp, stateFile)
+    expect(await own.restoreOnStartupIfStale()).toBe('none')
   })
 })

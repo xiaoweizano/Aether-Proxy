@@ -1,6 +1,7 @@
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import type { ProxyState } from '../../shared/types'
 import type { PlatformProxy } from './platform'
+import { writeFileAtomic } from '../config/atomic'
 
 interface SavedState extends ProxyState {
   owner: 'aether'
@@ -29,7 +30,7 @@ export class ProxyOwnership {
 
   async snapshotBeforeApply(state: ProxyState, appliedServer: string): Promise<void> {
     const saved: SavedState = { ...state, owner: 'aether', pid: this.pid, at: this.now(), appliedServer }
-    await writeFile(this.stateFile, JSON.stringify(saved, null, 2), 'utf8')
+    await writeFileAtomic(this.stateFile, JSON.stringify(saved, null, 2))
   }
 
   private async load(): Promise<SavedState | null> {
