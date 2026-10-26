@@ -140,7 +140,15 @@ import { defineConfig } from 'electron-vite'
 
 export default defineConfig({
   main: { build: { rollupOptions: { input: 'src/main/index.ts' } } },
-  preload: { build: { rollupOptions: { input: 'src/preload/index.ts' } } },
+  preload: {
+    build: {
+      rollupOptions: {
+        input: 'src/preload/index.ts',
+        // 沙箱化的 preload 只能以 CommonJS 运行，必须显式产出 .cjs
+        output: { format: 'cjs', entryFileNames: '[name].cjs' }
+      }
+    }
+  },
   renderer: { build: { rollupOptions: { input: 'src/renderer/index.html' } } }
 })
 ```
@@ -151,7 +159,7 @@ export default defineConfig({
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  test: { environment: 'node', include: ['src/**/*.test.ts'] }
+  test: { environment: 'node', include: ['src/**/*.test.ts'], passWithNoTests: true }
 })
 ```
 
@@ -230,7 +238,8 @@ function createWindow(): void {
     minHeight: 640,
     backgroundColor: '#0A0B0D',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      // 沙箱化 preload 由构建产出为 CommonJS（.cjs），不能用 .mjs
+      preload: path.join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false
@@ -238,7 +247,10 @@ function createWindow(): void {
   })
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event) => event.preventDefault())
-  win.loadFile(path.join(__dirname, '../renderer/index.html'))
+
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl) win.loadURL(devUrl)
+  else win.loadFile(path.join(__dirname, '../renderer/index.html'))
 }
 
 app.whenReady().then(createWindow)
