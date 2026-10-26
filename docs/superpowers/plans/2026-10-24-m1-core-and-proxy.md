@@ -1273,6 +1273,46 @@ describe('CoreSupervisor', () => {
     expect(sup.status).toBe('stopped')
     expect(() => process.kill(info.pid, 0)).toThrow()
   })
+
+  it('连续 3 次健康检查失败进入 error', async () => {
+    let calls = 0
+    const fetchFn = (async () => {
+      calls += 1
+      if (calls <= 2) return new Response(JSON.stringify({ version: 'x' }), { status: 200 })
+      return new Response('nope', { status: 401 })
+    }) as any
+    const homeDir = await mkdtemp(path.join(tmpdir(), 'aether-core-'))
+    const controllerPort = await allocatePort()
+    const sup = new CoreSupervisor({
+      binary: process.execPath,
+      homeDir,
+      configPath: path.join(homeDir, 'runtime.yaml'),
+      controllerPort,
+      secret: 's',
+      env: { FAKE_PORT: String(controllerPort), FAKE_SECRET: 's' },
+      argsPrefix: ['test/fixtures/fake-mihomo.mjs'],
+      fetchFn
+    })
+    running.push(sup)
+    await sup.start()
+    await sup.checkHealth()
+    await sup.checkHealth()
+    await sup.checkHealth()
+    expect(sup.status).toBe('error')
+  })
+
+  it('二进制不存在时 start 拒绝而不是崩溃', async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), 'aether-core-'))
+    const sup = new CoreSupervisor({
+      binary: 'aether-no-such-binary-xyz',
+      homeDir,
+      configPath: path.join(homeDir, 'runtime.yaml'),
+      controllerPort: 1,
+      secret: 's'
+    })
+    await expect(sup.start()).rejects.toThrow()
+    expect(sup.status).toBe('stopped')
+  })
 })
 ```
 
@@ -1326,6 +1366,11 @@ export class CoreSupervisor {
       windowsHide: true
     })
     this.child = child
+    let spawnError: Error | null = null
+    child.once('error', (err) => {
+      spawnError = err
+      this.state = 'error'
+    })
     child.once('exit', () => {
       if (this.state !== 'stopped') this.state = 'error'
       this.child = null
@@ -1333,12 +1378,22 @@ export class CoreSupervisor {
 
     const deadline = Date.now() + 10_000
     while (Date.now() < deadline) {
+      if (spawnError) {
+        await this.stop()
+        throw spawnError
+      }
       if (await this.checkHealth()) {
-        this.state = 'running'
         this.failures = 0
+        let version = 'unknown'
+        try {
+          version = await this.version()
+        } catch {
+          version = 'unknown'
+        }
+        this.state = 'running'
         return {
           pid: child.pid ?? -1,
-          version: await this.version(),
+          version,
           controllerPort: this.opts.controllerPort,
           startedAt: Date.now()
         }
@@ -1355,19 +1410,27 @@ export class CoreSupervisor {
         headers: { authorization: `Bearer ${this.opts.secret}` },
         signal: AbortSignal.timeout(1500)
       })
-      if (!res.ok) return false
+      if (!res.ok) {
+        this.markFailure()
+        return false
+      }
       this.failures = 0
       return true
     } catch {
-      this.failures += 1
-      if (this.failures >= 3 && this.state === 'running') this.state = 'error'
+      this.markFailure()
       return false
     }
   }
 
+  private markFailure(): void {
+    this.failures += 1
+    if (this.failures >= 3 && this.state === 'running') this.state = 'error'
+  }
+
   private async version(): Promise<string> {
     const res = await this.fetchFn(`http://127.0.0.1:${this.opts.controllerPort}/version`, {
-      headers: { authorization: `Bearer ${this.opts.secret}` }
+      headers: { authorization: `Bearer ${this.opts.secret}` },
+      signal: AbortSignal.timeout(1500)
     })
     const body = (await res.json()) as { version?: string }
     return body.version ?? 'unknown'
