@@ -6,6 +6,7 @@ export interface RestarterOptions {
   schedule?: (fn: () => void, ms: number) => void
   policy?: RestartPolicy
   onGiveUp?: () => void
+  onStartError?: (err: unknown) => void
 }
 
 export class CoreRestarter {
@@ -26,7 +27,9 @@ export class CoreRestarter {
       return { scheduled: false }
     }
     this.attempts.push(now)
-    this.schedule(() => { void this.opts.start() }, decision.delayMs)
+    this.schedule(() => {
+      void this.opts.start().catch((err) => { this.opts.onStartError?.(err) })
+    }, decision.delayMs)
     return { scheduled: true, delayMs: decision.delayMs }
   }
 }
