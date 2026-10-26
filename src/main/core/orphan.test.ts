@@ -29,4 +29,19 @@ describe('classifyOrphan', () => {
     const kind = await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
     expect(kind).toBe('none')
   })
+
+  it('只对 /version 发 GET，并带 Bearer 头', async () => {
+    const fetchFn = vi.fn(async () => new Response('{}', { status: 200 }))
+    await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
+    const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    expect(String(url)).toBe('http://127.0.0.1:5000/version')
+    expect(init.method ?? 'GET').toBe('GET')
+    expect(init.headers).toMatchObject({ authorization: 'Bearer s' })
+  })
+
+  it('500 → foreign', async () => {
+    const fetchFn = fakeFetch(500)
+    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
+    expect(kind).toBe('foreign')
+  })
 })
