@@ -79,6 +79,7 @@ export interface BootstrapOptions {
   repoRoot: string
   spawnFn?: typeof import('node:child_process').spawn
   fetchFn?: typeof fetch
+  platformProxy?: PlatformProxy   // 测试注入；缺省时 Windows 用 loadWindowsProxy()
 }
 
 export interface AppContext {
@@ -94,9 +95,10 @@ export interface AppContext {
 
 export async function bootstrap(opts: BootstrapOptions): Promise<AppContext>
 ```
-- 路径约定：profile 固定为 `<userDataDir>/profiles/default`；代理状态 `<userDataDir>/proxy-state.json`；内核状态 `<userDataDir>/core-state.json`。
+- 路径约定：profile 固定为 `<userDataDir>/profiles/default`；代理状态 `<userDataDir>/proxy-state.json`；内核状态 `<userDataDir>/core-state.json`；用户设置 `<userDataDir>/settings.json`（`{ proxyEnabled: boolean }`，默认 `false`）。
 - 无 `upstream.yaml` → 不启动内核、不改代理，`startupStatus: 'no-config'`。
-- 有配置：`ensureGeodata(profileDir, <repoRoot>/vendor/geodata)` → 读 YAML → `mergeConfig` → `missingReferences` → `writeRuntime` → `validateConfig` → `core.start` → 记录 `core-state.json` → 若上次代理开则 `controller.enable`。
+- 有配置：`ensureGeodata(profileDir, geodataDir)` → 读 YAML → `mergeConfig` → `missingReferences` → `writeRuntime` → `validateConfig` → `core.start` → 记录 `core-state.json` → **仅当 `settings.proxyEnabled === true` 且 `restore` 不是 `'conflict'` / `'in-use'` 时** 才 `controller.enable`。
+- `geodataDir`：打包态 `<resourcesPath>/geodata`，开发态 `<repoRoot>/vendor/geodata`。
 
 - [ ] **Step 1: 写失败测试**
 
