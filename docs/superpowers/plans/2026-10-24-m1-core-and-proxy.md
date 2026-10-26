@@ -52,6 +52,7 @@ src/main/core/backoff.ts          nextRestart 纯函数
 src/main/core/supervisor.ts       启动/停止/健康检查/退避重启
 src/main/core/orphan.ts           孤儿内核判定
 src/main/config/paths.ts          profiles 目录解析
+src/main/config/atomic.ts         原子写（临时文件 + rename），供 runtime 与 import 共用
 src/main/config/import.ts         本地/URL 导入
 src/main/config/merge.ts          逐键合并
 src/main/config/references.ts     引用完整性
@@ -870,7 +871,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createProfile, importFromFile, importFromUrl } from './import'
+import { importFromFile, importFromUrl } from './import'
+import { createProfile } from './paths'
 
 let root: string
 beforeEach(async () => { root = await mkdtemp(path.join(tmpdir(), 'aether-import-')) })
@@ -928,6 +930,24 @@ Expected: FAIL，`Cannot find module './import'`
 
 - [ ] **Step 3: 实现**
 
+`src/main/config/atomic.ts`：
+
+```ts
+import { randomBytes } from 'node:crypto'
+import { rename, unlink, writeFile } from 'node:fs/promises'
+
+export async function writeFileAtomic(target: string, data: string): Promise<void> {
+  const tmp = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
+  try {
+    await writeFile(tmp, data, 'utf8')
+    await rename(tmp, target)
+  } catch (err) {
+    await unlink(tmp).catch(() => {})
+    throw err
+  }
+}
+```
+
 `src/main/config/paths.ts`：
 
 ```ts
@@ -944,9 +964,10 @@ export async function createProfile(rootDir: string, id: string) {
 `src/main/config/import.ts`：
 
 ```ts
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import YAML from 'yaml'
+import { writeFileAtomic } from './atomic'
 
 function assertClashConfig(text: string): void {
   let parsed: unknown
@@ -964,7 +985,7 @@ function assertClashConfig(text: string): void {
 export async function importFromFile(profileDir: string, sourcePath: string): Promise<void> {
   const text = await readFile(sourcePath, 'utf8')
   assertClashConfig(text)
-  await writeFile(path.join(profileDir, 'upstream.yaml'), text, 'utf8')
+  await writeFileAtomic(path.join(profileDir, 'upstream.yaml'), text)
 }
 
 export async function importFromUrl(
@@ -976,7 +997,7 @@ export async function importFromUrl(
   if (!res.ok) throw new Error(`订阅地址返回 ${res.status}`)
   const text = await res.text()
   assertClashConfig(text)
-  await writeFile(path.join(profileDir, 'upstream.yaml'), text, 'utf8')
+  await writeFileAtomic(path.join(profileDir, 'upstream.yaml'), text)
 }
 ```
 
