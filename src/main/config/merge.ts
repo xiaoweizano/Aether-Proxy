@@ -66,6 +66,9 @@ export function mergeConfig(
   base['external-controller'] = `127.0.0.1:${inject.controllerPort}`
   base.secret = inject.secret
   base['find-process-mode'] = 'always'
+  // 日志面板落地前保持安静：stdout/stderr 已被 supervisor 丢弃，
+  // 高日志级别只会白耗内核 IO。
+  base['log-level'] = 'warning'
 
   const tun = isObject(base.tun) ? base.tun : {}
   base.tun = { ...tun, enable: false }

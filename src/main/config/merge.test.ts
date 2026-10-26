@@ -70,4 +70,9 @@ describe('mergeConfig', () => {
     const out = mergeConfig({ 'geodata-mode': true }, {}, inject) as any
     expect(out['geodata-mode']).toBe(true)
   })
+
+  it('日志面板落地前强制 warning，覆盖上游 info', () => {
+    const out = mergeConfig({ 'log-level': 'info' }, {}, inject) as any
+    expect(out['log-level']).toBe('warning')
+  })
 })

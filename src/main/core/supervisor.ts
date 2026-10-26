@@ -36,7 +36,9 @@ export class CoreSupervisor {
     ]
     const child = this.spawnFn(this.opts.binary, args, {
       env: { ...process.env, ...this.opts.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // M1 没有日志面板：内核每条代理请求都会往 stdout/stderr 写日志，
+      // 管道没人读时会填满 64 KiB 缓冲并卡住数据面，因此直接丢弃。
+      stdio: ['ignore', 'ignore', 'ignore'],
       windowsHide: true
     })
     this.child = child
