@@ -1623,7 +1623,8 @@ git commit -m "feat(core): 二进制路径解析与重启调度接入"
 - Create: `src/main/core/orphan.ts`, `src/main/core/orphan.test.ts`
 
 **Interfaces:**
-- Produces: `classifyOrphan(input: { port: number; oldSecret: string; expectedConfigHash: string; fetchFn?: typeof fetch }): Promise<'ours' | 'foreign' | 'none'>`
+- Produces: `classifyOrphan(input: { port: number; oldSecret: string; fetchFn?: typeof fetch }): Promise<'ours' | 'foreign' | 'none'>`
+- 判定依据是**旧 secret 是否被接受**：mihomo 的 `/version` 不返回配置哈希，但只有我们上次启动的内核知道这个 128 位随机 secret。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1636,28 +1637,43 @@ function fakeFetch(status: number, body: unknown = {}) {
 }
 
 describe('classifyOrphan', () => {
-  it('旧 secret 通过且配置哈希一致 → ours', async () => {
-    const fetchFn = fakeFetch(200, { version: 'v1.19.32', configHash: 'h1' })
-    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', expectedConfigHash: 'h1', fetchFn: fetchFn as any })
+  it('旧 secret 通过 → ours', async () => {
+    const fetchFn = fakeFetch(200, { version: 'v1.19.32' })
+    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
     expect(kind).toBe('ours')
-  })
-
-  it('旧 secret 通过但哈希不同 → foreign', async () => {
-    const fetchFn = fakeFetch(200, { version: 'v1.19.32', configHash: 'h2' })
-    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', expectedConfigHash: 'h1', fetchFn: fetchFn as any })
-    expect(kind).toBe('foreign')
   })
 
   it('401 → foreign', async () => {
     const fetchFn = fakeFetch(401)
-    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', expectedConfigHash: 'h1', fetchFn: fetchFn as any })
+    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
+    expect(kind).toBe('foreign')
+  })
+
+  it('404 → foreign', async () => {
+    const fetchFn = fakeFetch(404)
+    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
     expect(kind).toBe('foreign')
   })
 
   it('连接被拒 → none', async () => {
     const fetchFn = vi.fn(async () => { throw new Error('ECONNREFUSED') })
-    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', expectedConfigHash: 'h1', fetchFn: fetchFn as any })
+    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
     expect(kind).toBe('none')
+  })
+
+  it('只对 /version 发 GET，并带 Bearer 头', async () => {
+    const fetchFn = vi.fn(async () => new Response('{}', { status: 200 }))
+    await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
+    const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit]
+    expect(String(url)).toBe('http://127.0.0.1:5000/version')
+    expect(init.method ?? 'GET').toBe('GET')
+    expect(init.headers).toMatchObject({ authorization: 'Bearer s' })
+  })
+
+  it('500 → foreign', async () => {
+    const fetchFn = fakeFetch(500)
+    const kind = await classifyOrphan({ port: 5000, oldSecret: 's', fetchFn: fetchFn as any })
+    expect(kind).toBe('foreign')
   })
 })
 ```
@@ -1673,7 +1689,6 @@ Expected: FAIL
 export interface OrphanInput {
   port: number
   oldSecret: string
-  expectedConfigHash: string
   fetchFn?: typeof fetch
 }
 
@@ -1686,12 +1701,10 @@ export async function classifyOrphan(input: OrphanInput): Promise<'ours' | 'fore
       signal: AbortSignal.timeout(1500)
     })
   } catch {
+    // 超时同样落到 none：调用方不能把 none 当成"端口空闲"，应另选端口。
     return 'none'
   }
-  if (res.status === 401 || res.status === 404) return 'foreign'
-  if (!res.ok) return 'foreign'
-  const body = (await res.json().catch(() => ({}))) as { configHash?: string }
-  return body.configHash === input.expectedConfigHash ? 'ours' : 'foreign'
+  return res.ok ? 'ours' : 'foreign'
 }
 ```
 
@@ -1704,7 +1717,7 @@ Expected: PASS
 
 ```bash
 git add src/main/core/orphan.ts src/main/core/orphan.test.ts
-git commit -m "feat(core): 孤儿内核判定（旧 secret + 配置哈希）"
+git commit -m "feat(core): 孤儿内核判定（仅凭旧 secret）"
 ```
 
 ---
