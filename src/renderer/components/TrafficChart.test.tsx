@@ -79,6 +79,14 @@ describe('TrafficChart', () => {
     expect(lastUpY).toBeGreaterThan(lastDownY + 100)
   })
 
+  it('超过 60 个样本时只画最近 60 个', () => {
+    const history = Array.from({ length: 90 }, (_, index) => ({ up: index, down: index * 2 }))
+    render(<TrafficChart history={history} />)
+
+    // 组件内部裁剪，契约不依赖调用方
+    expect(pointCount(screen.getByTestId('down-line').getAttribute('d'))).toBe(60)
+  })
+
   it('有数据时显示峰值与平均 chip', () => {
     render(
       <TrafficChart
@@ -89,7 +97,8 @@ describe('TrafficChart', () => {
       />
     )
 
-    expect(screen.getByText(/最高 2\.00 MB\/s/)).toBeInTheDocument()
-    expect(screen.getByText(/平均 1\.50 MB\/s/)).toBeInTheDocument()
+    // chip 明确是下载口径：纵轴峰值是上下行共用的，标签不能说成「最高」
+    expect(screen.getByText(`${copy.dashboard.chart.peak} 2.00 MB/s`)).toBeInTheDocument()
+    expect(screen.getByText(`${copy.dashboard.chart.average} 1.50 MB/s`)).toBeInTheDocument()
   })
 })

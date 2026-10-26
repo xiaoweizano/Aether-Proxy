@@ -28,25 +28,37 @@ describe('NodeCard', () => {
     expect(screen.getByText('HK-01')).toBeInTheDocument()
     expect(screen.getByText('Proxy')).toBeInTheDocument()
     expect(screen.getByText('规则 · TCP')).toBeInTheDocument()
-    expect(screen.getByText(copy.dashboard.node.health('38ms'))).toBeInTheDocument()
+    expect(screen.getByText(copy.dashboard.node.healthUnknownWithDelay('38ms'))).toBeInTheDocument()
     expect(screen.getByText('01:00:00')).toBeInTheDocument()
     expect(screen.getByText('2.7 MB')).toBeInTheDocument()
   })
 
-  it('节点没有延迟数据时健康行显示破折号延迟', () => {
-    render(<NodeCard active={{ group: 'Proxy', node: 'HK-01' }} mode="global" />)
+  it('失败次数与健康百分比没有数据源，一律显示未知', () => {
+    const { container } = render(
+      <NodeCard active={{ group: 'Proxy', node: 'HK-01', delay: 38 }} mode="rule" />
+    )
 
-    expect(screen.getByText(copy.dashboard.node.health('—'))).toBeInTheDocument()
+    expect(screen.getByText(copy.dashboard.node.healthUnknownWithDelay('38ms'))).toBeInTheDocument()
+    expect(container.textContent).not.toContain('次失败')
+    expect(container.textContent).not.toContain('100%')
+    expect(container.querySelector('.health-pct')?.textContent).toBe('—')
   })
 
-  it('60 格刻度条在无数据时变暗', () => {
+  it('节点没有延迟数据时健康行不声称任何延迟', () => {
+    render(<NodeCard active={{ group: 'Proxy', node: 'HK-01' }} mode="global" />)
+
+    expect(screen.getByText(copy.dashboard.node.healthUnknown)).toBeInTheDocument()
+  })
+
+  it('刻度条在两种状态下都是中性底色，不会用绿色冒充已知健康', () => {
     const { container, rerender } = render(<NodeCard active={null} mode="rule" />)
 
-    expect(container.querySelector('.ticks.dim')).not.toBeNull()
     expect(container.querySelectorAll('.tick')).toHaveLength(60)
+    expect(screen.getByTestId('tick-strip')).toHaveAttribute('aria-hidden', 'true')
 
     rerender(<NodeCard active={{ group: 'Proxy', node: 'HK-01', delay: 20 }} mode="rule" />)
-    expect(container.querySelector('.ticks.dim')).toBeNull()
+    // 有节点不等于有一分钟一分钟的健康记录：仍然是 dim。
+    expect(container.querySelector('.ticks.dim')).not.toBeNull()
     expect(screen.getByTestId('tick-strip')).toHaveAttribute('aria-hidden', 'true')
   })
 

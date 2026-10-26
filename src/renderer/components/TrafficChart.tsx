@@ -11,6 +11,8 @@ export interface TrafficChartProps {
 /** 与视觉稿一致的坐标系；`preserveAspectRatio="none"` 让曲线随卡片宽度拉伸。 */
 export const CHART_WIDTH = 1000
 export const CHART_HEIGHT = 190
+/** 曲线只画最近一分钟；调用方多给了也只取尾部，契约由组件自己兜住。 */
+export const CHART_SAMPLES = 60
 const TOP_PADDING = 10
 
 interface Point {
@@ -94,10 +96,12 @@ const GRID_LINES = [20, 65, 110, 155]
  * 「还没测到」与「测到的是 0」在界面上是两件事。
  */
 export function TrafficChart({ history, connected = true }: TrafficChartProps) {
-  const peak = scalePeakOf(history)
-  const downPoints = chartPoints(history, 'down', peak)
-  const upPoints = chartPoints(history, 'up', peak)
-  const empty = history.length === 0
+  // 契约在组件内兜住：多给的样本只取尾部 60 个，调用方不必先裁剪。
+  const samples = history.length > CHART_SAMPLES ? history.slice(-CHART_SAMPLES) : history
+  const peak = scalePeakOf(samples)
+  const downPoints = chartPoints(samples, 'down', peak)
+  const upPoints = chartPoints(samples, 'up', peak)
+  const empty = samples.length === 0
   const baseline = CHART_HEIGHT - 1
 
   return (
@@ -107,10 +111,10 @@ export function TrafficChart({ history, connected = true }: TrafficChartProps) {
         {!empty && (
           <>
             <span className="chip solid">
-              {copy.dashboard.chart.peak} {formatRate(peakOf(history))}
+              {copy.dashboard.chart.peak} {formatRate(peakOf(samples))}
             </span>
             <span className="chip solid">
-              {copy.dashboard.chart.average} {formatRate(averageOf(history))}
+              {copy.dashboard.chart.average} {formatRate(averageOf(samples))}
             </span>
           </>
         )}

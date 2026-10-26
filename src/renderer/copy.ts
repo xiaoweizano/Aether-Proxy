@@ -23,8 +23,9 @@ export const copy = {
     node: {
       label: '当前节点',
       sub: (mode: string) => `${mode} · TCP`,
-      health: (delay: string) => `最近 60 分钟 0 次失败 · 最近 ${delay}`,
-      healthRate: '100%',
+      /** 失败次数还没有数据源；保留标签，值一律是未知。 */
+      healthUnknown: '最近 60 分钟 —',
+      healthUnknownWithDelay: (delay: string) => `最近 60 分钟 — · 最近 ${delay}`,
       noSession: '没有会话',
       session: '会话时长',
       used: '已用流量',
@@ -38,8 +39,8 @@ export const copy = {
       port: (port: string) => `端口 ${port}`,
       groups: (count: string) => `${count} 个策略组`,
       startedAt: '启动于',
-      guard: '进程守护',
-      guardOk: '正常'
+      memory: '内存占用',
+      guard: '进程守护'
     },
     stats: {
       down: '下载速度',
@@ -50,8 +51,8 @@ export const copy = {
     },
     chart: {
       title: '流量历史',
-      peak: '最高',
-      average: '平均',
+      peak: '下载最高',
+      average: '下载平均',
       downLegend: '下载',
       upLegend: '上传',
       idleNote: '暂无流量 · 访问任意网站试试',

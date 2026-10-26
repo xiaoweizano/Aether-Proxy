@@ -6,7 +6,12 @@ export interface CoreCardProps {
   status: AppStatusView | null
 }
 
-/** 内核状态：版本、三个事实 chip、启动时间与守护状态；缺一项就显示破折号。 */
+/**
+ * 内核状态：版本、三个事实 chip、启动时间、内存与守护状态。
+ *
+ * 内存要等 `/memory` 采集，进程守护要等重启用例，两者都还没有数据源，因此一律显示
+ * 破折号——「没有」和「不知道」在界面上必须是两件事。
+ */
 export function CoreCard({ status }: CoreCardProps) {
   const core = status?.core
   const running = core !== undefined && status?.status !== 'core-error'
@@ -43,10 +48,12 @@ export function CoreCard({ status }: CoreCardProps) {
           <b className={core === undefined ? 'muted' : undefined}>{startedAt}</b>
         </div>
         <div>
+          <span>{copy.dashboard.core.memory}</span>
+          <b className="muted">{UNKNOWN}</b>
+        </div>
+        <div>
           <span>{copy.dashboard.core.guard}</span>
-          <b className={core === undefined ? 'muted' : undefined}>
-            {core === undefined ? UNKNOWN : copy.dashboard.core.guardOk}
-          </b>
+          <b className="muted">{UNKNOWN}</b>
         </div>
       </div>
     </section>

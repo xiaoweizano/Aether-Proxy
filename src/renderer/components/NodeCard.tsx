@@ -22,11 +22,14 @@ const MODE_LABEL: Record<Mode, string> = {
   direct: copy.mode.direct
 }
 
-/** 没有节点就没有历史：整条刻度变暗，不能把「无数据」画成「全绿」。 */
-function TickStrip({ live }: { live: boolean }) {
+/**
+ * 60 格刻度条。失败/健康历史还没有数据源，所以整条一律用中性底色、半高，
+ * 「全绿」必须等真的有一分钟一分钟的健康记录之后再出现。
+ */
+function TickStrip() {
   const ticks = Array.from({ length: TICK_COUNT }, (_, index) => index)
   return (
-    <div className={live ? 'ticks' : 'ticks dim'} aria-hidden="true" data-testid="tick-strip">
+    <div className="ticks dim" aria-hidden="true" data-testid="tick-strip">
       {ticks.map((index) => (
         <span key={index} className="tick" />
       ))}
@@ -36,7 +39,12 @@ function TickStrip({ live }: { live: boolean }) {
 
 export function NodeCard({ active, mode, startedAt, totals, now }: NodeCardProps) {
   const live = active !== null
+  // 延迟是真实测速结果；失败次数还没有数据源，所以整行不声称任何计数。
   const delay = active?.delay
+  const health =
+    delay === undefined
+      ? copy.dashboard.node.healthUnknown
+      : copy.dashboard.node.healthUnknownWithDelay(`${delay}ms`)
   const session =
     startedAt === undefined ? UNKNOWN : formatDuration(Math.max(0, (now ?? Date.now()) - startedAt))
   const used = totals === undefined || totals === null ? UNKNOWN : formatBytes(totals.upTotal + totals.downTotal)
@@ -55,16 +63,10 @@ export function NodeCard({ active, mode, startedAt, totals, now }: NodeCardProps
       <div className="hero-sub">{mode === null ? UNKNOWN : copy.dashboard.node.sub(MODE_LABEL[mode])}</div>
 
       <div className="healthline">
-        <span>
-          {live
-            ? copy.dashboard.node.health(delay === undefined ? UNKNOWN : `${delay}ms`)
-            : copy.dashboard.node.noSession}
-        </span>
-        <span className={live ? 'health-pct' : 'health-pct muted'}>
-          {live ? copy.dashboard.node.healthRate : UNKNOWN}
-        </span>
+        <span>{live ? health : copy.dashboard.node.noSession}</span>
+        <span className="health-pct muted">{UNKNOWN}</span>
       </div>
-      <TickStrip live={live} />
+      <TickStrip />
 
       <div className="stats3">
         <div>
