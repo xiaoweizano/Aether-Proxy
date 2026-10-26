@@ -6,7 +6,8 @@ export interface AppStatusView {
   restore: 'none' | 'restored' | 'conflict' | 'in-use'
   mode: Mode
   proxyEnabled: boolean
-  core?: { version: string; port: number; startedAt: number }
+  /** `proxyPort` 是 mixed-port（用户真正走的端口）；controller 端口永不下发。 */
+  core?: { version: string; proxyPort: number; startedAt: number }
   profile?: { nodeCount: number; groupCount: number }
 }
 

@@ -145,21 +145,28 @@ describe('buildStatusView', () => {
     dirty.secret = 'super-secret-token'
     dirty.upstream = { password: 'hunter2', token: 'abc' }
     dirty.configPath = 'C:/secret/runtime.yaml'
+    dirty.controllerPort = 9090
 
     const json = JSON.stringify(buildStatusView(ctx))
-    expect(json).not.toMatch(/secret|upstream|password|token|configPath/i)
+    // controller 端口与 secret 同级敏感：渲染层只需要 mixed-port。
+    expect(json).not.toMatch(/secret|upstream|password|token|configPath|controllerPort/i)
   })
 
-  it('逐字段映射内核与配置摘要', async () => {
+  it('逐字段映射内核与配置摘要，端口取 mixed-port 而非 controller 端口', async () => {
     const { ctx } = await harness()
-    expect(buildStatusView(ctx)).toEqual({
+    // harness 的 coreInfo.controllerPort 是 9090；proxyServer 的 7891 才是界面该看到的端口。
+    expect(ctx.coreInfo?.controllerPort).toBe(9090)
+    const view = buildStatusView(ctx)
+    expect(view).toEqual({
       status: 'ready',
       restore: 'none',
       mode: 'rule',
       proxyEnabled: false,
-      core: { version: 'v1.19.32', port: 9090, startedAt: 1_700_000_000_000 },
+      core: { version: 'v1.19.32', proxyPort: 7891, startedAt: 1_700_000_000_000 },
       profile: { nodeCount: 3, groupCount: 1 }
     })
+    expect(view.core?.proxyPort).not.toBe(ctx.coreInfo?.controllerPort)
+    expect(JSON.stringify(view)).not.toContain('9090')
   })
 
   it('内核未运行时省略 core 字段', async () => {
@@ -167,6 +174,13 @@ describe('buildStatusView', () => {
     ctx.coreInfo = null
     const view = buildStatusView(ctx)
     expect(view).not.toHaveProperty('core')
+  })
+
+  it('mixed-port 未知时也不暴露 controller 端口', async () => {
+    const { ctx } = await harness({ proxyServer: null })
+    const view = buildStatusView(ctx)
+    expect(view).not.toHaveProperty('core')
+    expect(JSON.stringify(view)).not.toContain('9090')
   })
 
   it('反映运行期更新（模式、代理开关）', async () => {
@@ -440,6 +454,21 @@ describe('configImport', () => {
     }
     expect(result.ok).toBe(false)
     expect(result.message).toMatch(/不是合法的 Clash 配置/)
+    expect(existsSync(path.join(h.ctx.configDir, 'upstream.yaml'))).toBe(false)
+  })
+
+  it('in-use 时拒绝导入，不碰现有 upstream.yaml', async () => {
+    const h = await harness()
+    h.ctx.startupStatus = 'in-use'
+    const source = path.join(h.dir, 'source.yaml')
+    await writeFile(source, 'proxies: []\nproxy-groups:\n  - { name: P, type: select, proxies: [DIRECT] }\n')
+
+    const result = (await invoke(h.ipc, IPC.configImport, { sourcePath: source })) as {
+      ok: boolean
+      message: string
+    }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe('另一个实例正在运行')
     expect(existsSync(path.join(h.ctx.configDir, 'upstream.yaml'))).toBe(false)
   })
 

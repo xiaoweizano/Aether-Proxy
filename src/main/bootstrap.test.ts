@@ -311,6 +311,42 @@ rules:
     await ctx.stopAll()
   })
 
+  it('无配置 → 导入 → 重启 → quit：stopAll 仍停住新内核并清理状态', async () => {
+    const h = await harness({ config: null, proxyEnabled: true })
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.startupStatus).toBe('no-config')
+    // no-config 下 bootstrap 不碰系统代理。
+    expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+
+    await mkdir(path.join(ctx.configDir), { recursive: true })
+    await writeFile(path.join(ctx.configDir, 'upstream.yaml'), VALID_CONFIG)
+
+    // 从第一次重启开始记录「停内核时状态文件是否还在」。
+    let stateAtStop = true
+    const spawnFn = vi.fn(() =>
+      fakeChild(() => {
+        stateAtStop = existsSync(path.join(h.dir, 'core-state.json'))
+      })
+    )
+    h.opts.spawnFn = spawnFn as unknown as BootstrapOptions['spawnFn']
+
+    await ctx.restartCore()
+    await ctx.restartCore()
+    expect(ctx.startupStatus).toBe('ready')
+
+    // 用户手动开代理，然后退出。
+    await ctx.controller.enable(ctx.proxyServer!)
+    ctx.proxyEnabled = true
+
+    await ctx.stopAll()
+
+    // 停住的是重启后那个 supervisor（两次重启各 spawn 一次），不是启动时的 idle 替身。
+    expect(spawnFn).toHaveBeenCalledTimes(2)
+    expect(stateAtStop).toBe(true)
+    expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+  })
+
   it('重启后配置校验失败时进入 config-error 并抛出', async () => {
     const h = await harness()
     let allow = true
@@ -326,7 +362,7 @@ rules:
     await ctx.stopAll()
   })
 
-  it('重启失败且代理开着时还原系统代理，避免指向已停的内核', async () => {
+  it('重启失败且代理开着时还原系统代理并落盘关闭', async () => {
     const h = await harness({ proxyEnabled: true })
     const ctx = await bootstrap(h.opts)
     expect(ctx.proxyEnabled).toBe(true)
@@ -335,6 +371,38 @@ rules:
     await expect(ctx.restartCore()).rejects.toThrow()
     expect(ctx.proxyEnabled).toBe(false)
     expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+    // 下次启动不能照着旧设置把代理指向一个起不来的内核。
+    expect(JSON.parse(await readFile(path.join(h.dir, 'settings.json'), 'utf8'))).toEqual({
+      proxyEnabled: false
+    })
+
+    await ctx.stopAll()
+  })
+
+  it('重启期间先关代理、成功后自动恢复', async () => {
+    const order: string[] = []
+    const h = await harness({
+      proxyEnabled: true,
+      spawn: () =>
+        fakeChild(() => {
+          order.push('core-stop')
+        })
+    })
+    const ctx = await bootstrap(h.opts)
+
+    const originalRestore = h.pp.restore.bind(h.pp)
+    h.pp.restore = async (state) => {
+      order.push('proxy-off')
+      await originalRestore(state)
+    }
+
+    await ctx.restartCore()
+
+    expect(order.indexOf('proxy-off')).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf('proxy-off')).toBeLessThan(order.indexOf('core-stop'))
+    expect(ctx.proxyEnabled).toBe(true)
+    expect((await h.pp.getSystemProxy()).enabled).toBe(true)
+    expect((await h.pp.getSystemProxy()).server).toBe(ctx.proxyServer)
 
     await ctx.stopAll()
   })

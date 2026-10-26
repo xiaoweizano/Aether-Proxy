@@ -34,9 +34,21 @@ function shortMessage(err: unknown): string {
   return text.slice(0, 300)
 }
 
+/** 从 `127.0.0.1:<mixedPort>` 取出端口；格式不符时返回 null。 */
+function mixedPortOf(proxyServer: string | null): number | null {
+  if (proxyServer === null) return null
+  const match = /:(\d+)$/.exec(proxyServer)
+  if (!match) return null
+  const port = Number(match[1])
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null
+}
+
 /**
  * 状态视图逐字段构建，绝不展开 ctx：ctx 里有 secret 的邻居
  * （controller、ownership）和本地路径，展开即泄漏。
+ *
+ * `core.proxyPort` 是 mixed-port，不是 controller 端口：渲染层既不需要、
+ * 也不允许知道 external-controller 的地址。
  */
 export function buildStatusView(ctx: AppContext): AppStatusView {
   const view: AppStatusView = {
@@ -45,10 +57,11 @@ export function buildStatusView(ctx: AppContext): AppStatusView {
     mode: ctx.mode,
     proxyEnabled: ctx.proxyEnabled
   }
-  if (ctx.coreInfo !== null) {
+  const proxyPort = mixedPortOf(ctx.proxyServer)
+  if (ctx.coreInfo !== null && proxyPort !== null) {
     view.core = {
       version: ctx.coreInfo.version,
-      port: ctx.coreInfo.controllerPort,
+      proxyPort,
       startedAt: ctx.coreInfo.startedAt
     }
   }
@@ -169,6 +182,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
   })
 
   ipcMain.handle(IPC.configImport, async (_event, arg: unknown): Promise<ImportResult> => {
+    // 另一个实例正在使用这份配置：改写 upstream.yaml 会破坏它的运行状态。
+    if (ctx.startupStatus === 'in-use') {
+      return { ok: false, message: '另一个实例正在运行' }
+    }
     const sourcePath =
       typeof arg === 'object' && arg !== null && typeof (arg as { sourcePath?: unknown }).sourcePath === 'string'
         ? (arg as { sourcePath: string }).sourcePath

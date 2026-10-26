@@ -15,7 +15,7 @@ import { ProxyOwnership } from './proxy/ownership'
 import { SystemProxyController } from './proxy/controller'
 import { FakePlatformProxy } from './proxy/fake'
 import type { PlatformProxy } from './proxy/platform'
-import { readSettings } from './settings'
+import { readSettings, writeSettings } from './settings'
 import { CoreLink } from './core/link'
 import type { Mode, CoreInfo } from '../shared/types'
 
@@ -282,7 +282,6 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     link?: CoreLink | null
     coreInfo?: CoreInfo | null
     profile?: Prepared['profile']
-    stopAll?: () => Promise<void>
   }
 
   /**
@@ -302,6 +301,24 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     }
 
     ctx.restartCore = async (): Promise<CoreInfo> => {
+      // 停内核期间系统代理仍指向 mixed-port，整机会短暂断网。先还原系统代理，
+      // 成功启动后再按用户此前的意愿重新接管；失败则保持关闭。
+      const wantProxy = ctx.proxyEnabled
+      if (wantProxy) ctx.proxyError = undefined
+      if (wantProxy) {
+        try {
+          await controller.disable()
+        } catch (err) {
+          ctx.proxyError = describeError(err)
+        }
+        try {
+          ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
+        } catch (err) {
+          ctx.proxyEnabled = false
+          ctx.proxyError ??= describeError(err)
+        }
+      }
+
       await activeSupervisor.stop()
       const restarted = await startCore()
       if (!restarted.ok) {
@@ -320,18 +337,26 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         // prepare 失败时 supervisor 可能已被替换（配置有误）；同步给调用方与 stopAll。
         ctx.supervisor = activeSupervisor
 
-        // 内核不在了，系统代理还指向 mixed-port 会让整机上不了网；先还原再报错。
-        if (ctx.proxyEnabled) {
+        // 内核不在了，系统代理还指向 mixed-port 会让整机上不了网。再兜一次底
+        // （上面的 disable 可能已成功或已失败），并如实记录实际状态。
+        try {
+          await controller.disable()
+        } catch (err) {
+          ctx.proxyError ??= describeError(err)
+        }
+        try {
+          ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
+        } catch {
+          ctx.proxyEnabled = false
+        }
+
+        // 用户期望值也要落盘为关闭：否则下次启动照着 settings 重试，
+        // 又会把系统代理指向一个起不来的内核。
+        if (wantProxy) {
           try {
-            await controller.disable()
+            await writeSettings(settingsFile, { proxyEnabled: false })
           } catch (err) {
-            ctx.proxyError = describeError(err)
-          }
-          try {
-            ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
-          } catch (err) {
-            ctx.proxyEnabled = false
-            ctx.proxyError ??= describeError(err)
+            ctx.proxyError ??= `设置未能保存：${describeError(err)}`
           }
         }
         throw new Error(message)
@@ -351,8 +376,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       if (ctx.mode !== prepared.mode) await prepared.link.setMode(ctx.mode)
 
       // mixed-port 在会话内不变，但代理所有权需要指向新内核；同时复核系统真实状态。
-      if (ctx.proxyEnabled) {
-        ctx.proxyError = undefined
+      if (wantProxy) {
         try {
           await controller.enable(prepared.proxyServer)
         } catch (err) {
@@ -393,40 +417,41 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         throw new Error('内核未运行，无法重启')
       },
       onCoreRestarted: async () => {},
-      stopAll:
-        over.stopAll ??
-        (async () => {
-          const errors: unknown[] = []
-          try {
-            await controller.disable()
-          } catch (err) {
-            errors.push(err)
-          }
-          // 内核先真正停下，再删身份记录：否则进程在 SIGTERM 宽限期内被强杀时，
-          // mihomo 还活着，而唯一能识别它的 core-state.json 已经没了。
-          try {
-            await activeSupervisor.stop()
-          } catch (err) {
-            errors.push(err)
-          }
-          try {
-            await clearCoreState(coreStateFile)
-          } catch (err) {
-            errors.push(err)
-          }
-          if (errors.length > 0) throw errors[0]
-        })
+      // 退出清理只有一份实现，且读取活跃字段：no-config 下导入配置并重启后，
+      // 这里必须停住那个刚起来的 supervisor，而不是启动时的 idle 替身。
+      stopAll: async () => {
+        // in-use：内核与状态文件属于另一个存活实例，退出时一个都不能动。
+        if (ctx.startupStatus === 'in-use') return
+        const errors: unknown[] = []
+        try {
+          await controller.disable()
+        } catch (err) {
+          errors.push(err)
+        }
+        // 内核先真正停下，再删身份记录：否则进程在 SIGTERM 宽限期内被强杀时，
+        // mihomo 还活着，而唯一能识别它的 core-state.json 已经没了。
+        try {
+          await activeSupervisor.stop()
+        } catch (err) {
+          errors.push(err)
+        }
+        try {
+          await clearCoreState(coreStateFile)
+        } catch (err) {
+          errors.push(err)
+        }
+        if (errors.length > 0) throw errors[0]
+      }
     }
     if (over.startupStatus !== 'in-use') attachRestart(ctx)
     return ctx
   }
 
   if (restore === 'in-use') {
-    // 另一个实例持有系统代理：不启动内核，也不清理它的状态文件。
+    // 另一个实例持有系统代理：不启动内核，更不能清理它仍在使用的状态文件。
     return makeContext({
       profileDir: configDir,
-      startupStatus: 'in-use',
-      stopAll: async () => {}
+      startupStatus: 'in-use'
     })
   }
 
@@ -435,15 +460,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     return makeContext({
       profileDir: result.status === 'no-config' ? null : configDir,
       startupStatus: result.status,
-      profile: result.profile,
-      // 内核没跑起来时没有需要还原的代理；core-state.json 已在 startCore 失败路径清掉，
-      // 但保留一次幂等清理，避免退出时留下「已启动」的假记录。
-      stopAll:
-        result.status === 'core-error'
-          ? async () => {
-              await clearCoreState(coreStateFile)
-            }
-          : async () => {}
+      profile: result.profile
     })
   }
 
