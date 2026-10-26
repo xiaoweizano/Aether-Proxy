@@ -1,15 +1,24 @@
 import { Sidebar } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
+import { TopBar } from './components/TopBar'
 import { copy } from './copy'
+import { useStatus } from './hooks/useStatus'
 
 export function App() {
+  const { status, refresh } = useStatus()
+
   return (
     <div className="app">
       <TitleBar />
       <div className="shell">
         <Sidebar />
         <main className="main">
-          <h1 className="page-title">{copy.dashboard.title}</h1>
+          <TopBar
+            status={status}
+            onRefresh={() => {
+              void refresh()
+            }}
+          />
           <p className="connecting">{copy.dashboard.connecting}</p>
         </main>
       </div>

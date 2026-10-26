@@ -22,5 +22,22 @@ export const copy = {
     title: '仪表盘',
     connecting: '正在连接内核…'
   },
+  status: {
+    connected: '已连接',
+    disconnected: '未连接',
+    coreError: '内核异常'
+  },
+  mode: {
+    label: '代理模式',
+    rule: '规则',
+    global: '全局',
+    direct: '直连'
+  },
+  proxy: {
+    on: '系统代理 已开启',
+    off: '系统代理 已关闭'
+  },
+  modeSwitchFailed: '模式切换失败，请重试',
+  proxyToggleFailed: '系统代理切换失败，请重试',
   version: 'Version 0.1.0'
 } as const
