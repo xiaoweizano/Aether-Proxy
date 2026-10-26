@@ -55,4 +55,31 @@ describe('CoreSupervisor', () => {
     await expect(sup.start()).rejects.toThrow()
     expect(sup.status).toBe('stopped')
   })
+
+  it('连续 3 次健康检查失败进入 error', async () => {
+    let calls = 0
+    const fetchFn = (async () => {
+      calls += 1
+      if (calls <= 2) return new Response(JSON.stringify({ version: 'x' }), { status: 200 })
+      return new Response('nope', { status: 401 })
+    }) as any
+    const homeDir = await mkdtemp(path.join(tmpdir(), 'aether-core-'))
+    const controllerPort = await allocatePort()
+    const sup = new CoreSupervisor({
+      binary: process.execPath,
+      homeDir,
+      configPath: path.join(homeDir, 'runtime.yaml'),
+      controllerPort,
+      secret: 's',
+      env: { FAKE_PORT: String(controllerPort), FAKE_SECRET: 's' },
+      argsPrefix: ['test/fixtures/fake-mihomo.mjs'],
+      fetchFn
+    })
+    running.push(sup)
+    await sup.start()
+    await sup.checkHealth()
+    await sup.checkHealth()
+    await sup.checkHealth()
+    expect(sup.status).toBe('error')
+  })
 })

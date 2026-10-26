@@ -57,11 +57,17 @@ export class CoreSupervisor {
         throw spawnError
       }
       if (await this.checkHealth()) {
-        this.state = 'running'
         this.failures = 0
+        let version = 'unknown'
+        try {
+          version = await this.version()
+        } catch {
+          version = 'unknown'
+        }
+        this.state = 'running'
         return {
           pid: child.pid ?? -1,
-          version: await this.version(),
+          version,
           controllerPort: this.opts.controllerPort,
           startedAt: Date.now()
         }
@@ -78,14 +84,21 @@ export class CoreSupervisor {
         headers: { authorization: `Bearer ${this.opts.secret}` },
         signal: AbortSignal.timeout(1500)
       })
-      if (!res.ok) return false
+      if (!res.ok) {
+        this.markFailure()
+        return false
+      }
       this.failures = 0
       return true
     } catch {
-      this.failures += 1
-      if (this.failures >= 3 && this.state === 'running') this.state = 'error'
+      this.markFailure()
       return false
     }
+  }
+
+  private markFailure(): void {
+    this.failures += 1
+    if (this.failures >= 3 && this.state === 'running') this.state = 'error'
   }
 
   private async version(): Promise<string> {
