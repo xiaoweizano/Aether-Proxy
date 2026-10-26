@@ -40,6 +40,11 @@ export class CoreSupervisor {
       windowsHide: true
     })
     this.child = child
+    let spawnError: Error | null = null
+    child.once('error', (err) => {
+      spawnError = err
+      this.state = 'error'
+    })
     child.once('exit', () => {
       if (this.state !== 'stopped') this.state = 'error'
       this.child = null
@@ -47,6 +52,10 @@ export class CoreSupervisor {
 
     const deadline = Date.now() + 10_000
     while (Date.now() < deadline) {
+      if (spawnError) {
+        await this.stop()
+        throw spawnError
+      }
       if (await this.checkHealth()) {
         this.state = 'running'
         this.failures = 0
@@ -81,7 +90,8 @@ export class CoreSupervisor {
 
   private async version(): Promise<string> {
     const res = await this.fetchFn(`http://127.0.0.1:${this.opts.controllerPort}/version`, {
-      headers: { authorization: `Bearer ${this.opts.secret}` }
+      headers: { authorization: `Bearer ${this.opts.secret}` },
+      signal: AbortSignal.timeout(1500)
     })
     const body = (await res.json()) as { version?: string }
     return body.version ?? 'unknown'

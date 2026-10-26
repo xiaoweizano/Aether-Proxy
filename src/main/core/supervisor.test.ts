@@ -42,4 +42,17 @@ describe('CoreSupervisor', () => {
     expect(sup.status).toBe('stopped')
     expect(() => process.kill(info.pid, 0)).toThrow()
   })
+
+  it('二进制不存在时 start 拒绝而不是崩溃', async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), 'aether-core-'))
+    const sup = new CoreSupervisor({
+      binary: 'aether-no-such-binary-xyz',
+      homeDir,
+      configPath: path.join(homeDir, 'runtime.yaml'),
+      controllerPort: 1,
+      secret: 's'
+    })
+    await expect(sup.start()).rejects.toThrow()
+    expect(sup.status).toBe('stopped')
+  })
 })
