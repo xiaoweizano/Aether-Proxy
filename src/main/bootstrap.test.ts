@@ -19,6 +19,19 @@ rules:
 
 const CORE_PID = 424242
 
+/** 轮询等待异步状态收敛；超时直接失败，避免测试挂死。 */
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 3000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error('等待条件超时')
+}
+
 async function makeUserDir(withConfig: boolean, configText = VALID_CONFIG): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'aether-boot-'))
   if (withConfig) {
@@ -679,5 +692,61 @@ rules:
     expect(json).not.toMatch(/secret|authorization|Bearer/i)
 
     await ctx.stopAll()
+  })
+
+  it('内核意外退出时转为 core-error、清空内核视图并还原系统代理', async () => {
+    let child!: ChildProcess
+    const sockets: FakeStatsSocket[] = []
+    const h = await harness({
+      proxyEnabled: true,
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.statsConnect = () => {
+      const socket = new FakeStatsSocket()
+      sockets.push(socket)
+      return socket
+    }
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.startupStatus).toBe('ready')
+    expect((await h.pp.getSystemProxy()).enabled).toBe(true)
+    expect(ctx.stats).not.toBeNull()
+
+    // 绕过 stop()：直接模拟内核自己退出（崩溃 / 被外部杀掉）。
+    ;(child as unknown as { exitCode: number | null }).exitCode = 1
+    child.emit('exit', 1, null)
+
+    expect(ctx.startupStatus).toBe('core-error')
+    expect(ctx.coreInfo).toBeNull()
+    expect(ctx.link).toBeNull()
+    expect(ctx.proxyServer).toBeNull()
+    expect(ctx.stats).toBeNull()
+    expect(sockets[0]?.closed).toBe(true)
+    // 还原代理是崩溃处理里的异步步骤；状态与视图字段已经同步转好。
+    await waitFor(async () => (await h.pp.getSystemProxy()).enabled === false)
+    await waitFor(() => ctx.proxyEnabled === false)
+    expect(ctx.proxyEnabled).toBe(false)
+
+    await ctx.stopAll()
+  })
+
+  it('重启内核触发的主动 stop 不会被误判为崩溃', async () => {
+    const h = await harness()
+    const ctx = await bootstrap(h.opts)
+
+    await ctx.restartCore()
+    // 给旧 supervisor 的 exit 事件留出处理时间：主动 stop 不应触发崩溃处理。
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.coreInfo).not.toBeNull()
+    expect(ctx.link).not.toBeNull()
+    expect(ctx.proxyServer).not.toBeNull()
+
+    await ctx.stopAll()
+    // 退出清理同样不是崩溃。
+    expect(ctx.startupStatus).toBe('ready')
   })
 })

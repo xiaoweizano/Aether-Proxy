@@ -197,6 +197,46 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
   // stopAll / restartCore 必须作用于当前这一个 supervisor；重启会换新的实例。
   let activeSupervisor = idleSupervisor(binary, configDir, opts)
 
+  /** 崩溃处理要能改到最终 ctx；ctx 由 makeContext 在启动流程末尾创建。 */
+  let activeContext: AppContext | null = null
+
+  /**
+   * 内核在运行中被意外终止（崩溃、被外部杀掉）。只做「停止说谎」：
+   * 转 core-error、清空内核视图、停采集器、还原系统代理。
+   * 自动重启（1/2/4 秒退避）留给下一个计划，这里不实现。
+   * 主动 stop() 不会走到这里：CoreSupervisor 先把状态置为 stopped。
+   */
+  const handleCoreExit = (supervisor: CoreSupervisor): void => {
+    // 事件来自已被替换的旧实例：忽略。
+    if (activeSupervisor !== supervisor) return
+    const ctx = activeContext
+    if (ctx === null) return
+    ctx.startupStatus = 'core-error'
+    ctx.coreInfo = null
+    ctx.link = null
+    ctx.proxyServer = null
+    try {
+      ctx.stats?.stop()
+    } catch {
+      // stop 不抛错；这里只防御性地不让崩溃处理再失败一次。
+    }
+    ctx.stats = null
+    ctx.supervisor = supervisor
+    void (async () => {
+      // 内核死了，系统代理还指向 mixed-port 会让整机断网：与 stopAll 一样先还原。
+      try {
+        await controller.disable()
+      } catch (err) {
+        ctx.proxyError = describeError(err)
+      }
+      try {
+        ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
+      } catch {
+        ctx.proxyEnabled = false
+      }
+    })()
+  }
+
   interface Prepared {
     supervisor: CoreSupervisor
     link: CoreLink
@@ -237,7 +277,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       controllerPort: ep.controllerPort,
       secret: ep.secret,
       spawn: opts.spawnFn,
-      fetchFn: opts.fetchFn
+      fetchFn: opts.fetchFn,
+      // 只在本次实例仍是活跃内核时处理退出；重启替换后的旧实例事件必须忽略。
+      onExit: () => { handleCoreExit(supervisor) }
     })
     activeSupervisor = supervisor
 
@@ -487,6 +529,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         if (errors.length > 0) throw errors[0]
       }
     }
+    // 崩溃处理只改「当前」上下文；之前的上下文（不会出现多个）不在这里引用。
+    activeContext = ctx
     if (over.startupStatus !== 'in-use') attachRestart(ctx)
     return ctx
   }
