@@ -15,6 +15,7 @@ import { ProxyOwnership } from './proxy/ownership'
 import { SystemProxyController } from './proxy/controller'
 import { FakePlatformProxy } from './proxy/fake'
 import type { PlatformProxy } from './proxy/platform'
+import { readSettings } from './settings'
 import type { Mode } from '../shared/types'
 
 export interface BootstrapOptions {
@@ -24,6 +25,8 @@ export interface BootstrapOptions {
   repoRoot: string
   spawnFn?: typeof import('node:child_process').spawn
   fetchFn?: typeof fetch
+  /** 测试注入；缺省时 Windows 用 loadWindowsProxy()。 */
+  platformProxy?: PlatformProxy
 }
 
 export interface AppContext {
@@ -41,7 +44,8 @@ export interface AppContext {
  * koffi 在模块加载时就会绑定 advapi32/wininet。非 Windows 平台（以及单元测试）
  * 不应触碰它，因此只在真的需要时动态加载。
  */
-async function loadPlatformProxy(): Promise<PlatformProxy> {
+async function loadPlatformProxy(opts: BootstrapOptions): Promise<PlatformProxy> {
+  if (opts.platformProxy) return opts.platformProxy
   if (process.platform === 'win32') {
     const { loadWindowsProxy } = await import('./proxy/win32')
     return loadWindowsProxy()
@@ -95,15 +99,23 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
   const profileDir = path.join(opts.userDataDir, 'profiles', 'default')
   const proxyStateFile = path.join(opts.userDataDir, 'proxy-state.json')
   const coreStateFile = path.join(opts.userDataDir, 'core-state.json')
+  const settingsFile = path.join(opts.userDataDir, 'settings.json')
+  const geodataDir = opts.isPackaged
+    ? path.join(opts.resourcesPath, 'geodata')
+    : path.join(opts.repoRoot, 'vendor', 'geodata')
   const binary = resolveMihomoBinary({
     isPackaged: opts.isPackaged,
     resourcesPath: opts.resourcesPath,
     repoRoot: opts.repoRoot
   })
 
-  const pp = await loadPlatformProxy()
+  const pp = await loadPlatformProxy(opts)
   const ownership = new ProxyOwnership(pp, proxyStateFile)
   const controller = new SystemProxyController(pp, ownership)
+
+  // 用户期望的代理开关独立于所有权快照：proxy-state.json 正常退出时会被删除，
+  // 不能用来回答「上次代理是否开着」。
+  const settings = await readSettings(settingsFile)
 
   // 先还原上次异常退出留下的系统代理，再读配置。这样 in-use 时不会
   // 改动另一个存活实例正在使用的 profile 文件，也不会启动第二个内核。
@@ -175,7 +187,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
 
   let merged: Record<string, unknown>
   try {
-    await ensureGeodata(profileDir, path.join(opts.repoRoot, 'vendor', 'geodata'))
+    await ensureGeodata(profileDir, geodataDir)
     merged = mergeConfig(upstream, {}, { mixedPort, controllerPort, secret })
     const missing = missingReferences(merged)
     if (missing.length > 0) {
@@ -241,12 +253,14 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     }
   }
 
-  // 内核已成功握手后才接管系统代理；写代理失败不应让窗口打不开，
-  // 此时代理保持关闭，用户可以重试。
-  try {
-    await controller.enable(`127.0.0.1:${mixedPort}`)
-  } catch (err) {
-    console.warn('[aether] 应用系统代理失败：', err instanceof Error ? err.message : String(err))
+  // 只有用户上次明确打开代理、且没有检测到他人改动时才接管系统代理。
+  // `conflict` 表示系统代理已被其它程序改写，不能覆盖；`in-use` 已在上面提前返回。
+  if (settings.proxyEnabled && restore !== 'conflict') {
+    try {
+      await controller.enable(`127.0.0.1:${mixedPort}`)
+    } catch (err) {
+      console.warn('[aether] 应用系统代理失败：', err instanceof Error ? err.message : String(err))
+    }
   }
 
   const rawMode = merged.mode
