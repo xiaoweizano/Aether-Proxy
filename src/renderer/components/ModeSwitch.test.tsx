@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { copy } from '../copy'
+import { makeAether } from '../test-utils'
 import { ModeSwitch } from './ModeSwitch'
 
 describe('ModeSwitch', () => {
@@ -44,5 +45,32 @@ describe('ModeSwitch', () => {
     render(<ModeSwitch value="rule" />)
     expect(screen.getAllByRole('button')).toHaveLength(3)
     expect(screen.getByRole('group', { name: copy.mode.label })).toBeInTheDocument()
+  })
+
+  it('未传 setMode 时走 window.aether.setMode', async () => {
+    const setMode = vi.fn(async () => ({ ok: true, status: 204 }))
+    window.aether = makeAether({ setMode })
+    render(<ModeSwitch value="rule" />)
+
+    await userEvent.click(screen.getByRole('button', { name: copy.mode.global }))
+
+    expect(setMode).toHaveBeenCalledWith('global')
+  })
+
+  it('回滚到最近一次成功确认的模式，而不是陈旧的 value', async () => {
+    const setMode = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, status: 204 })
+      .mockResolvedValueOnce({ ok: false, status: 500 })
+    render(<ModeSwitch value="rule" onChange={() => {}} setMode={setMode} />)
+
+    await userEvent.click(screen.getByRole('button', { name: copy.mode.global }))
+    expect(screen.getByRole('button', { name: copy.mode.global }).getAttribute('aria-pressed')).toBe('true')
+
+    await userEvent.click(screen.getByRole('button', { name: copy.mode.direct }))
+
+    expect(await screen.findByText(/切换失败/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: copy.mode.global }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: copy.mode.rule }).getAttribute('aria-pressed')).toBe('false')
   })
 })

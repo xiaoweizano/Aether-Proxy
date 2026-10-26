@@ -8,9 +8,44 @@ const SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.css', '.html'])
 const IGNORED_DIRS = new Set(['node_modules', 'out', 'dist', '.git', '__fixtures__'])
 const COLOR = /#[0-9a-fA-F]{3,8}/
 const FUNCTIONAL_COLOR = /\b(?:rgba?|hsla?)\(/i
+const COLOR_MIX_OPEN = 'color-mix('
 const FONT_SIZE = /font-size:\s*\d+px/
 const TOKENS_FILE = 'tokens.css'
 const TEST_FILE = /\.test\.tsx?$/
+
+/**
+ * 去掉 color-mix(...) 片段（含嵌套括号的内容），只留下需要检查的其余文本。
+ * 不能按整行豁免，否则 `rgb(...); /* color-mix( *␀/` 这类注释即可绕过。
+ * @param {string} line
+ * @returns {string}
+ */
+function stripColorMix(line) {
+  const lower = line.toLowerCase()
+  let result = ''
+  let index = 0
+  while (index < line.length) {
+    const start = lower.indexOf(COLOR_MIX_OPEN, index)
+    if (start === -1) {
+      result += line.slice(index)
+      break
+    }
+    result += line.slice(index, start)
+    let depth = 0
+    let cursor = start + COLOR_MIX_OPEN.length - 1
+    for (; cursor < line.length; cursor += 1) {
+      if (line[cursor] === '(') depth += 1
+      else if (line[cursor] === ')') {
+        depth -= 1
+        if (depth === 0) {
+          cursor += 1
+          break
+        }
+      }
+    }
+    index = cursor
+  }
+  return result
+}
 
 function walk(dir) {
   const files = []
@@ -43,7 +78,7 @@ export function checkTokens(dir) {
     lines.forEach((line, index) => {
       const at = `${shown}:${index + 1}`
       if (COLOR.test(line)) violations.push(`${at}: 裸色值 ${line.trim()}`)
-      if (!line.includes('color-mix(') && FUNCTIONAL_COLOR.test(line)) {
+      if (FUNCTIONAL_COLOR.test(stripColorMix(line))) {
         violations.push(`${at}: 裸色值 ${line.trim()}`)
       }
       if (FONT_SIZE.test(line)) violations.push(`${at}: 裸字号 ${line.trim()}`)

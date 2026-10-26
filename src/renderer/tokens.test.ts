@@ -56,6 +56,21 @@ describe('checkTokens', () => {
     })
   })
 
+  it('用 color-mix( 注释不能豁免同一行的裸色值', () => {
+    withTempDir((dir) => {
+      writeFileSync(
+        path.join(dir, 'comment.css'),
+        [
+          `background: ${'r' + 'gb('}0, 0, 0); /* color-mix( */`,
+          ['color: ', '#', 'fff', ';'].join('')
+        ].join('\n')
+      )
+      const violations = checkTokens(dir)
+      expect(violations).toHaveLength(2)
+      expect(violations.every((line) => line.includes('comment.css'))).toBe(true)
+    })
+  })
+
   it('跳过 *.test.ts(x) 与 __fixtures__', () => {
     withTempDir((dir) => {
       const fixtureDir = path.join(dir, '__fixtures__')

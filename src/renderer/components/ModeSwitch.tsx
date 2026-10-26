@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ModeSetResult } from '../../shared/ipc'
 import type { Mode } from '../../shared/types'
 import { copy } from '../copy'
@@ -20,14 +20,16 @@ export function ModeSwitch({ value, onChange, setMode }: ModeSwitchProps) {
   const [selected, setSelected] = useState<Mode>(value)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const confirmed = useRef<Mode>(value)
 
   useEffect(() => {
+    confirmed.current = value
     setSelected(value)
   }, [value])
 
   async function choose(mode: Mode): Promise<void> {
     if (mode === selected || pending) return
-    const previous = value
+    const previous = confirmed.current
     setSelected(mode)
     setError(null)
     setPending(true)
@@ -40,6 +42,7 @@ export function ModeSwitch({ value, onChange, setMode }: ModeSwitchProps) {
         setError(copy.modeSwitchFailed)
         return
       }
+      confirmed.current = mode
       onChange?.(mode)
     } catch {
       setSelected(previous)
