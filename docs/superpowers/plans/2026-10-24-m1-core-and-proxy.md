@@ -1083,6 +1083,12 @@ describe('reloadConfig', () => {
     const res = await reloadConfig(5567, 's', '/tmp/runtime.yaml', fetchFn)
     expect(res).toEqual({ ok: false, status: 400 })
   })
+
+  it('传输失败返回 ok=false/status=0，不抛异常', async () => {
+    const fetchFn = (async () => { throw new Error('ECONNREFUSED') }) as any
+    const res = await reloadConfig(5567, 's', '/tmp/runtime.yaml', fetchFn)
+    expect(res).toEqual({ ok: false, status: 0 })
+  })
 })
 ```
 
@@ -1129,16 +1135,20 @@ export async function reloadConfig(
   configPath: string,
   fetchFn: typeof fetch = fetch
 ): Promise<{ ok: boolean; status: number }> {
-  const res = await fetchFn(`http://127.0.0.1:${controllerPort}/configs?force=true`, {
-    method: 'PUT',
-    headers: {
-      authorization: `Bearer ${secret}`,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({ path: configPath }),
-    signal: AbortSignal.timeout(10_000)
-  })
-  return { ok: res.ok, status: res.status }
+  try {
+    const res = await fetchFn(`http://127.0.0.1:${controllerPort}/configs?force=true`, {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${secret}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ path: configPath }),
+      signal: AbortSignal.timeout(10_000)
+    })
+    return { ok: res.ok, status: res.status }
+  } catch {
+    return { ok: false, status: 0 }
+  }
 }
 ```
 
