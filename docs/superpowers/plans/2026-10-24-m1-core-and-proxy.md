@@ -1973,6 +1973,16 @@ git commit -m "feat(proxy): 平台代理接口与所有权快照/还原"
   async hasSnapshot(): Promise<boolean> {
     return (await this.load()) !== null
   }
+
+  async getAppliedServer(): Promise<string | null> {
+    return (await this.load())?.appliedServer ?? null
+  }
+
+  async repointAppliedServer(server: string): Promise<void> {
+    const saved = await this.load()
+    if (!saved) return
+    await writeFileAtomic(this.stateFile, JSON.stringify({ ...saved, appliedServer: server }, null, 2))
+  }
 ```
 
 - [ ] **Step 2: 写失败测试**
@@ -2017,6 +2027,14 @@ describe('SystemProxyController', () => {
     await ctl.enable('127.0.0.1:5566')
     expect((await pp.getSystemProxy()).bypass).toEqual(['localhost', '127.0.0.0/8', '::1', '<local>'])
   })
+
+  it('切换端口后仍能在退出时还原原状态', async () => {
+    const ctl = new SystemProxyController(pp, ownership)
+    await ctl.enable('127.0.0.1:5566')
+    await ctl.enable('127.0.0.1:7890')
+    await ctl.disable()
+    expect((await pp.getSystemProxy()).server).toBe('corp:8080')
+  })
 })
 ```
 
@@ -2031,7 +2049,7 @@ Expected: FAIL，`Cannot find module './controller'`
 import type { PlatformProxy } from './platform'
 import type { ProxyOwnership } from './ownership'
 
-export const DEFAULT_BYPASS = ['localhost', '127.0.0.0/8', '::1', '<local>']
+export const DEFAULT_BYPASS = ['localhost', '127.0.0.0/8', '::1', '<local>'] as const
 
 export class SystemProxyController {
   constructor(
@@ -2043,8 +2061,13 @@ export class SystemProxyController {
     const current = await this.pp.getSystemProxy()
     if (!(await this.ownership.hasSnapshot())) {
       await this.ownership.snapshotBeforeApply(current, server)
+    } else {
+      const applied = await this.ownership.getAppliedServer()
+      if (applied !== null && applied !== server) {
+        await this.ownership.repointAppliedServer(server)
+      }
     }
-    await this.pp.setSystemProxy({ server, bypass: DEFAULT_BYPASS })
+    await this.pp.setSystemProxy({ server, bypass: [...DEFAULT_BYPASS] })
   }
 
   async disable(): Promise<void> {
