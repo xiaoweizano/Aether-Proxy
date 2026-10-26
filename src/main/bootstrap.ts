@@ -118,6 +118,17 @@ function describeError(err: unknown): string {
   return text.slice(0, 300)
 }
 
+/**
+ * 退出期间取消在途重启。单独成类是为了让 prepare 的 catch 能区分
+ * 「配置有误」与「应用正在退出」：后者必须原样抛出，不能转成 config-error。
+ */
+class ShutdownAbortError extends Error {
+  constructor() {
+    super('应用正在退出，内核重启已取消')
+    this.name = 'ShutdownAbortError'
+  }
+}
+
 function normalizeMode(value: unknown): Mode {
   return value === 'global' || value === 'direct' ? value : 'rule'
 }
@@ -197,18 +208,31 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
   // stopAll / restartCore 必须作用于当前这一个 supervisor；重启会换新的实例。
   let activeSupervisor = idleSupervisor(binary, configDir, opts)
 
+  /**
+   * 退出协调（C1）：
+   * - stopAll 在任何 await 之前同步置位，之后所有在途重启都会在下一个 await 边界放弃；
+   * - stopAll 还会等待在途重启结束，避免「清理完成 → 重启继续 spawn」留下孤儿内核
+   *   （Windows 不随父进程回收 mihomo）。
+   * 这里做成每个 bootstrap 实例一份，而不是模块级全局：测试可以并行建多个上下文，
+   * 全局标志会互相污染；语义上仍满足「清理开始前置位、每个 await 边界检查」。
+   */
+  let shuttingDown = false
+  const assertNotShuttingDown = (): void => {
+    if (shuttingDown) throw new ShutdownAbortError()
+  }
+  const inFlightRestarts = new Set<Promise<unknown>>()
   /** 崩溃处理要能改到最终 ctx；ctx 由 makeContext 在启动流程末尾创建。 */
   let activeContext: AppContext | null = null
 
   /**
    * 内核在运行中被意外终止（崩溃、被外部杀掉）。只做「停止说谎」：
    * 转 core-error、清空内核视图、停采集器、还原系统代理。
-   * 自动重启（1/2/4 秒退避）留给下一个计划，这里不实现。
+   * 自动重启（1/2/4s 退避）留给下一个计划，这里不实现。
    * 主动 stop() 不会走到这里：CoreSupervisor 先把状态置为 stopped。
    */
   const handleCoreExit = (supervisor: CoreSupervisor): void => {
-    // 事件来自已被替换的旧实例：忽略。
-    if (activeSupervisor !== supervisor) return
+    // 退出清理已经开始，或事件来自已被替换的旧实例：忽略。
+    if (shuttingDown || activeSupervisor !== supervisor) return
     const ctx = activeContext
     if (ctx === null) return
     ctx.startupStatus = 'core-error'
@@ -251,12 +275,14 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     | { ok: false; status: 'no-config' | 'config-error'; profile: Prepared['profile'] }
 
   async function prepare(): Promise<PrepareResult> {
+    assertNotShuttingDown()
     let upstreamText: string | null = null
     try {
       upstreamText = await readFile(path.join(configDir, 'upstream.yaml'), 'utf8')
     } catch {
       upstreamText = null
     }
+    assertNotShuttingDown()
     if (upstreamText === null) return { ok: false, status: 'no-config', profile: null }
 
     let upstream: unknown
@@ -269,6 +295,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     }
     const profile = profileSummaryOf(upstream)
     const ep = await ensureEndpoints()
+    assertNotShuttingDown()
     const configPath = path.join(configDir, 'runtime.yaml')
     const supervisor = new CoreSupervisor({
       binary,
@@ -285,6 +312,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
 
     try {
       await ensureGeodata(configDir, geodataDir)
+      assertNotShuttingDown()
       const merged = mergeConfig(upstream, {}, ep)
       const missing = missingReferences(merged)
       if (missing.length > 0) {
@@ -292,17 +320,23 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         return { ok: false, status: 'config-error', profile }
       }
       await writeRuntime(configDir, merged)
+      assertNotShuttingDown()
       const validate = opts.validateFn ?? validateConfig
       const validated = await validate(binary, configDir, configPath)
+      // 校验返回后、spawn 之前是最后一个放弃点：此后 stopAll 能通过
+      // ctx.supervisor 找到活着的内核，不再需要取消。
+      assertNotShuttingDown()
       if (!validated.ok) {
         console.warn('[aether] 内核配置校验失败，已跳过启动')
         return { ok: false, status: 'config-error', profile }
       }
+      const preparedLink = await ensureLink()
+      assertNotShuttingDown()
       return {
         ok: true,
         prepared: {
           supervisor,
-          link: await ensureLink(),
+          link: preparedLink,
           proxyServer: `127.0.0.1:${ep.mixedPort}`,
           controllerPort: ep.controllerPort,
           secret: ep.secret,
@@ -311,6 +345,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         }
       }
     } catch (err) {
+      // 退出取消不能被当成配置错误：否则会覆盖用户在退出前的代理偏好，
+      // 也会把 core-error 之类的状态写进正在关闭的上下文。
+      if (err instanceof ShutdownAbortError) throw err
       console.warn('[aether] 配置准备失败：', describeError(err))
       return { ok: false, status: 'config-error', profile }
     }
@@ -325,6 +362,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     const prep = await prepare()
     if (!prep.ok) return prep
     const { prepared } = prep
+    // 最后一个 await 边界：这里之后才真正 spawn。退出清理一旦开始就不再拉起进程。
+    assertNotShuttingDown()
     try {
       const info = await prepared.supervisor.start()
       await writeCoreState(coreStateFile, {
@@ -373,7 +412,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       })
     }
 
-    ctx.restartCore = async (): Promise<CoreInfo> => {
+    const restart = async (): Promise<CoreInfo> => {
+      // 退出清理已开始时直接放弃：调用方（IPC）会把异常映射成 {ok:false}。
+      assertNotShuttingDown()
       // 停内核期间系统代理仍指向 mixed-port，整机会短暂断网。先还原系统代理，
       // 成功启动后再按用户此前的意愿重新接管；失败则保持关闭。
       const wantProxy = ctx.proxyEnabled
@@ -384,15 +425,20 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         } catch (err) {
           ctx.proxyError = describeError(err)
         }
+        assertNotShuttingDown()
         try {
           ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
         } catch (err) {
           ctx.proxyEnabled = false
           ctx.proxyError ??= describeError(err)
         }
+        assertNotShuttingDown()
       }
 
       await activeSupervisor.stop()
+      // spawn 之前的最后一个取消点；startCore 内部在 validate 之后、spawn 之前
+      // 还有一道同样的检查。
+      assertNotShuttingDown()
       const restarted = await startCore()
       if (!restarted.ok) {
         const message =
@@ -469,6 +515,19 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       }
       return info
     }
+
+    /**
+     * 把在途重启登记下来。stopAll 先置退出标志、再 await 这些 promise：
+     * 重启会在下一个 await 边界看到标志并放弃，绝不会在清理完成后继续 spawn。
+     */
+    ctx.restartCore = (): Promise<CoreInfo> => {
+      const running = restart()
+      const tracked = running.finally(() => {
+        inFlightRestarts.delete(tracked)
+      })
+      inFlightRestarts.add(tracked)
+      return tracked
+    }
   }
 
   /** 所有返回分支共用同一套字段，避免漏掉新增字段时类型上侥幸通过。 */
@@ -501,6 +560,12 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       stopAll: async () => {
         // in-use：内核与状态文件属于另一个存活实例，退出时一个都不能动。
         if (ctx.startupStatus === 'in-use') return
+        // 同步置位必须发生在第一个 await 之前：这样在途重启在下一个边界就会放弃。
+        shuttingDown = true
+        // 等在途重启真正结束再做清理，而不是和它赛跑。重启已被取消，通常会很快拒绝。
+        if (inFlightRestarts.size > 0) {
+          await Promise.allSettled([...inFlightRestarts])
+        }
         const errors: unknown[] = []
         try {
           await controller.disable()

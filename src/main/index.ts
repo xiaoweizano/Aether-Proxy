@@ -28,6 +28,8 @@ if (shotMode) {
 let context: AppContext | null = null
 let mainWindow: BrowserWindow | null = null
 let quitting = false
+/** 清理真正结束、允许放行的那一次 quit；此前所有 quit 都必须被挡住。 */
+let cleanupDone = false
 
 /**
  * 采样回调只认「当前窗口」：窗口销毁即丢弃，重建窗口后由 createWindow 重新注册。
@@ -248,14 +250,20 @@ async function start(): Promise<void> {
 app.whenReady().then(() => { void start() })
 
 app.on('before-quit', (event) => {
-  if (quitting || context === null) return
-  // 等清理真正完成再退出：还原系统代理、终止内核是硬要求，不能随进程一起被杀。
+  // 清理已结束：放行最终这一次 quit（由下面的 finally 主动触发）。
+  if (context === null || cleanupDone) return
+  // 清理期间再次触发的 quit 也必须 preventDefault，否则用户/系统第二次退出会
+  // 在 stopAll 还在等内核（最多 3s）时直接结束进程，跳过还原代理与终止内核。
   event.preventDefault()
+  if (quitting) return
   quitting = true
   void context
     .stopAll()
     .catch((err) => { console.error('[aether] 退出清理失败', err) })
-    .finally(() => { app.quit() })
+    .finally(() => {
+      cleanupDone = true
+      app.quit()
+    })
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

@@ -694,6 +694,42 @@ rules:
     await ctx.stopAll()
   })
 
+  it('退出清理会取消在途重启：validate 返回后不再 spawn 内核', async () => {
+    const h = await harness()
+    const ctx = await bootstrap(h.opts)
+    expect(h.spawnFn).toHaveBeenCalledTimes(1)
+
+    // 把重启卡在 validate 里，模拟用户在重启途中退出。
+    let release!: () => void
+    let validateStarted = false
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    h.opts.validateFn = async () => {
+      validateStarted = true
+      await gate
+      return { ok: true, output: 'ok' }
+    }
+
+    const restart = ctx.restartCore()
+    await waitFor(() => validateStarted)
+
+    const stopping = ctx.stopAll()
+    release()
+
+    // 重启在看到退出标志后放弃，IPC 层会把异常映射成 {ok:false}。
+    await expect(restart).rejects.toThrow(/退出/)
+    await stopping
+
+    // 只有启动时那一次 spawn；重启没有把内核重新拉起来。
+    expect(h.spawnFn).toHaveBeenCalledTimes(1)
+    expect(ctx.supervisor.status).toBe('stopped')
+    expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+    // 清理结束后再点重启也只会拒绝，不会 spawn。
+    await expect(ctx.restartCore()).rejects.toThrow(/退出/)
+    expect(h.spawnFn).toHaveBeenCalledTimes(1)
+  })
+
   it('内核意外退出时转为 core-error、清空内核视图并还原系统代理', async () => {
     let child!: ChildProcess
     const sockets: FakeStatsSocket[] = []
