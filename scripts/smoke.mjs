@@ -16,8 +16,14 @@ await copyFile(fixture, path.join(profileDir, 'upstream.yaml'))
 // 复用编译后的合并逻辑：用 tsx 直接导入 TS 源码
 const { mergeConfig } = await import('../src/main/config/merge.ts')
 const { writeRuntime } = await import('../src/main/config/runtime.ts')
+const { ensureGeodata, verifyGeodata } = await import('../src/main/config/geodata.ts')
 const { allocatePort } = await import('../src/main/core/ports.ts')
 const { newSecret } = await import('../src/main/core/secret.ts')
+
+await ensureGeodata(profileDir, path.join(repoRoot, 'vendor', 'geodata'))
+const geodata = await verifyGeodata(profileDir, path.join(repoRoot, 'vendor', 'geodata'))
+if (!geodata.ok) throw new Error(`geodata 未就绪：${geodata.missing.join(', ')}`)
+console.log('geodata ok')
 
 const mixedPort = await allocatePort()
 const controllerPort = await allocatePort()

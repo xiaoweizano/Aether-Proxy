@@ -25,6 +25,7 @@ proxy-groups:
     interval: 300
 rules:
   - DOMAIN-SUFFIX,github.com,Proxy
+  - GEOIP,CN,DIRECT
   - MATCH,DIRECT
 tun:
   enable: true
