@@ -4,9 +4,9 @@
 
 **Goal:** 交付一个无界面但可验证的 Electron 主进程底座：导入 Clash YAML、按逐键策略合并出 runtime 配置、启动并守护 mihomo、接管 Windows 系统代理，并在任意异常退出后把用户网络恢复原状。
 
-**Architecture:** 主进程按职责拆成五块——`core`（进程与 HTTP/WS 客户端）、`config`（导入、合并、校验、原子写）、`proxy`（平台接口与所有权快照）、`lifecycle`（启动/退出编排）、`ipc`（下一份计划消费）。所有平台相关能力藏在 `PlatformProxy` 接口后，Windows 实现由一个 napi-rs 插件提供，测试用内存假实现。mihomo 的真实进程在单测里由 `test/fixtures/fake-mihomo.mjs` 替代，只有最后的冒烟测试用真二进制。
+**Architecture:** 主进程按职责拆成五块——`core`（进程与 HTTP/WS 客户端）、`config`（导入、合并、校验、原子写）、`proxy`（平台接口与所有权快照）、`lifecycle`（启动/退出编排）、`ipc`（下一份计划消费）。所有平台相关能力藏在 `PlatformProxy` 接口后，Windows 实现由 koffi 直接调用 Win32 API，测试用内存假实现。mihomo 的真实进程在单测里由 `test/fixtures/fake-mihomo.mjs` 替代，只有最后的冒烟测试用真二进制。
 
-**Tech Stack:** Electron 45 / Node 24（随 Electron）/ TypeScript 5 strict / electron-vite / Vitest / `yaml` / Rust + napi-rs（Windows 注册表与 WinINet）。
+**Tech Stack:** Electron 45 / Node 24（随 Electron）/ TypeScript 5 strict / electron-vite / Vitest / `yaml` / koffi（Windows 注册表与 WinINet）。
 
 **Spec:** `openspec/changes/add-m1-windows-vertical-slice/`（proposal、design、specs、tasks），产品与视觉约束见 `docs/design/2026-10-23-aether-proxy.md`、`docs/design/2026-10-23-ui-pivot-dashboard.md`、`DESIGN.md`。
 
@@ -62,12 +62,11 @@ src/main/config/reload.ts         PUT /configs 热重载与回滚
 src/main/proxy/platform.ts        PlatformProxy 接口
 src/main/proxy/ownership.ts       快照/还原/冲突判定
 src/main/proxy/fake.ts            测试用内存实现
-src/main/proxy/windows.ts         napi-rs 插件加载与适配
+src/main/proxy/win32.ts           koffi 调用 advapi32 / wininet
 src/main/lifecycle.ts             startup / shutdown 编排
 src/main/index.ts                 Electron 入口（最小可运行）
 test/fixtures/fake-mihomo.mjs     假内核：/version、-t、可注入失败
 test/fixtures/subscription.yaml   脱敏真实订阅样本
-native/proxy-addon/               Rust + napi-rs 插件
 scripts/proxy-check.mjs           真机注册表往返验证（Task 10）
 scripts/smoke.mjs                 真 mihomo 端到端冒烟（Task 12）
 ```
@@ -2090,214 +2089,212 @@ git commit -m "feat(proxy): 系统代理控制器保证快照先于切换"
 
 ---
 
-### Task 10: Windows 原生插件（napi-rs）
+### Task 10: Windows 原生层（koffi Node-FFI）
 
 **Files:**
-- Create: `native/proxy-addon/Cargo.toml`, `native/proxy-addon/src/lib.rs`, `native/proxy-addon/build.rs`, `src/main/proxy/windows.ts`, `scripts/proxy-check.mjs`
+- Create: `src/main/proxy/win32.ts`, `scripts/proxy-check.mjs`
+- Modify: `package.json`（新增 `koffi` 与 `tsx`）
 
 **Interfaces:**
-- Produces: `loadWindowsProxy(): PlatformProxy`，内部调用插件导出的 `get_proxy_state` / `set_proxy` / `clear_proxy`。
+- Produces: `loadWindowsProxy(): PlatformProxy`，实现与 Task 9 相同的四个方法。
+- 决策变更：D20 由 Rust + napi-rs 改为 koffi，见 `docs/design/2026-10-26-native-proxy-koffi.md`。
 
-- [ ] **Step 1: 初始化 crate**
+- [ ] **Step 1: 安装依赖**
 
-`native/proxy-addon/Cargo.toml`：
+Run: `npm i koffi && npm i -D tsx`
+Expected: `package.json` 的 dependencies 中出现 `koffi`，devDependencies 中出现 `tsx`；安装成功。
 
-```toml
-[package]
-name = "aether-proxy-addon"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-napi = { version = "2", default-features = false, features = ["napi4"] }
-napi-derive = "2"
-winreg = "0.52"
-
-[target.'cfg(windows)'.dependencies.windows]
-version = "0.58"
-features = ["Win32_Foundation", "Win32_Networking_WinInet"]
-```
-
-`native/proxy-addon/build.rs`：
-
-```rust
-fn main() {
-    napi_build::setup();
-}
-```
-
-- [ ] **Step 2: 实现注册表读写与广播**
-
-`native/proxy-addon/src/lib.rs`：
-
-```rust
-use napi_derive::napi;
-use std::ffi::OsStr;
-use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
-use winreg::RegKey;
-
-const PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-
-#[napi(object)]
-pub struct ProxySnapshot {
-  pub enabled: bool,
-  pub server: Option<String>,
-  pub bypass: Option<String>,
-  pub auto_config_url: Option<String>,
-  pub auto_detect: Option<u32>,
-}
-
-fn open() -> napi::Result<RegKey> {
-  RegKey::predef(HKEY_CURRENT_USER)
-    .open_subkey_with_flags(PATH, KEY_READ | KEY_WRITE)
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
-}
-
-#[napi]
-pub fn get_proxy_state() -> napi::Result<ProxySnapshot> {
-  let key = open()?;
-  Ok(ProxySnapshot {
-    enabled: key.get_value::<u32, _>("ProxyEnable").unwrap_or(0) == 1,
-    server: key.get_value::<String, _>("ProxyServer").ok(),
-    bypass: key.get_value::<String, _>("ProxyOverride").ok(),
-    auto_config_url: key.get_value::<String, _>("AutoConfigURL").ok(),
-    auto_detect: key.get_value::<u32, _>("AutoDetect").ok(),
-  })
-}
-
-#[napi]
-pub fn set_proxy(server: String, bypass: String) -> napi::Result<()> {
-  let key = open()?;
-  key.set_value("ProxyEnable", &1u32).map_err(err)?;
-  key.set_value("ProxyServer", &server).map_err(err)?;
-  key.set_value("ProxyOverride", &bypass).map_err(err)?;
-  let _ = key.delete_value("AutoConfigURL");
-  key.set_value("AutoDetect", &0u32).map_err(err)?;
-  broadcast();
-  Ok(())
-}
-
-#[napi]
-pub fn clear_proxy() -> napi::Result<()> {
-  let key = open()?;
-  key.set_value("ProxyEnable", &0u32).map_err(err)?;
-  broadcast();
-  Ok(())
-}
-
-fn err<E: std::fmt::Display>(e: E) -> napi::Error {
-  napi::Error::from_reason(e.to_string())
-}
-
-#[cfg(windows)]
-fn broadcast() {
-  use windows::Win32::Networking::WinInet::{InternetSetOptionW, INTERNET_OPTION_SETTINGS_CHANGED, INTERNET_OPTION_REFRESH};
-  unsafe {
-    let _ = InternetSetOptionW(None, INTERNET_OPTION_SETTINGS_CHANGED, None, 0);
-    let _ = InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None, 0);
-  }
-}
-
-#[cfg(not(windows))]
-fn broadcast() {}
-```
-
-- [ ] **Step 3: 构建**
-
-Run:
-```bash
-cd native/proxy-addon
-cargo build --release
-cp target/release/aether_proxy_addon.dll ../../src/main/proxy/proxy-addon.node
-```
-
-Expected: 生成 `proxy-addon.node`。若 napi 的 node 名与 DLL 导出不符，按 napi-rs 官方 `napi build --platform` 产出的 `.node` 文件名复制。
-
-- [ ] **Step 4: 写 TS 适配层**
-
-`src/main/proxy/windows.ts`：
+- [ ] **Step 2: 实现 win32.ts**
 
 ```ts
-import { createRequire } from 'node:module'
+import koffi from 'koffi'
 import type { ProxyState } from '../../shared/types'
 import type { PlatformProxy } from './platform'
 
-interface Addon {
-  getProxyState(): { enabled: boolean; server?: string; bypass?: string; autoConfigUrl?: string; autoDetect?: number }
-  setProxy(server: string, bypass: string): void
-  clearProxy(): void
+const HKEY_CURRENT_USER = 0x80000001
+const KEY_QUERY_VALUE = 0x0001
+const KEY_SET_VALUE = 0x0002
+const REG_SZ = 1
+const REG_EXPAND_SZ = 2
+const REG_DWORD = 4
+const INTERNET_OPTION_REFRESH = 37
+const INTERNET_OPTION_SETTINGS_CHANGED = 39
+const SUBKEY = 'Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
+
+const advapi = koffi.load('advapi32.dll')
+const wininet = koffi.load('wininet.dll')
+
+const RegOpenKeyExW = advapi.func(
+  'int RegOpenKeyExW(uintptr_t hKey, str16 lpSubKey, uint32 ulOptions, uint32 samDesired, _Out_ uintptr_t *phkResult)'
+)
+const RegCloseKey = advapi.func('int RegCloseKey(uintptr_t hKey)')
+const RegQueryValueExW = advapi.func(
+  'int RegQueryValueExW(uintptr_t hKey, str16 lpValueName, void *lpReserved, _Out_ uint32 *lpType, _Out_ uint8 *lpData, _Inout_ uint32 *lpcbData)'
+)
+const RegSetValueExW = advapi.func(
+  'int RegSetValueExW(uintptr_t hKey, str16 lpValueName, uint32 Reserved, uint32 dwType, uint8 *lpData, uint32 cbData)'
+)
+const RegDeleteValueW = advapi.func('int RegDeleteValueW(uintptr_t hKey, str16 lpValueName)')
+const InternetSetOptionW = wininet.func(
+  'int InternetSetOptionW(void *hInternet, uint32 dwOption, void *lpBuffer, uint32 dwBufferLength)'
+)
+
+function openKey(): number {
+  const out = [0]
+  const rc = RegOpenKeyExW(HKEY_CURRENT_USER, SUBKEY, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, out)
+  if (rc !== 0) throw new Error(`RegOpenKeyExW 失败：${rc}`)
+  return out[0] as number
 }
 
-const require = createRequire(import.meta.url)
-const addon = require('./proxy-addon.node') as Addon
+function readRaw(hkey: number, name: string): { type: number; data: Buffer } | null {
+  const type = [0]
+  const size = [4096]
+  const buf = Buffer.alloc(4096)
+  const rc = RegQueryValueExW(hkey, name, null, type, buf, size)
+  if (rc !== 0) return null
+  const bytes = size[0] as number
+  return { type: type[0] as number, data: buf.subarray(0, bytes) }
+}
+
+function readString(hkey: number, name: string): string | undefined {
+  const raw = readRaw(hkey, name)
+  if (!raw || (raw.type !== REG_SZ && raw.type !== REG_EXPAND_SZ)) return undefined
+  return raw.data.toString('utf16le').replace(/\0+$/, '')
+}
+
+function readDword(hkey: number, name: string): number | undefined {
+  const raw = readRaw(hkey, name)
+  if (!raw || raw.type !== REG_DWORD || raw.data.length < 4) return undefined
+  return raw.data.readUInt32LE(0)
+}
+
+function writeString(hkey: number, name: string, value: string): void {
+  const data = Buffer.from(`${value}\0`, 'utf16le')
+  const rc = RegSetValueExW(hkey, name, 0, REG_SZ, data, data.length)
+  if (rc !== 0) throw new Error(`写入 ${name} 失败：${rc}`)
+}
+
+function writeDword(hkey: number, name: string, value: number): void {
+  const data = Buffer.alloc(4)
+  data.writeUInt32LE(value)
+  const rc = RegSetValueExW(hkey, name, 0, REG_DWORD, data, 4)
+  if (rc !== 0) throw new Error(`写入 ${name} 失败：${rc}`)
+}
+
+function broadcast(): void {
+  InternetSetOptionW(null, INTERNET_OPTION_SETTINGS_CHANGED, null, 0)
+  InternetSetOptionW(null, INTERNET_OPTION_REFRESH, null, 0)
+}
 
 export function loadWindowsProxy(): PlatformProxy {
   return {
     async getSystemProxy(): Promise<ProxyState> {
-      const s = addon.getProxyState()
-      return {
-        enabled: s.enabled,
-        server: s.server,
-        bypass: s.bypass ? s.bypass.split(';') : undefined,
-        autoConfigUrl: s.autoConfigUrl,
-        autoDetect: s.autoDetect === 1
+      const hkey = openKey()
+      try {
+        const bypass = readString(hkey, 'ProxyOverride')
+        return {
+          enabled: readDword(hkey, 'ProxyEnable') === 1,
+          server: readString(hkey, 'ProxyServer'),
+          bypass: bypass ? bypass.split(';').filter(Boolean) : undefined,
+          autoConfigUrl: readString(hkey, 'AutoConfigURL'),
+          autoDetect: readDword(hkey, 'AutoDetect') === 1
+        }
+      } finally {
+        RegCloseKey(hkey)
       }
     },
+
     async setSystemProxy({ server, bypass }) {
-      addon.setProxy(server, bypass.join(';'))
-    },
-    async clearSystemProxy() {
-      addon.clearProxy()
-    },
-    async restore(state) {
-      if (state.enabled && state.server) {
-        addon.setProxy(state.server, (state.bypass ?? []).join(';'))
-      } else {
-        addon.clearProxy()
+      const hkey = openKey()
+      try {
+        writeDword(hkey, 'ProxyEnable', 1)
+        writeString(hkey, 'ProxyServer', server)
+        writeString(hkey, 'ProxyOverride', bypass.join(';'))
+        RegDeleteValueW(hkey, 'AutoConfigURL')
+        writeDword(hkey, 'AutoDetect', 0)
+      } finally {
+        RegCloseKey(hkey)
       }
+      broadcast()
+    },
+
+    async clearSystemProxy() {
+      const hkey = openKey()
+      try {
+        writeDword(hkey, 'ProxyEnable', 0)
+      } finally {
+        RegCloseKey(hkey)
+      }
+      broadcast()
+    },
+
+    async restore(state) {
+      const hkey = openKey()
+      try {
+        writeDword(hkey, 'ProxyEnable', state.enabled ? 1 : 0)
+        if (state.server) writeString(hkey, 'ProxyServer', state.server)
+        if (state.bypass) writeString(hkey, 'ProxyOverride', state.bypass.join(';'))
+        if (state.autoConfigUrl) writeString(hkey, 'AutoConfigURL', state.autoConfigUrl)
+        else RegDeleteValueW(hkey, 'AutoConfigURL')
+        writeDword(hkey, 'AutoDetect', state.autoDetect ? 1 : 0)
+      } finally {
+        RegCloseKey(hkey)
+      }
+      broadcast()
     }
   }
 }
 ```
 
-- [ ] **Step 5: 真机往返脚本**
+- [ ] **Step 3: 写真实往返脚本**
 
 `scripts/proxy-check.mjs`：
 
 ```js
-import { createRequire } from 'node:module'
-const require = createRequire(import.meta.url)
-const addon = require('../src/main/proxy/proxy-addon.node')
+import { execFileSync } from 'node:child_process'
 
-const before = addon.getProxyState()
+const { loadWindowsProxy } = await import('../src/main/proxy/win32.ts')
+const pp = loadWindowsProxy()
+
+const RAW_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
+const dumpRaw = () => execFileSync('reg', ['query', RAW_KEY], { encoding: 'utf8' })
+
+const before = await pp.getSystemProxy()
 console.log('before', before)
+const rawBefore = dumpRaw()
+
 try {
-  addon.setProxy('127.0.0.1:5566', 'localhost;127.0.0.0/8')
-  const during = addon.getProxyState()
-  if (!during.enabled || during.server !== '127.0.0.1:5566') throw new Error('设置未生效')
+  await pp.setSystemProxy({ server: '127.0.0.1:5566', bypass: ['localhost', '127.0.0.0/8'] })
+  const during = await pp.getSystemProxy()
   console.log('during', during)
+  if (!during.enabled || during.server !== '127.0.0.1:5566') throw new Error('设置未生效')
+  if (during.autoConfigUrl !== undefined) throw new Error('PAC 未被清除')
 } finally {
-  addon.clearProxy()
-  const after = addon.getProxyState()
+  await pp.restore(before)
+  const after = await pp.getSystemProxy()
+  const rawAfter = dumpRaw()
   console.log('after', after)
-  if (after.enabled) throw new Error('还原失败')
+  console.log('--- raw before ---')
+  console.log(rawBefore)
+  console.log('--- raw after ---')
+  console.log(rawAfter)
+  if (after.enabled !== before.enabled || after.server !== before.server) throw new Error('还原失败')
 }
+
+console.log('proxy-check ok')
 ```
 
-Run: `node scripts/proxy-check.mjs`
-Expected: 三行输出，`during.enabled === true`，`after.enabled === false`，全程无 UAC。
+- [ ] **Step 4: 运行真机验证**
 
-- [ ] **Step 6: 提交**
+Run: `npx tsx scripts/proxy-check.mjs`
+Expected: 依次打印 `before` / `during` / `after` 与两段原始注册表输出；`during` 指向 `127.0.0.1:5566` 且无 PAC；`after` 与原值一致；最后 `proxy-check ok`。**全程不应出现 UAC 弹窗。** 若失败，必须先手动还原代理再报告。
+
+- [ ] **Step 5: 提交**
 
 ```bash
-git add native/proxy-addon src/main/proxy/windows.ts scripts/proxy-check.mjs
-git commit -m "feat(proxy): Windows 注册表代理插件（无 UAC）"
+git add package.json package-lock.json src/main/proxy/win32.ts scripts/proxy-check.mjs
+git commit -m "feat(proxy): koffi 实现 Windows 系统代理读写"
 ```
-
----
 
 ### Task 11: 启动与退出编排
 
