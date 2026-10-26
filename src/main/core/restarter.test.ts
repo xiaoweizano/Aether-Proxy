@@ -36,4 +36,19 @@ describe('CoreRestarter', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(onStartError).toHaveBeenCalledOnce()
   })
+
+  it('cancel 后已调度的重启不再调用 start', async () => {
+    let scheduled: (() => void) | null = null
+    const start = vi.fn(async () => ({}))
+    const r = new CoreRestarter({
+      start,
+      now: () => 0,
+      schedule: (fn) => { scheduled = fn }
+    })
+    expect(r.notifyExit().scheduled).toBe(true)
+    r.cancel()
+    scheduled!()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(start).not.toHaveBeenCalled()
+  })
 })

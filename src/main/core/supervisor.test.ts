@@ -1,15 +1,15 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { allocatePort } from './ports'
 import { newSecret } from './secret'
-import { CoreSupervisor } from './supervisor'
+import { CoreSupervisor, type CoreSupervisorOptions } from './supervisor'
 
 const running: CoreSupervisor[] = []
 afterEach(async () => { await Promise.all(running.splice(0).map((s) => s.stop())) })
 
-async function makeSupervisor() {
+async function makeSupervisor(extra: Partial<CoreSupervisorOptions> = {}) {
   const homeDir = await mkdtemp(path.join(tmpdir(), 'aether-core-'))
   const controllerPort = await allocatePort()
   const secret = newSecret()
@@ -20,7 +20,33 @@ async function makeSupervisor() {
     controllerPort,
     secret,
     env: { FAKE_PORT: String(controllerPort), FAKE_SECRET: secret },
-    argsPrefix: ['test/fixtures/fake-mihomo.mjs']
+    argsPrefix: ['test/fixtures/fake-mihomo.mjs'],
+    ...extra
+  })
+  running.push(sup)
+  return sup
+}
+
+async function makeCrashSupervisor(
+  onExit: NonNullable<CoreSupervisorOptions['onExit']>,
+  crashAfterMs = 900
+) {
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'aether-core-'))
+  const controllerPort = await allocatePort()
+  const secret = newSecret()
+  const sup = new CoreSupervisor({
+    binary: process.execPath,
+    homeDir,
+    configPath: path.join(homeDir, 'runtime.yaml'),
+    controllerPort,
+    secret,
+    env: {
+      FAKE_PORT: String(controllerPort),
+      FAKE_SECRET: secret,
+      FAKE_CRASH_AFTER_MS: String(crashAfterMs)
+    },
+    argsPrefix: ['test/fixtures/fake-mihomo.mjs'],
+    onExit
   })
   running.push(sup)
   return sup
@@ -81,5 +107,29 @@ describe('CoreSupervisor', () => {
     await sup.checkHealth()
     await sup.checkHealth()
     expect(sup.status).toBe('error')
+  })
+
+  it('内核意外退出时回调 onExit', async () => {
+    const exits: Array<{ code: number | null; signal: NodeJS.Signals | null }> = []
+    const sup = await makeCrashSupervisor((info) => exits.push(info))
+    await sup.start()
+
+    const deadline = Date.now() + 5000
+    while (exits.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50))
+    }
+
+    expect(exits).toEqual([{ code: 1, signal: null }])
+    expect(sup.status).toBe('error')
+  })
+
+  it('主动 stop 不触发 onExit', async () => {
+    const onExit = vi.fn()
+    const sup = await makeSupervisor({ onExit })
+    await sup.start()
+    await sup.stop()
+    await new Promise((r) => setTimeout(r, 300))
+    expect(onExit).not.toHaveBeenCalled()
+    expect(sup.status).toBe('stopped')
   })
 })

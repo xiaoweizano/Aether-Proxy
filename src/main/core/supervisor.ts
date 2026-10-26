@@ -11,6 +11,8 @@ export interface CoreSupervisorOptions {
   env?: Record<string, string>
   spawn?: typeof nodeSpawn
   fetchFn?: typeof fetch
+  /** 非主动 stop() 导致的退出（崩溃、被杀、握手后意外退出）。 */
+  onExit?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void
 }
 
 export class CoreSupervisor {
@@ -47,9 +49,11 @@ export class CoreSupervisor {
       spawnError = err
       this.state = 'error'
     })
-    child.once('exit', () => {
-      if (this.state !== 'stopped') this.state = 'error'
+    child.once('exit', (code, signal) => {
+      const unexpected = this.state !== 'stopped'
+      if (unexpected) this.state = 'error'
       this.child = null
+      if (unexpected) this.opts.onExit?.({ code, signal })
     })
 
     const deadline = Date.now() + 10_000

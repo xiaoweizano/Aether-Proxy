@@ -11,7 +11,8 @@ export interface RestarterOptions {
 
 export class CoreRestarter {
   private readonly now: () => number
-  private readonly schedule: (fn: () => void, ms: number) => void
+  private readonly schedule: (fn: () => void, ms: number) => unknown
+  private pendingCancel: (() => void) | null = null
   readonly attempts: number[] = []
 
   constructor(private readonly opts: RestarterOptions) {
@@ -27,9 +28,28 @@ export class CoreRestarter {
       return { scheduled: false }
     }
     this.attempts.push(now)
-    this.schedule(() => {
+    let cancelled = false
+    const handle = this.schedule(() => {
+      if (cancelled) return
+      this.pendingCancel = null
       void this.opts.start().catch((err) => { this.opts.onStartError?.(err) })
     }, decision.delayMs)
+    this.pendingCancel = () => {
+      cancelled = true
+      if (
+        typeof handle === 'number' ||
+        (typeof handle === 'object' && handle !== null && 'hasRef' in handle)
+      ) {
+        clearTimeout(handle as NodeJS.Timeout)
+      }
+    }
     return { scheduled: true, delayMs: decision.delayMs }
+  }
+
+  /** 取消尚未触发的重启调度（例如用户主动停止内核后）。 */
+  cancel(): void {
+    const cancel = this.pendingCancel
+    this.pendingCancel = null
+    cancel?.()
   }
 }
