@@ -553,6 +553,16 @@ describe('mergeConfig', () => {
     expect(out['find-process-mode']).toBe('always')
   })
 
+  it('proxy-providers / rule-providers 按 name 合并（对象 map，不是数组）', () => {
+    const out = mergeConfig(
+      { 'proxy-providers': { 'prov-a': { type: 'http' } } },
+      { 'proxy-providers': { 'prov-b': { type: 'file' } }, 'rule-providers': { 'rp-a': { type: 'http' } } },
+      inject
+    ) as any
+    expect(Object.keys(out['proxy-providers']).sort()).toEqual(['prov-a', 'prov-b'])
+    expect(out['rule-providers']).toEqual({ 'rp-a': { type: 'http' } })
+  })
+
   it('未知顶层键原样透传', () => {
     const out = mergeConfig({ 'geodata-mode': true }, {}, inject) as any
     expect(out['geodata-mode']).toBe(true)
@@ -574,7 +584,8 @@ export interface Inject {
   secret: string
 }
 
-const NAME_MAP_KEYS = ['proxies', 'proxy-groups', 'proxy-providers', 'rule-providers'] as const
+const ARRAY_MAP_KEYS = ['proxies', 'proxy-groups'] as const
+const DICT_MAP_KEYS = ['proxy-providers', 'rule-providers'] as const
 const DEEP_MERGE_KEYS = ['dns', 'sniffer', 'profile'] as const
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -590,7 +601,7 @@ function deepMerge(base: unknown, patch: unknown): unknown {
   return out
 }
 
-function mergeByName(base: unknown, add: unknown): unknown {
+function mergeArrayByName(base: unknown, add: unknown): unknown {
   const list = Array.isArray(base) ? [...base] : []
   const additions = Array.isArray(add) ? add : []
   if (additions.length === 0) return list
@@ -598,6 +609,12 @@ function mergeByName(base: unknown, add: unknown): unknown {
   for (const item of list) byName.set(String((item as any)?.name), item)
   for (const item of additions) byName.set(String((item as any)?.name), item)
   return [...byName.values()]
+}
+
+function mergeDict(base: unknown, add: unknown): unknown {
+  const out = isObject(base) ? structuredClone(base) : {}
+  if (isObject(add)) Object.assign(out, structuredClone(add))
+  return out
 }
 
 export function mergeConfig(
@@ -613,8 +630,12 @@ export function mergeConfig(
   const append = Array.isArray((ov as any).rules?.append) ? (ov as any).rules.append : []
   base.rules = [...prepend, ...baseRules, ...append]
 
-  for (const key of NAME_MAP_KEYS) {
-    if (key in ov) base[key] = mergeByName(base[key], ov[key])
+  for (const key of ARRAY_MAP_KEYS) {
+    if (key in ov) base[key] = mergeArrayByName(base[key], ov[key])
+  }
+
+  for (const key of DICT_MAP_KEYS) {
+    if (key in ov) base[key] = mergeDict(base[key], ov[key])
   }
 
   for (const key of DEEP_MERGE_KEYS) {
