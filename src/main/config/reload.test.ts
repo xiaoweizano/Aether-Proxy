@@ -17,4 +17,10 @@ describe('reloadConfig', () => {
     const res = await reloadConfig(5567, 's', '/tmp/runtime.yaml', fetchFn)
     expect(res).toEqual({ ok: false, status: 400 })
   })
+
+  it('传输失败返回 ok=false/status=0，不抛异常', async () => {
+    const fetchFn = (async () => { throw new Error('ECONNREFUSED') }) as any
+    const res = await reloadConfig(5567, 's', '/tmp/runtime.yaml', fetchFn)
+    expect(res).toEqual({ ok: false, status: 0 })
+  })
 })
