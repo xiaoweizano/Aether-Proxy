@@ -37,7 +37,9 @@ export interface ShutdownDeps {
 }
 
 export async function shutdown(deps: ShutdownDeps): Promise<void> {
-  await deps.proxy.disable()
-  await deps.ownership.restoreOnExit()
-  await deps.core.stop()
+  const errors: unknown[] = []
+  try { await deps.proxy.disable() } catch (err) { errors.push(err) }
+  try { await deps.ownership.restoreOnExit() } catch (err) { errors.push(err) }
+  try { await deps.core.stop() } catch (err) { errors.push(err) }
+  if (errors.length > 0) throw errors[0]
 }

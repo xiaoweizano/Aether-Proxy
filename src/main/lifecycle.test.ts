@@ -62,4 +62,15 @@ describe('shutdown', () => {
     await shutdown(d as any)
     expect(calls).toEqual(['proxy-off', 'restore-exit', 'core-stop'])
   })
+
+  it('关闭代理失败时仍会还原标记并终止内核', async () => {
+    const calls: string[] = []
+    const d = {
+      ownership: { restoreOnExit: vi.fn(async () => { calls.push('restore-exit') }) },
+      proxy: { disable: vi.fn(async () => { calls.push('proxy-off'); throw new Error('boom') }) },
+      core: { stop: vi.fn(async () => { calls.push('core-stop') }) }
+    }
+    await expect(shutdown(d as any)).rejects.toThrow('boom')
+    expect(calls).toEqual(['proxy-off', 'restore-exit', 'core-stop'])
+  })
 })
