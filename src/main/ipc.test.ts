@@ -1,0 +1,452 @@
+import { describe, it, expect, vi } from 'vitest'
+import { mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import type { CoreInfo } from '../shared/types'
+import type { AppContext } from './bootstrap'
+import type { CoreSupervisor } from './core/supervisor'
+import type { SystemProxyController } from './proxy/controller'
+import type { ProxyOwnership } from './proxy/ownership'
+import type { CoreLink } from './core/link'
+import { CoreLink as RealCoreLink } from './core/link'
+import { IPC } from '../shared/ipc'
+import {
+  buildStatusView,
+  registerIpcHandlers,
+  registerUnavailableHandlers,
+  toProxyGroups,
+  type IpcMainLike
+} from './ipc'
+
+const CORE_INFO: CoreInfo = {
+  pid: 4242,
+  version: 'v1.19.32',
+  controllerPort: 9090,
+  startedAt: 1_700_000_000_000
+}
+
+interface FakeIpc {
+  handlers: Map<string, (event: unknown, ...args: unknown[]) => unknown>
+  handle: IpcMainLike['handle']
+}
+
+function fakeIpc(): FakeIpc {
+  const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
+  return {
+    handlers,
+    handle(channel, listener) {
+      handlers.set(channel, listener)
+    }
+  }
+}
+
+async function invoke(ipc: FakeIpc, channel: string, ...args: unknown[]): Promise<unknown> {
+  const handler = ipc.handlers.get(channel)
+  if (!handler) throw new Error(`未注册的通道：${channel}`)
+  return handler({}, ...args)
+}
+
+interface FetchedCall {
+  url: string
+  init: RequestInit | undefined
+}
+
+function fakeLink(status = 200): { link: CoreLink; calls: FetchedCall[] } {
+  const calls: FetchedCall[] = []
+  const fn = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(input), init })
+    return { ok: status >= 200 && status < 300, status, json: async () => ({}) } as Response
+  }) as unknown as typeof fetch
+  return { link: new RealCoreLink('http://127.0.0.1:9090', 'top-secret', fn), calls }
+}
+
+interface Harness {
+  dir: string
+  ctx: AppContext
+  ipc: FakeIpc
+  deps: { settingsFile: string }
+  controller: { enable: ReturnType<typeof vi.fn>; disable: ReturnType<typeof vi.fn> }
+  supervisor: {
+    stop: ReturnType<typeof vi.fn>
+    start: ReturnType<typeof vi.fn>
+    status: string
+  }
+  stopAll: ReturnType<typeof vi.fn>
+}
+
+async function harness(options: {
+  proxyServer?: string | null
+  linkStatus?: number | null
+} = {}): Promise<Harness> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'aether-ipc-'))
+  const controller = {
+    enable: vi.fn(async () => {}),
+    disable: vi.fn(async () => {})
+  }
+  const supervisor = {
+    stop: vi.fn(async () => {}),
+    start: vi.fn(async () => CORE_INFO),
+    status: 'running'
+  }
+  const stopAll = vi.fn(async () => {})
+  const link = options.linkStatus === null ? null : fakeLink(options.linkStatus ?? 200).link
+
+  const ctx: AppContext = {
+    profileDir: path.join(dir, 'profiles', 'default'),
+    configDir: path.join(dir, 'profiles', 'default'),
+    supervisor: supervisor as unknown as CoreSupervisor,
+    controller: controller as unknown as SystemProxyController,
+    ownership: {} as unknown as ProxyOwnership,
+    mode: 'rule',
+    startupStatus: 'ready',
+    restore: 'none',
+    proxyEnabled: false,
+    proxyServer: options.proxyServer === undefined ? '127.0.0.1:7891' : options.proxyServer,
+    coreInfo: { ...CORE_INFO },
+    profile: { nodeCount: 3, groupCount: 1 },
+    link,
+    setMode(mode) {
+      ctx.mode = mode
+    },
+    async restartCore() {
+      await supervisor.stop()
+      let info: CoreInfo
+      try {
+        info = await supervisor.start()
+      } catch (err) {
+        // 与真实 bootstrap 一致：失败时状态转为 core-error、清空内核视图。
+        ctx.startupStatus = 'core-error'
+        ctx.coreInfo = null
+        throw err
+      }
+      ctx.coreInfo = info
+      ctx.startupStatus = 'ready'
+      await ctx.onCoreRestarted(info)
+      return info
+    },
+    async onCoreRestarted(info) {
+      ctx.coreInfo = info
+    },
+    stopAll
+  }
+
+  const ipc = fakeIpc()
+  const deps = { settingsFile: path.join(dir, 'settings.json') }
+  registerIpcHandlers(ipc, ctx, deps)
+  return { dir, ctx, ipc, deps, controller, supervisor, stopAll }
+}
+
+describe('buildStatusView', () => {
+  it('状态视图不包含敏感字段', async () => {
+    const { ctx } = await harness()
+    // 即使内部对象带有这些字段，视图也只能是白名单字段。
+    const dirty = ctx as unknown as Record<string, unknown>
+    dirty.secret = 'super-secret-token'
+    dirty.upstream = { password: 'hunter2', token: 'abc' }
+    dirty.configPath = 'C:/secret/runtime.yaml'
+
+    const json = JSON.stringify(buildStatusView(ctx))
+    expect(json).not.toMatch(/secret|upstream|password|token|configPath/i)
+  })
+
+  it('逐字段映射内核与配置摘要', async () => {
+    const { ctx } = await harness()
+    expect(buildStatusView(ctx)).toEqual({
+      status: 'ready',
+      restore: 'none',
+      mode: 'rule',
+      proxyEnabled: false,
+      core: { version: 'v1.19.32', port: 9090, startedAt: 1_700_000_000_000 },
+      profile: { nodeCount: 3, groupCount: 1 }
+    })
+  })
+
+  it('内核未运行时省略 core 字段', async () => {
+    const { ctx } = await harness()
+    ctx.coreInfo = null
+    const view = buildStatusView(ctx)
+    expect(view).not.toHaveProperty('core')
+  })
+
+  it('反映运行期更新（模式、代理开关）', async () => {
+    const { ctx } = await harness()
+    ctx.setMode('global')
+    ctx.proxyEnabled = true
+    const view = buildStatusView(ctx)
+    expect(view.mode).toBe('global')
+    expect(view.proxyEnabled).toBe(true)
+  })
+})
+
+describe('statusGet', () => {
+  it('返回构建好的状态视图', async () => {
+    const { ctx, ipc } = await harness()
+    expect(await invoke(ipc, IPC.statusGet)).toEqual(buildStatusView(ctx))
+  })
+})
+
+describe('proxiesGet', () => {
+  it('把内核策略组映射为白名单视图', async () => {
+    const payload = {
+      proxies: {
+        GLOBAL: { name: 'GLOBAL', type: 'select', now: 'Proxy', all: ['Proxy', 'DIRECT'] },
+        Proxy: { name: 'Proxy', type: 'select', now: 'HK', all: ['HK', 'US'], history: [{ delay: 120 }] },
+        HK: { name: 'HK', type: 'ss', history: [{ delay: 85 }, { delay: 90 }] },
+        US: { name: 'US', type: 'ss' },
+        DIRECT: { name: 'DIRECT', type: 'Direct' }
+      }
+    }
+    const fn = (async () => ({ ok: true, status: 200, json: async () => payload })) as unknown as typeof fetch
+    const { ctx, ipc } = await harness()
+    ctx.link = new RealCoreLink('http://127.0.0.1:9090', 's', fn)
+
+    const groups = await invoke(ipc, IPC.proxiesGet)
+    expect(groups).toEqual([
+      {
+        name: 'GLOBAL',
+        type: 'select',
+        now: 'Proxy',
+        nodes: [{ name: 'Proxy' }, { name: 'DIRECT' }]
+      },
+      {
+        name: 'Proxy',
+        type: 'select',
+        now: 'HK',
+        nodes: [{ name: 'HK', delay: 90 }, { name: 'US' }]
+      }
+    ])
+  })
+
+  it('无内核链接时返回空数组', async () => {
+    const { ipc } = await harness({ linkStatus: null })
+    expect(await invoke(ipc, IPC.proxiesGet)).toEqual([])
+  })
+
+  it('toProxyGroups 忽略缺少 all 的条目', () => {
+    expect(toProxyGroups({ proxies: { HK: { name: 'HK', type: 'ss' } } })).toEqual([])
+  })
+})
+
+describe('modeSet', () => {
+  it('成功后 PATCH /configs 并更新上下文模式', async () => {
+    const { ctx, ipc } = await harness()
+    const { link, calls } = fakeLink()
+    ctx.link = link
+
+    expect(await invoke(ipc, IPC.modeSet, 'global')).toEqual({ ok: true, status: 200 })
+    expect(ctx.mode).toBe('global')
+    expect(calls[0]?.url).toBe('http://127.0.0.1:9090/configs')
+    expect(calls[0]?.init?.method).toBe('PATCH')
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ mode: 'global' })
+  })
+
+  it('内核拒绝时返回 ok:false 且不改变上下文模式', async () => {
+    const { ctx, ipc } = await harness()
+    ctx.link = fakeLink(500).link
+
+    expect(await invoke(ipc, IPC.modeSet, 'direct')).toEqual({ ok: false, status: 500 })
+    expect(ctx.mode).toBe('rule')
+  })
+
+  it('传输错误不抛出，返回 status 0', async () => {
+    const { ctx, ipc } = await harness()
+    const fn = (async () => {
+      throw new Error('ECONNREFUSED')
+    }) as unknown as typeof fetch
+    ctx.link = new RealCoreLink('http://127.0.0.1:9090', 'secret', fn)
+
+    expect(await invoke(ipc, IPC.modeSet, 'direct')).toEqual({ ok: false, status: 0 })
+    expect(ctx.mode).toBe('rule')
+  })
+
+  it('非法模式参数不触碰内核', async () => {
+    const { ctx, ipc } = await harness()
+    const { link, calls } = fakeLink()
+    ctx.link = link
+
+    expect(await invoke(ipc, IPC.modeSet, 'turbo')).toEqual({ ok: false, status: 0 })
+    expect(calls).toHaveLength(0)
+    expect(ctx.mode).toBe('rule')
+  })
+
+  it('无内核链接时返回 ok:false', async () => {
+    const { ipc } = await harness({ linkStatus: null })
+    expect(await invoke(ipc, IPC.modeSet, 'global')).toEqual({ ok: false, status: 0 })
+  })
+})
+
+describe('proxyEnable / proxyDisable', () => {
+  it('开启使用主进程保存的 mixed-port，并持久化开关', async () => {
+    const h = await harness({ proxyServer: '127.0.0.1:7891' })
+
+    expect(await invoke(h.ipc, IPC.proxyEnable)).toEqual({ ok: true })
+    expect(h.controller.enable).toHaveBeenCalledWith('127.0.0.1:7891')
+    expect(h.ctx.proxyEnabled).toBe(true)
+    expect(JSON.parse(await readFile(h.deps.settingsFile, 'utf8'))).toEqual({ proxyEnabled: true })
+  })
+
+  it('内核未运行时不写设置也不碰系统代理', async () => {
+    const h = await harness({ proxyServer: null })
+
+    const result = (await invoke(h.ipc, IPC.proxyEnable)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBeTruthy()
+    expect(h.controller.enable).not.toHaveBeenCalled()
+    expect(existsSync(h.deps.settingsFile)).toBe(false)
+    expect(h.ctx.proxyEnabled).toBe(false)
+  })
+
+  it('开启失败时返回消息且不持久化', async () => {
+    const h = await harness()
+    h.controller.enable.mockRejectedValueOnce(new Error('注册表拒绝'))
+
+    const result = (await invoke(h.ipc, IPC.proxyEnable)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe('注册表拒绝')
+    expect(h.ctx.proxyEnabled).toBe(false)
+    expect(existsSync(h.deps.settingsFile)).toBe(false)
+  })
+
+  it('关闭时还原系统代理并持久化', async () => {
+    const h = await harness()
+    h.ctx.proxyEnabled = true
+
+    expect(await invoke(h.ipc, IPC.proxyDisable)).toEqual({ ok: true })
+    expect(h.controller.disable).toHaveBeenCalledTimes(1)
+    expect(h.ctx.proxyEnabled).toBe(false)
+    expect(JSON.parse(await readFile(h.deps.settingsFile, 'utf8'))).toEqual({ proxyEnabled: false })
+  })
+
+  it('关闭失败时如实返回错误', async () => {
+    const h = await harness()
+    h.ctx.proxyEnabled = true
+    h.controller.disable.mockRejectedValueOnce(new Error('无法还原'))
+
+    const result = (await invoke(h.ipc, IPC.proxyDisable)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe('无法还原')
+  })
+})
+
+describe('coreRestart', () => {
+  it('停止 → 启动 → 重写内核状态，顺序固定', async () => {
+    const h = await harness()
+    const order: string[] = []
+    const fresh: CoreInfo = { ...CORE_INFO, pid: 5151, startedAt: 1_700_000_500_000 }
+    h.supervisor.stop.mockImplementation(async () => { order.push('stop') })
+    h.supervisor.start.mockImplementation(async () => { order.push('start'); return fresh })
+    h.ctx.onCoreRestarted = async (info: CoreInfo) => {
+      order.push('state')
+      h.ctx.coreInfo = info
+    }
+
+    expect(await invoke(h.ipc, IPC.coreRestart)).toEqual({ ok: true })
+    expect(order).toEqual(['stop', 'start', 'state'])
+    expect(h.ctx.coreInfo).toEqual(fresh)
+    expect(buildStatusView(h.ctx).status).toBe('ready')
+  })
+
+  it('启动失败时返回消息并把状态标为 core-error', async () => {
+    const h = await harness()
+    h.supervisor.start.mockRejectedValueOnce(new Error('内核握手超时'))
+
+    const result = (await invoke(h.ipc, IPC.coreRestart)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBeTruthy()
+    expect(h.ctx.startupStatus).toBe('core-error')
+    expect(h.ctx.coreInfo).toBeNull()
+    expect(buildStatusView(h.ctx).status).toBe('core-error')
+  })
+
+  it('in-use 时直接拒绝，不碰内核', async () => {
+    const h = await harness()
+    h.ctx.startupStatus = 'in-use'
+
+    const result = (await invoke(h.ipc, IPC.coreRestart)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/另一个实例/)
+    expect(h.supervisor.stop).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerUnavailableHandlers', () => {
+  it('装配失败时每个通道都有 handler，且不泄漏细节', async () => {
+    const ipc = fakeIpc()
+    registerUnavailableHandlers(ipc)
+
+    const expected = [
+      IPC.statusGet,
+      IPC.proxiesGet,
+      IPC.modeSet,
+      IPC.proxyEnable,
+      IPC.proxyDisable,
+      IPC.coreRestart,
+      IPC.configImport
+    ]
+    expect([...ipc.handlers.keys()].sort()).toEqual([...expected].sort())
+
+    const status = (await invoke(ipc, IPC.statusGet)) as { status: string }
+    expect(status.status).toBe('core-error')
+    expect(await invoke(ipc, IPC.proxiesGet)).toEqual([])
+    expect(await invoke(ipc, IPC.modeSet, 'global')).toEqual({ ok: false, status: 0 })
+    for (const channel of [IPC.proxyEnable, IPC.proxyDisable, IPC.coreRestart, IPC.configImport]) {
+      const result = (await invoke(ipc, channel, { sourcePath: 'x' })) as {
+        ok: boolean
+        message: string
+      }
+      expect(result.ok).toBe(false)
+      expect(result.message).not.toMatch(/[A-Za-z]:\\|secret|token/i)
+    }
+  })
+})
+
+describe('configImport', () => {
+  it('导入合法配置后写 upstream.yaml 并提示需要重启', async () => {
+    const h = await harness()
+    const source = path.join(h.dir, 'source.yaml')
+    await writeFile(source, 'proxies: []\nproxy-groups:\n  - { name: P, type: select, proxies: [DIRECT] }\n')
+
+    expect(await invoke(h.ipc, IPC.configImport, { sourcePath: source })).toEqual({
+      ok: true,
+      needsRestart: true
+    })
+    const written = await readFile(path.join(h.ctx.configDir, 'upstream.yaml'), 'utf8')
+    expect(written).toContain('proxy-groups')
+  })
+
+  it('无配置目录时先创建目录再导入', async () => {
+    const h = await harness()
+    h.ctx.profileDir = null
+    await mkdir(path.join(h.dir, 'empty'), { recursive: true })
+    const source = path.join(h.dir, 'source.yaml')
+    await writeFile(source, 'proxies: []\n')
+
+    expect(await invoke(h.ipc, IPC.configImport, { sourcePath: source })).toEqual({
+      ok: true,
+      needsRestart: true
+    })
+    expect(existsSync(path.join(h.ctx.configDir, 'upstream.yaml'))).toBe(true)
+  })
+
+  it('非法配置返回 ok:false 且不覆盖现有配置', async () => {
+    const h = await harness()
+    const source = path.join(h.dir, 'bad.yaml')
+    await writeFile(source, 'not: a clash config\n')
+
+    const result = (await invoke(h.ipc, IPC.configImport, { sourcePath: source })) as {
+      ok: boolean
+      message: string
+    }
+    expect(result.ok).toBe(false)
+    expect(result.message).toMatch(/不是合法的 Clash 配置/)
+    expect(existsSync(path.join(h.ctx.configDir, 'upstream.yaml'))).toBe(false)
+  })
+
+  it('缺少路径参数时返回 ok:false', async () => {
+    const h = await harness()
+    const result = (await invoke(h.ipc, IPC.configImport, {})) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBeTruthy()
+  })
+})

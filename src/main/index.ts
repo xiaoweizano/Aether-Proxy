@@ -1,6 +1,7 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import path from 'node:path'
 import { bootstrap, type AppContext } from './bootstrap'
+import { registerIpcHandlers, registerUnavailableHandlers } from './ipc'
 
 let context: AppContext | null = null
 let quitting = false
@@ -34,17 +35,23 @@ function createWindow(startupStatus: AppContext['startupStatus']): void {
 }
 
 async function start(): Promise<void> {
+  const userDataDir = app.getPath('userData')
   try {
     context = await bootstrap({
-      userDataDir: app.getPath('userData'),
+      userDataDir,
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
       repoRoot: path.resolve(__dirname, '../..')
+    })
+    registerIpcHandlers(ipcMain, context, {
+      settingsFile: path.join(userDataDir, 'settings.json')
     })
     createWindow(context.startupStatus)
   } catch (err) {
     // 装配层意外失败时仍要开窗，让用户能看到状态而不是应用无声退出。
     console.error('[aether] bootstrap 失败', err)
+    // 通道也要注册：否则渲染层的 getStatus 直接 reject，状态页无法显示。
+    registerUnavailableHandlers(ipcMain)
     createWindow('core-error')
   }
 }

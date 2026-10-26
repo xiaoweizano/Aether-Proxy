@@ -16,7 +16,8 @@ import { SystemProxyController } from './proxy/controller'
 import { FakePlatformProxy } from './proxy/fake'
 import type { PlatformProxy } from './proxy/platform'
 import { readSettings } from './settings'
-import type { Mode } from '../shared/types'
+import { CoreLink } from './core/link'
+import type { Mode, CoreInfo } from '../shared/types'
 
 export interface BootstrapOptions {
   userDataDir: string
@@ -35,17 +36,40 @@ export interface BootstrapOptions {
   ) => Promise<{ ok: boolean; output: string }>
 }
 
+export type AppStatus = 'no-config' | 'ready' | 'config-error' | 'core-error' | 'in-use'
+export type RestoreStatus = 'none' | 'restored' | 'conflict' | 'in-use'
+
 export interface AppContext {
+  /** 有效配置所在目录；尚无配置时为 null。 */
   profileDir: string | null
+  /** 配置目录的固定路径，始终存在（导入配置时可能还需要创建）。 */
+  configDir: string
   supervisor: CoreSupervisor
   controller: SystemProxyController
   ownership: ProxyOwnership
   mode: Mode
-  startupStatus: 'no-config' | 'ready' | 'config-error' | 'core-error' | 'in-use'
-  restore: 'none' | 'restored' | 'conflict' | 'in-use'
+  setMode(mode: Mode): void
+  startupStatus: AppStatus
+  restore: RestoreStatus
   /** 实际系统代理状态，不是 settings 里的期望值。 */
   proxyEnabled: boolean
   proxyError?: string
+  /** 内核写入系统的 mixed-port 地址；内核未运行时为 null。界面上只经 IPC 使用。 */
+  proxyServer: string | null
+  /** controller 客户端；内核未启动时为 null。 */
+  link: CoreLink | null
+  /** 当前内核信息；未运行时为 null。 */
+  coreInfo: CoreInfo | null
+  /** 配置摘要（供状态页显示节点/策略组数量）；无配置时为 null。 */
+  profile: { nodeCount: number; groupCount: number } | null
+  /**
+   * 停内核 → 重新读取 upstream.yaml、重新合并/校验 runtime.yaml → 启动 → 重写 core-state.json。
+   * 必须重新生成配置：导入新配置后仅重启进程会用旧的 runtime.yaml，导入等于没生效。
+   * 失败时上下文被置为对应的错误状态，并抛出可读错误。
+   */
+  restartCore(): Promise<CoreInfo>
+  /** 内核重启成功后重写 core-state.json 等外部状态。 */
+  onCoreRestarted(info: CoreInfo): Promise<void>
   stopAll(): Promise<void>
 }
 
@@ -84,36 +108,20 @@ function describeError(err: unknown): string {
   return text.slice(0, 300)
 }
 
-function stopAllOf(
-  controller: SystemProxyController,
-  supervisor: CoreSupervisor,
-  coreStateFile: string
-): () => Promise<void> {
-  return async () => {
-    const errors: unknown[] = []
-    try {
-      await controller.disable()
-    } catch (err) {
-      errors.push(err)
-    }
-    // 内核先真正停下，再删身份记录：否则进程在 SIGTERM 宽限期内被强杀时，
-    // mihomo 还活着，而唯一能识别它的 core-state.json 已经没了。
-    try {
-      await supervisor.stop()
-    } catch (err) {
-      errors.push(err)
-    }
-    try {
-      await clearCoreState(coreStateFile)
-    } catch (err) {
-      errors.push(err)
-    }
-    if (errors.length > 0) throw errors[0]
-  }
+function normalizeMode(value: unknown): Mode {
+  return value === 'global' || value === 'direct' ? value : 'rule'
+}
+
+function profileSummaryOf(upstream: unknown): { nodeCount: number; groupCount: number } | null {
+  if (typeof upstream !== 'object' || upstream === null) return null
+  const cfg = upstream as Record<string, unknown>
+  const proxies = Array.isArray(cfg.proxies) ? cfg.proxies.length : 0
+  const groups = Array.isArray(cfg['proxy-groups']) ? cfg['proxy-groups'].length : 0
+  return { nodeCount: proxies, groupCount: groups }
 }
 
 export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
-  const profileDir = path.join(opts.userDataDir, 'profiles', 'default')
+  const configDir = path.join(opts.userDataDir, 'profiles', 'default')
   const proxyStateFile = path.join(opts.userDataDir, 'proxy-state.json')
   const coreStateFile = path.join(opts.userDataDir, 'core-state.json')
   const settingsFile = path.join(opts.userDataDir, 'settings.json')
@@ -130,6 +138,27 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
   const ownership = new ProxyOwnership(pp, proxyStateFile)
   const controller = new SystemProxyController(pp, ownership)
 
+  // 端口与 secret 在会话内固定：重启内核时系统代理地址与 controller 客户端都不必换，
+  // 也避免界面在两次重启之间看到端口跳动。首次真正需要内核时（可能是导入配置后的重启）才分配。
+  let endpoints: { mixedPort: number; controllerPort: number; secret: string } | null = null
+  const ensureEndpoints = async (): Promise<NonNullable<typeof endpoints>> => {
+    endpoints ??= {
+      mixedPort: await allocatePort(),
+      controllerPort: await allocatePort(),
+      secret: newSecret()
+    }
+    return endpoints
+  }
+  /** controller 客户端同样只建一次：重启内核不改变地址与 secret。 */
+  let link: CoreLink | null = null
+  const ensureLink = async (): Promise<CoreLink> => {
+    if (link === null) {
+      const ep = await ensureEndpoints()
+      link = new CoreLink(`http://127.0.0.1:${ep.controllerPort}`, ep.secret, opts.fetchFn)
+    }
+    return link
+  }
+
   // 用户期望的代理开关独立于所有权快照：proxy-state.json 正常退出时会被删除，
   // 不能用来回答「上次代理是否开着」。
   const settings = await readSettings(settingsFile)
@@ -137,154 +166,294 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
   // 先还原上次异常退出留下的系统代理，再读配置。这样 in-use 时不会
   // 改动另一个存活实例正在使用的 profile 文件，也不会启动第二个内核。
   const restore = await ownership.restoreOnStartupIfStale()
+
+  // stopAll / restartCore 必须作用于当前这一个 supervisor；重启会换新的实例。
+  let activeSupervisor = idleSupervisor(binary, configDir, opts)
+
+  interface Prepared {
+    supervisor: CoreSupervisor
+    link: CoreLink
+    proxyServer: string
+    controllerPort: number
+    secret: string
+    mode: Mode
+    profile: { nodeCount: number; groupCount: number } | null
+  }
+  type PrepareResult =
+    | { ok: true; prepared: Prepared }
+    | { ok: false; status: 'no-config' | 'config-error'; profile: Prepared['profile'] }
+
+  async function prepare(): Promise<PrepareResult> {
+    let upstreamText: string | null = null
+    try {
+      upstreamText = await readFile(path.join(configDir, 'upstream.yaml'), 'utf8')
+    } catch {
+      upstreamText = null
+    }
+    if (upstreamText === null) return { ok: false, status: 'no-config', profile: null }
+
+    let upstream: unknown
+    try {
+      upstream = YAML.parse(upstreamText)
+    } catch {
+      // 解析错误信息会带出配置片段，可能含订阅凭据，不写入日志。
+      console.warn('[aether] upstream.yaml 解析失败，跳过内核启动')
+      return { ok: false, status: 'config-error', profile: null }
+    }
+    const profile = profileSummaryOf(upstream)
+    const ep = await ensureEndpoints()
+    const configPath = path.join(configDir, 'runtime.yaml')
+    const supervisor = new CoreSupervisor({
+      binary,
+      homeDir: configDir,
+      configPath,
+      controllerPort: ep.controllerPort,
+      secret: ep.secret,
+      spawn: opts.spawnFn,
+      fetchFn: opts.fetchFn
+    })
+    activeSupervisor = supervisor
+
+    try {
+      await ensureGeodata(configDir, geodataDir)
+      const merged = mergeConfig(upstream, {}, ep)
+      const missing = missingReferences(merged)
+      if (missing.length > 0) {
+        console.warn(`[aether] 配置引用缺失：${missing.join(', ')}`)
+        return { ok: false, status: 'config-error', profile }
+      }
+      await writeRuntime(configDir, merged)
+      const validate = opts.validateFn ?? validateConfig
+      const validated = await validate(binary, configDir, configPath)
+      if (!validated.ok) {
+        console.warn('[aether] 内核配置校验失败，已跳过启动')
+        return { ok: false, status: 'config-error', profile }
+      }
+      return {
+        ok: true,
+        prepared: {
+          supervisor,
+          link: await ensureLink(),
+          proxyServer: `127.0.0.1:${ep.mixedPort}`,
+          controllerPort: ep.controllerPort,
+          secret: ep.secret,
+          mode: normalizeMode(merged.mode),
+          profile
+        }
+      }
+    } catch (err) {
+      console.warn('[aether] 配置准备失败：', describeError(err))
+      return { ok: false, status: 'config-error', profile }
+    }
+  }
+
+  type StartResult =
+    | { ok: true; prepared: Prepared; info: CoreInfo }
+    | { ok: false; status: 'no-config' | 'config-error'; profile: Prepared['profile'] }
+    | { ok: false; status: 'core-error'; profile: Prepared['profile'] }
+
+  async function startCore(): Promise<StartResult> {
+    const prep = await prepare()
+    if (!prep.ok) return prep
+    const { prepared } = prep
+    try {
+      const info = await prepared.supervisor.start()
+      await writeCoreState(coreStateFile, {
+        pid: info.pid,
+        port: prepared.controllerPort,
+        secret: prepared.secret
+      })
+      return { ok: true, prepared, info }
+    } catch (err) {
+      console.warn('[aether] 内核启动失败：', describeError(err))
+      await prepared.supervisor.stop().catch(() => {})
+      await clearCoreState(coreStateFile).catch(() => {})
+      return { ok: false, status: 'core-error', profile: prepared.profile }
+    }
+  }
+
+  interface ContextOverrides {
+    profileDir: string | null
+    startupStatus: AppStatus
+    mode?: Mode
+    proxyEnabled?: boolean
+    proxyError?: string
+    proxyServer?: string | null
+    link?: CoreLink | null
+    coreInfo?: CoreInfo | null
+    profile?: Prepared['profile']
+    stopAll?: () => Promise<void>
+  }
+
+  /**
+   * 给非 in-use 上下文装上重启能力：导入配置后状态页要用它把新配置真正加载进内核。
+   * 重启会重新读 upstream.yaml、重新合并并校验 runtime.yaml，而不是拿旧文件重启进程。
+   */
+  const attachRestart = (ctx: AppContext): void => {
+    // 端口与 secret 由本次会话固定，状态文件只需跟着新的 pid 重写，
+    // 否则下次启动无法识别残留内核。
+    ctx.onCoreRestarted = async (info: CoreInfo) => {
+      if (endpoints === null) return
+      await writeCoreState(coreStateFile, {
+        pid: info.pid,
+        port: endpoints.controllerPort,
+        secret: endpoints.secret
+      })
+    }
+
+    ctx.restartCore = async (): Promise<CoreInfo> => {
+      await activeSupervisor.stop()
+      const restarted = await startCore()
+      if (!restarted.ok) {
+        const message =
+          restarted.status === 'no-config'
+            ? '还没有配置，无法启动内核'
+            : restarted.status === 'config-error'
+              ? '配置有误，无法启动内核'
+              : '内核启动失败'
+        ctx.startupStatus = restarted.status
+        ctx.profileDir = restarted.status === 'no-config' ? null : configDir
+        ctx.profile = restarted.profile
+        ctx.coreInfo = null
+        ctx.link = null
+        ctx.proxyServer = null
+        // prepare 失败时 supervisor 可能已被替换（配置有误）；同步给调用方与 stopAll。
+        ctx.supervisor = activeSupervisor
+
+        // 内核不在了，系统代理还指向 mixed-port 会让整机上不了网；先还原再报错。
+        if (ctx.proxyEnabled) {
+          try {
+            await controller.disable()
+          } catch (err) {
+            ctx.proxyError = describeError(err)
+          }
+          try {
+            ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
+          } catch (err) {
+            ctx.proxyEnabled = false
+            ctx.proxyError ??= describeError(err)
+          }
+        }
+        throw new Error(message)
+      }
+
+      const { prepared, info } = restarted
+      ctx.startupStatus = 'ready'
+      ctx.profileDir = configDir
+      ctx.profile = prepared.profile
+      ctx.coreInfo = info
+      ctx.link = prepared.link
+      ctx.proxyServer = prepared.proxyServer
+      ctx.supervisor = prepared.supervisor
+      await ctx.onCoreRestarted(info)
+
+      // 重启后内核按 runtime.yaml 的模式启动；把本会话里用户选过的模式补回去。
+      if (ctx.mode !== prepared.mode) await prepared.link.setMode(ctx.mode)
+
+      // mixed-port 在会话内不变，但代理所有权需要指向新内核；同时复核系统真实状态。
+      if (ctx.proxyEnabled) {
+        ctx.proxyError = undefined
+        try {
+          await controller.enable(prepared.proxyServer)
+        } catch (err) {
+          ctx.proxyError = describeError(err)
+        }
+        try {
+          ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
+        } catch (err) {
+          ctx.proxyEnabled = false
+          ctx.proxyError ??= describeError(err)
+        }
+      }
+      return info
+    }
+  }
+
+  /** 所有返回分支共用同一套字段，避免漏掉新增字段时类型上侥幸通过。 */
+  const makeContext = (over: ContextOverrides): AppContext => {
+    const ctx: AppContext = {
+      profileDir: over.profileDir,
+      configDir,
+      supervisor: activeSupervisor,
+      controller,
+      ownership,
+      mode: over.mode ?? 'rule',
+      setMode(mode) {
+        ctx.mode = mode
+      },
+      startupStatus: over.startupStatus,
+      restore,
+      proxyEnabled: over.proxyEnabled ?? false,
+      ...(over.proxyError === undefined ? {} : { proxyError: over.proxyError }),
+      proxyServer: over.proxyServer ?? null,
+      link: over.link ?? null,
+      coreInfo: over.coreInfo ?? null,
+      profile: over.profile ?? null,
+      restartCore: async () => {
+        throw new Error('内核未运行，无法重启')
+      },
+      onCoreRestarted: async () => {},
+      stopAll:
+        over.stopAll ??
+        (async () => {
+          const errors: unknown[] = []
+          try {
+            await controller.disable()
+          } catch (err) {
+            errors.push(err)
+          }
+          // 内核先真正停下，再删身份记录：否则进程在 SIGTERM 宽限期内被强杀时，
+          // mihomo 还活着，而唯一能识别它的 core-state.json 已经没了。
+          try {
+            await activeSupervisor.stop()
+          } catch (err) {
+            errors.push(err)
+          }
+          try {
+            await clearCoreState(coreStateFile)
+          } catch (err) {
+            errors.push(err)
+          }
+          if (errors.length > 0) throw errors[0]
+        })
+    }
+    if (over.startupStatus !== 'in-use') attachRestart(ctx)
+    return ctx
+  }
+
   if (restore === 'in-use') {
-    return {
-      profileDir,
-      supervisor: idleSupervisor(binary, profileDir, opts),
-      controller,
-      ownership,
-      mode: 'rule',
+    // 另一个实例持有系统代理：不启动内核，也不清理它的状态文件。
+    return makeContext({
+      profileDir: configDir,
       startupStatus: 'in-use',
-      restore,
-      proxyEnabled: false,
       stopAll: async () => {}
-    }
+    })
   }
 
-  let upstreamText: string | null = null
-  try {
-    upstreamText = await readFile(path.join(profileDir, 'upstream.yaml'), 'utf8')
-  } catch {
-    upstreamText = null
-  }
-
-  if (upstreamText === null) {
-    return {
-      profileDir: null,
-      supervisor: idleSupervisor(binary, profileDir, opts),
-      controller,
-      ownership,
-      mode: 'rule',
-      startupStatus: 'no-config',
-      restore,
-      proxyEnabled: false,
-      stopAll: async () => {}
-    }
-  }
-
-  let upstream: unknown
-  try {
-    upstream = YAML.parse(upstreamText)
-  } catch {
-    // 解析错误信息会带出配置片段，可能含订阅凭据，不写入日志。
-    console.warn('[aether] upstream.yaml 解析失败，跳过内核启动')
-    return {
-      profileDir,
-      supervisor: idleSupervisor(binary, profileDir, opts),
-      controller,
-      ownership,
-      mode: 'rule',
-      startupStatus: 'config-error',
-      restore,
-      proxyEnabled: false,
-      stopAll: async () => {}
-    }
-  }
-
-  const mixedPort = await allocatePort()
-  const controllerPort = await allocatePort()
-  const secret = newSecret()
-  const configPath = path.join(profileDir, 'runtime.yaml')
-  const supervisor = new CoreSupervisor({
-    binary,
-    homeDir: profileDir,
-    configPath,
-    controllerPort,
-    secret,
-    spawn: opts.spawnFn,
-    fetchFn: opts.fetchFn
-  })
-
-  let merged: Record<string, unknown>
-  try {
-    await ensureGeodata(profileDir, geodataDir)
-    merged = mergeConfig(upstream, {}, { mixedPort, controllerPort, secret })
-    const missing = missingReferences(merged)
-    if (missing.length > 0) {
-      console.warn(`[aether] 配置引用缺失：${missing.join(', ')}`)
-      return {
-        profileDir,
-        supervisor,
-        controller,
-        ownership,
-        mode: 'rule',
-        startupStatus: 'config-error',
-        restore,
-        proxyEnabled: false,
-        stopAll: async () => {}
-      }
-    }
-    await writeRuntime(profileDir, merged)
-    const validate = opts.validateFn ?? validateConfig
-    const validated = await validate(binary, profileDir, configPath)
-    if (!validated.ok) {
-      console.warn('[aether] 内核配置校验失败，已跳过启动')
-      return {
-        profileDir,
-        supervisor,
-        controller,
-        ownership,
-        mode: 'rule',
-        startupStatus: 'config-error',
-        restore,
-        proxyEnabled: false,
-        stopAll: async () => {}
-      }
-    }
-  } catch (err) {
-    console.warn('[aether] 配置准备失败：', err instanceof Error ? err.message : String(err))
-    return {
-      profileDir,
-      supervisor,
-      controller,
-      ownership,
-      mode: 'rule',
-      startupStatus: 'config-error',
-      restore,
-      proxyEnabled: false,
-      stopAll: async () => {}
-    }
-  }
-
-  try {
-    const info = await supervisor.start()
-    await writeCoreState(coreStateFile, { pid: info.pid, port: controllerPort, secret })
-  } catch (err) {
-    console.warn('[aether] 内核启动失败：', err instanceof Error ? err.message : String(err))
-    await supervisor.stop().catch(() => {})
-    await clearCoreState(coreStateFile).catch(() => {})
-    return {
-      profileDir,
-      supervisor,
-      controller,
-      ownership,
-      mode: 'rule',
-      startupStatus: 'core-error',
-      restore,
-      proxyEnabled: false,
-      stopAll: async () => {
-        await clearCoreState(coreStateFile)
-      }
-    }
+  const result = await startCore()
+  if (!result.ok) {
+    return makeContext({
+      profileDir: result.status === 'no-config' ? null : configDir,
+      startupStatus: result.status,
+      profile: result.profile,
+      // 内核没跑起来时没有需要还原的代理；core-state.json 已在 startCore 失败路径清掉，
+      // 但保留一次幂等清理，避免退出时留下「已启动」的假记录。
+      stopAll:
+        result.status === 'core-error'
+          ? async () => {
+              await clearCoreState(coreStateFile)
+            }
+          : async () => {}
+    })
   }
 
   // 只有用户上次明确打开代理、且没有检测到他人改动时才接管系统代理。
-  // `conflict` 表示系统代理已被其它程序改写，不能覆盖；`in-use` 已在上面提前返回。
+  // `conflict` 表示系统代理已被其它程序改写，不能覆盖。
   let proxyEnabled = false
   let proxyError: string | undefined
   if (settings.proxyEnabled && restore !== 'conflict') {
     try {
-      await controller.enable(`127.0.0.1:${mixedPort}`)
+      await controller.enable(result.prepared.proxyServer)
     } catch (err) {
       proxyError = describeError(err)
     }
@@ -297,19 +466,15 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     }
   }
 
-  const rawMode = merged.mode
-  const mode: Mode = rawMode === 'global' || rawMode === 'direct' ? rawMode : 'rule'
-
-  return {
-    profileDir,
-    supervisor,
-    controller,
-    ownership,
-    mode,
+  return makeContext({
+    profileDir: configDir,
     startupStatus: 'ready',
-    restore,
+    mode: result.prepared.mode,
     proxyEnabled,
     ...(proxyError === undefined ? {} : { proxyError }),
-    stopAll: stopAllOf(controller, supervisor, coreStateFile)
-  }
+    proxyServer: result.prepared.proxyServer,
+    link: result.prepared.link,
+    coreInfo: result.info,
+    profile: result.prepared.profile
+  })
 }

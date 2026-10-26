@@ -214,6 +214,156 @@ rules:
     await expect(readFile(path.join(h.dir, 'core-state.json'), 'utf8')).rejects.toThrow()
   })
 
+  it('就绪时暴露 link 与 mixed-port，proxyServer 与系统代理一致', async () => {
+    const h = await harness({ proxyEnabled: true })
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.link).not.toBeNull()
+    expect(ctx.coreInfo?.pid).toBe(CORE_PID)
+    expect(ctx.coreInfo?.controllerPort).toBeGreaterThan(0)
+    expect(ctx.profile).toEqual({ nodeCount: 0, groupCount: 1 })
+    const proxy = await h.pp.getSystemProxy()
+    expect(ctx.proxyServer).toBe(proxy.server)
+
+    // setMode 只改内存中的模式，供 status 视图读取。
+    ctx.setMode('direct')
+    expect(ctx.mode).toBe('direct')
+
+    await ctx.stopAll()
+  })
+
+  it('内核未启动的分支没有 link 与 proxyServer', async () => {
+    const h = await harness({ config: null })
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.link).toBeNull()
+    expect(ctx.proxyServer).toBeNull()
+    expect(ctx.coreInfo).toBeNull()
+    expect(ctx.profile).toBeNull()
+    expect(ctx.configDir).toBe(path.join(h.dir, 'profiles', 'default'))
+    await ctx.stopAll()
+  })
+
+  it('onCoreRestarted 重写 core-state.json', async () => {
+    const h = await harness()
+    const ctx = await bootstrap(h.opts)
+    const stateFile = path.join(h.dir, 'core-state.json')
+    const before = JSON.parse(await readFile(stateFile, 'utf8'))
+
+    const restarted = { ...before, pid: 999999, version: 'v1.19.32', controllerPort: 1, startedAt: 1 }
+    await ctx.onCoreRestarted({ ...ctx.coreInfo!, pid: restarted.pid })
+    const after = JSON.parse(await readFile(stateFile, 'utf8'))
+    expect(after.pid).toBe(restarted.pid)
+    // secret 必须继续只存在于主进程侧的状态文件中，且重启不改变它。
+    expect(after.secret).toBe(before.secret)
+
+    await ctx.stopAll()
+  })
+
+  it('重启内核会重新生成配置并按新配置启动', async () => {
+    const h = await harness()
+    const ctx = await bootstrap(h.opts)
+    const firstPid = ctx.coreInfo?.pid
+    const firstLink = ctx.link
+    const runtimeBefore = await readFile(path.join(ctx.configDir, 'runtime.yaml'), 'utf8')
+
+    // 用户在状态页导入新配置后点「重启内核」。
+    await writeFile(
+      path.join(ctx.configDir, 'upstream.yaml'),
+      `proxies: [{ name: N1, type: ss, server: 1.2.3.4, port: 1, cipher: aes-128-gcm, password: x }]
+proxy-groups:
+  - { name: P, type: select, proxies: [N1, DIRECT] }
+rules:
+  - MATCH,P
+`
+    )
+    const info = await ctx.restartCore()
+
+    expect(info.pid).toBe(CORE_PID)
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.coreInfo?.pid).toBe(firstPid)
+    expect(ctx.profile).toEqual({ nodeCount: 1, groupCount: 1 })
+    // controller 客户端在会话内保持同一地址与 secret。
+    expect(ctx.link).toBe(firstLink)
+    const runtimeAfter = await readFile(path.join(ctx.configDir, 'runtime.yaml'), 'utf8')
+    expect(runtimeAfter).not.toBe(runtimeBefore)
+    expect(runtimeAfter).toContain('N1')
+    // 内核状态文件跟着新的启动重写。
+    const state = JSON.parse(await readFile(path.join(h.dir, 'core-state.json'), 'utf8'))
+    expect(state.pid).toBe(CORE_PID)
+
+    await ctx.stopAll()
+  })
+
+  it('无配置时导入配置后重启即可进入 ready', async () => {
+    const h = await harness({ config: null })
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.startupStatus).toBe('no-config')
+    expect(ctx.restartCore).toBeTypeOf('function')
+
+    await mkdir(path.join(ctx.configDir), { recursive: true })
+    await writeFile(path.join(ctx.configDir, 'upstream.yaml'), VALID_CONFIG)
+    const info = await ctx.restartCore()
+
+    expect(info.pid).toBe(CORE_PID)
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.link).not.toBeNull()
+    expect(ctx.proxyServer).toMatch(/^127\.0\.0\.1:\d+$/)
+
+    await ctx.stopAll()
+  })
+
+  it('重启后配置校验失败时进入 config-error 并抛出', async () => {
+    const h = await harness()
+    let allow = true
+    h.opts.validateFn = async () => (allow ? { ok: true, output: 'ok' } : { ok: false, output: 'bad' })
+    const ctx = await bootstrap(h.opts)
+    allow = false
+
+    await expect(ctx.restartCore()).rejects.toThrow(/配置/)
+    expect(ctx.startupStatus).toBe('config-error')
+    expect(ctx.coreInfo).toBeNull()
+    expect(ctx.link).toBeNull()
+
+    await ctx.stopAll()
+  })
+
+  it('重启失败且代理开着时还原系统代理，避免指向已停的内核', async () => {
+    const h = await harness({ proxyEnabled: true })
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.proxyEnabled).toBe(true)
+
+    h.opts.validateFn = async () => ({ ok: false, output: 'bad' })
+    await expect(ctx.restartCore()).rejects.toThrow()
+    expect(ctx.proxyEnabled).toBe(false)
+    expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+
+    await ctx.stopAll()
+  })
+
+  it('重启后把本会话选过的模式写回新内核', async () => {
+    const h = await harness()
+    const calls: { url: string; method?: string; body?: string }[] = []
+    h.opts.fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        method: init?.method,
+        body: typeof init?.body === 'string' ? init.body : undefined
+      })
+      return { ok: true, status: 200, json: async () => ({}) } as Response
+    }) as unknown as typeof fetch
+
+    const ctx = await bootstrap(h.opts)
+    ctx.setMode('global')
+    calls.length = 0
+    await ctx.restartCore()
+
+    const patches = calls.filter((c) => c.method === 'PATCH' && c.url.endsWith('/configs'))
+    expect(patches).toHaveLength(1)
+    expect(JSON.parse(patches[0]!.body!)).toEqual({ mode: 'global' })
+    expect(ctx.mode).toBe('global')
+
+    await ctx.stopAll()
+  })
+
   it('上次代理为关时启动内核但不改系统代理', async () => {
     const h = await harness({ proxyEnabled: false })
     const ctx = await bootstrap(h.opts)
