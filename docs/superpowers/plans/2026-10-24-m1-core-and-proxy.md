@@ -1472,7 +1472,7 @@ git commit -m "feat(core): 内核进程守护与握手"
 **Interfaces:**
 - Produces:
   - `resolveMihomoBinary(input: { isPackaged: boolean; resourcesPath: string; repoRoot: string }): string`
-  - `class CoreRestarter { constructor(opts: { start(): Promise<unknown>; now?: () => number; schedule?: (fn: () => void, ms: number) => void; policy?: RestartPolicy }); notifyExit(): { scheduled: boolean; delayMs?: number }; readonly attempts: number[] }`
+  - `class CoreRestarter { constructor(opts: { start(): Promise<unknown>; now?: () => number; schedule?: (fn: () => void, ms: number) => void; policy?: RestartPolicy; onGiveUp?: () => void; onStartError?: (err: unknown) => void }); notifyExit(): { scheduled: boolean; delayMs?: number }; readonly attempts: number[] }`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1513,12 +1513,29 @@ describe('CoreRestarter', () => {
   it('10 分钟内第 4 次退出不再调度', () => {
     let now = 0
     const schedule = vi.fn()
-    const r = new CoreRestarter({ start: vi.fn(async () => ({})), schedule, now: () => now })
+    const onGiveUp = vi.fn()
+    const r = new CoreRestarter({ start: vi.fn(async () => ({})), schedule, now: () => now, onGiveUp })
     now = 1000; expect(r.notifyExit().scheduled).toBe(true)
     now = 2000; expect(r.notifyExit().scheduled).toBe(true)
     now = 3000; expect(r.notifyExit().scheduled).toBe(true)
     now = 4000; expect(r.notifyExit()).toEqual({ scheduled: false })
     expect(schedule).toHaveBeenCalledTimes(3)
+    expect(onGiveUp).toHaveBeenCalledOnce()
+  })
+
+  it('重启失败不产生未处理拒绝，并回调 onStartError', async () => {
+    const onStartError = vi.fn()
+    let scheduled: (() => void) | null = null
+    const r = new CoreRestarter({
+      start: vi.fn(async () => { throw new Error('boom') }),
+      now: () => 0,
+      schedule: (fn) => { scheduled = fn },
+      onStartError
+    })
+    r.notifyExit()
+    scheduled!()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(onStartError).toHaveBeenCalledOnce()
   })
 })
 ```
@@ -1557,6 +1574,7 @@ export interface RestarterOptions {
   schedule?: (fn: () => void, ms: number) => void
   policy?: RestartPolicy
   onGiveUp?: () => void
+  onStartError?: (err: unknown) => void
 }
 
 export class CoreRestarter {
@@ -1577,7 +1595,9 @@ export class CoreRestarter {
       return { scheduled: false }
     }
     this.attempts.push(now)
-    this.schedule(() => { void this.opts.start() }, decision.delayMs)
+    this.schedule(() => {
+      void this.opts.start().catch((err) => { this.opts.onStartError?.(err) })
+    }, decision.delayMs)
     return { scheduled: true, delayMs: decision.delayMs }
   }
 }
