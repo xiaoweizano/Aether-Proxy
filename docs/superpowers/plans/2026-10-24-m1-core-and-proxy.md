@@ -2350,7 +2350,10 @@ describe('startup', () => {
 
   it('内核启动失败时不应用代理', async () => {
     const d = deps()
-    ;(d.core.start as any).mockRejectedValueOnce(new Error('boom'))
+    ;(d.core.start as any).mockImplementationOnce(async () => {
+      d.calls.push('core')
+      throw new Error('boom')
+    })
     const result = await startup(d as any)
     expect(d.calls).toEqual(['restore', 'config', 'core'])
     expect(result.status).toBe('core-error')
@@ -2372,6 +2375,17 @@ describe('shutdown', () => {
       core: { stop: vi.fn(async () => { calls.push('core-stop') }) }
     }
     await shutdown(d as any)
+    expect(calls).toEqual(['proxy-off', 'restore-exit', 'core-stop'])
+  })
+
+  it('关闭代理失败时仍会还原标记并终止内核', async () => {
+    const calls: string[] = []
+    const d = {
+      ownership: { restoreOnExit: vi.fn(async () => { calls.push('restore-exit') }) },
+      proxy: { disable: vi.fn(async () => { calls.push('proxy-off'); throw new Error('boom') }) },
+      core: { stop: vi.fn(async () => { calls.push('core-stop') }) }
+    }
+    await expect(shutdown(d as any)).rejects.toThrow('boom')
     expect(calls).toEqual(['proxy-off', 'restore-exit', 'core-stop'])
   })
 })
@@ -2424,9 +2438,11 @@ export interface ShutdownDeps {
 }
 
 export async function shutdown(deps: ShutdownDeps): Promise<void> {
-  await deps.proxy.disable()
-  await deps.ownership.restoreOnExit()
-  await deps.core.stop()
+  const errors: unknown[] = []
+  try { await deps.proxy.disable() } catch (err) { errors.push(err) }
+  try { await deps.ownership.restoreOnExit() } catch (err) { errors.push(err) }
+  try { await deps.core.stop() } catch (err) { errors.push(err) }
+  if (errors.length > 0) throw errors[0]
 }
 ```
 
@@ -2704,3 +2720,5 @@ git commit -m "test: 真实 mihomo 冒烟链路"
 ## 下一份计划
 
 `2026-10-24-m1-dashboard-and-lifecycle.md`，依赖本计划产出的 `PlatformProxy`、`CoreSupervisor`、`mergeConfig`、`startup/shutdown` 四个接口，覆盖：IPC 白名单与 preload、React 外壳与侧栏、卡片仪表盘（四块 + 折线图）、顶栏模式切换、连接页（六列 + 行内详情 + 搜索/只看活跃）、命令面板、托盘、开机自启、窗口隐藏即销毁、`powerMonitor` 接入、`taskkill /F` 残留验证、内存测量，以及 `tasks.md` 第 8 组的全部端到端验收。
+
+**接线时必须处理（来自 Task 11 审查）**：`registerShutdownHooks` 只做幂等聚合，不保证清理跑完。Electron 不会等待 `before-quit` 里的异步工作，Windows 的注销/关机事件是 `session-end`（不是 `powerMonitor` 的 `shutdown`）。接线时要：在 `will-quit` / `session-end` 里 `event.preventDefault()` → `await shutdown()` → 再调用 `app.quit()`；并给 shutdown 失败加日志，否则代理没还原时没有任何线索。
