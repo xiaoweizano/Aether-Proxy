@@ -51,7 +51,10 @@ export const copy = {
       down: '下载速度',
       up: '上传速度',
       connections: '活跃连接',
-      connectionsFoot: '连接页在下一阶段',
+      /** 页脚两个数字都来自同一份快照：缓冲条数（含已结束）与保留窗口。 */
+      connectionsFoot: (total: number, window: string) => `当前 ${total} 条 · 最近 ${window}`,
+      /** 没有采集器（内核未运行）：连接数未知，页脚说明原因而不是编造 0。 */
+      connectionsFootUnknown: '内核未运行',
       totalPrefix: '累计'
     },
     chart: {
@@ -131,8 +134,10 @@ export const copy = {
   proxyToggleFailed: '系统代理切换失败，请重试',
   connections: {
     label: '连接列表',
-    /** 采集器保留最近 60 秒的已结束连接；与设计文档的「近 60 秒」一致。 */
-    window: '近 60 秒',
+    /** 采集器保留已结束连接的时长由快照的 `retainMs` 决定，文案必须由它推导。 */
+    window: (window: string) => `最近 ${window}`,
+    /** 没有采集器时窗口是未知，不能写死一个秒数。 */
+    windowUnknown: '—',
     count: (count: number) => `${count} 条`,
     searchPlaceholder: '搜索域名或进程',
     searchLabel: '搜索域名或进程',

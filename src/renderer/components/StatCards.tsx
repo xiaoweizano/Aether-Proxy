@@ -1,5 +1,5 @@
 import { copy } from '../copy'
-import { formatBytes, formatRateParts, UNKNOWN } from '../format'
+import { formatBytes, formatRateParts, formatWindow, UNKNOWN } from '../format'
 import type { StatsCurrent } from '../hooks/useStats'
 
 export interface StatCardsProps {
@@ -8,10 +8,23 @@ export interface StatCardsProps {
    * 显示 `0.00 MB/s`。两者不可互换。
    */
   current: StatsCurrent | null
+  /** 活跃连接数（不含保留期内的已结束行）；没有采集器时为 null，显示破折号。 */
+  active: number | null
+  /** 缓冲内条目总数（含已结束行）；没有采集器时为 null。 */
+  total: number | null
+  /** 已结束连接的保留窗口（毫秒）；没有采集器时为 null。 */
+  retainMs: number | null
 }
 
 function footFor(total: number | undefined): string {
   return `${copy.dashboard.stats.totalPrefix} ${total === undefined ? UNKNOWN : formatBytes(total)}`
+}
+
+function ConnectionFigure({ active }: { active: number | null }) {
+  if (active === null) {
+    return <div className="stat-figure muted">{UNKNOWN}</div>
+  }
+  return <div className="stat-figure">{active}</div>
 }
 
 function RateFigure({ rate }: { rate: { value: string; unit: string } | null }) {
@@ -27,12 +40,17 @@ function RateFigure({ rate }: { rate: { value: string; unit: string } | null }) 
 }
 
 /**
- * 三张速率卡：下载、上传、活跃连接。连接数要等连接页那一份计划，
- * 本轮显示破折号并注明来源，不用 0 假装已知。
+ * 三张速率卡：下载、上传、活跃连接。连接数与页脚都来自同一份 `/connections` 快照：
+ * 活跃数只数 `ended === false` 的行，页脚的条数包含保留期内的已结束行，窗口长度由
+ * `retainMs` 推导。没有采集器时连接数是未知（破折号），不是 0。
  */
-export function StatCards({ current }: StatCardsProps) {
+export function StatCards({ current, active, total, retainMs }: StatCardsProps) {
   const down = current === null ? null : formatRateParts(current.down)
   const up = current === null ? null : formatRateParts(current.up)
+  const connectionFoot =
+    total === null || retainMs === null
+      ? copy.dashboard.stats.connectionsFootUnknown
+      : copy.dashboard.stats.connectionsFoot(total, formatWindow(retainMs))
 
   return (
     <>
@@ -65,8 +83,8 @@ export function StatCards({ current }: StatCardsProps) {
           </span>
           {copy.dashboard.stats.connections}
         </div>
-        <div className="stat-figure muted">{UNKNOWN}</div>
-        <div className="stat-foot">{copy.dashboard.stats.connectionsFoot}</div>
+        <ConnectionFigure active={active} />
+        <div className="stat-foot">{connectionFoot}</div>
       </section>
     </>
   )

@@ -19,7 +19,7 @@ export function makeAether(overrides: Partial<AetherApi> = {}): AetherApi {
     restartCore: vi.fn(async () => ({ ok: true })),
     importConfig: vi.fn(async () => ({ ok: true, needsRestart: true }) as const),
     onStats: vi.fn(() => () => {}),
-    getConnections: vi.fn(async () => ({ items: [], memory: null, at: Date.now() })),
+    getConnections: vi.fn(async () => ({ items: [], memory: null, retainMs: 60_000, at: Date.now() })),
     onConnections: vi.fn(() => () => {}),
     getLogCounts: vi.fn(async () => null),
     onLogCounts: vi.fn(() => () => {}),

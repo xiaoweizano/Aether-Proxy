@@ -1,4 +1,5 @@
 import type { AppStatusView, DialFailureCounts } from '../../shared/ipc'
+import type { ConnectionSummary } from '../hooks/useConnections'
 import type { StatsCurrent, TrafficSample } from '../hooks/useStats'
 import type { ActiveProxy } from '../selectors'
 import { CoreCard } from './CoreCard'
@@ -11,6 +12,8 @@ export interface DashboardProps {
   active: ActiveProxy | null
   current: StatsCurrent | null
   history: TrafficSample[]
+  /** 连接快照摘要：活跃数、缓冲条数、内核内存与保留窗口；没有采集器时数字为 null。 */
+  connections: ConnectionSummary
   /** 拨号失败滚动计数；`null` 表示没有计数来源（内核未运行），不是零次失败。 */
   dialFailures: DialFailureCounts | null
   /** 失败计数可点时的去向：日志页。 */
@@ -18,7 +21,15 @@ export interface DashboardProps {
 }
 
 /** 卡片场：三列等宽，hero 占 2、内核占 1，三张速率卡各占 1，流量图跨满三列。 */
-export function Dashboard({ status, active, current, history, dialFailures, onViewLogs }: DashboardProps) {
+export function Dashboard({
+  status,
+  active,
+  current,
+  history,
+  connections,
+  dialFailures,
+  onViewLogs
+}: DashboardProps) {
   const mode = status === null ? null : status.mode
   const startedAt = status?.core?.startedAt
 
@@ -32,8 +43,13 @@ export function Dashboard({ status, active, current, history, dialFailures, onVi
         dialFailures={dialFailures}
         {...(onViewLogs === undefined ? {} : { onViewLogs })}
       />
-      <CoreCard status={status} />
-      <StatCards current={current} />
+      <CoreCard status={status} memory={connections.memory} />
+      <StatCards
+        current={current}
+        active={connections.active}
+        total={connections.total}
+        retainMs={connections.retainMs}
+      />
       <TrafficChart history={history} connected={status?.status === 'ready'} />
     </div>
   )

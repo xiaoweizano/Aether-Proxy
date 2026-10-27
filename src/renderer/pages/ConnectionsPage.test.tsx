@@ -8,7 +8,8 @@ import type { ConnectionView, ConnectionsSnapshot } from '../../shared/ipc'
 import { CONNECTION_DETAIL_HEIGHT } from '../components/ConnectionDetail'
 import { CONNECTION_ROW_HEIGHT } from '../components/ConnectionRow'
 import { copy } from '../copy'
-import { formatClock, UNKNOWN } from '../format'
+import { formatClock, formatWindow, UNKNOWN } from '../format'
+import { useConnections } from '../hooks/useConnections'
 import { makeAether, makeConnection } from '../test-utils'
 import { ConnectionsPage } from './ConnectionsPage'
 
@@ -26,15 +27,28 @@ function tokenPx(tokens: string, name: string): number {
 
 const NOW = new Date(2026, 0, 2, 13, 42, 10).getTime()
 
-function snapshotOf(items: ConnectionView[], at = NOW): ConnectionsSnapshot {
-  return { items, memory: null, at }
+function snapshotOf(
+  items: ConnectionView[],
+  at = NOW,
+  retainMs: number | null = 60_000
+): ConnectionsSnapshot {
+  return { items, memory: null, retainMs, at }
+}
+
+/**
+ * 生产环境里连接订阅在 App，页面只接收快照。测试保留同样分层：
+ * 这个包装组件负责订阅，页面本身保持纯 prop。
+ */
+function HookedPage() {
+  const connections = useConnections()
+  return <ConnectionsPage connections={connections} />
 }
 
 function mountPage(items: ConnectionView[], at = NOW) {
   window.aether = makeAether({
     getConnections: vi.fn(async () => snapshotOf(items, at))
   })
-  return render(<ConnectionsPage />)
+  return render(<HookedPage />)
 }
 
 function bodyRows(container: HTMLElement): Element[] {
@@ -62,14 +76,35 @@ describe('ConnectionsPage', () => {
       expect(screen.getByRole('columnheader', { name: label })).toBeInTheDocument()
     }
     expect(screen.getByText(copy.connections.count(0))).toBeInTheDocument()
-    expect(screen.getByText(copy.connections.window)).toBeInTheDocument()
+    expect(
+      screen.getByText(copy.connections.window(formatWindow(60_000)))
+    ).toBeInTheDocument()
     // 表头 + 空状态提示行。
     expect(screen.getByRole('grid')).toHaveAttribute('aria-rowcount', '2')
     expect(bodyRows(container)).toHaveLength(0)
   })
 
-  it('渲染六列内容：时间、进程、域名、出站、流量、时长', async () => {
-    const connection = makeConnection({ startedAt: NOW - 4_000 })
+  it('窗口文案由快照的 retainMs 推导，不写死秒数', async () => {
+    window.aether = makeAether({
+      getConnections: vi.fn(async () => snapshotOf([], NOW, 30_000))
+    })
+    render(<HookedPage />)
+
+    expect(
+      await screen.findByText(copy.connections.window(formatWindow(30_000)))
+    ).toBeInTheDocument()
+  })
+
+  it('没有采集器（retainMs 为 null）时窗口显示破折号', async () => {
+    window.aether = makeAether({
+      getConnections: vi.fn(async () => snapshotOf([], NOW, null))
+    })
+    render(<HookedPage />)
+
+    expect(await screen.findByText(copy.connections.windowUnknown)).toBeInTheDocument()
+  })
+
+  it('渲染六列内容：时间、进程、域名、出站、流量、时长', async () => {    const connection = makeConnection({ startedAt: NOW - 4_000 })
     const { container } = mountPage([connection])
 
     expect(await screen.findByText('chrome')).toBeInTheDocument()
@@ -200,7 +235,7 @@ describe('ConnectionsPage', () => {
         return () => {}
       }
     })
-    const { container } = render(<ConnectionsPage />)
+    const { container } = render(<HookedPage />)
 
     expect(await screen.findByText('first-proc')).toBeInTheDocument()
     const ids = (): (string | null)[] =>
@@ -264,7 +299,7 @@ describe('ConnectionsPage', () => {
         return () => {}
       }
     })
-    render(<ConnectionsPage />)
+    render(<HookedPage />)
 
     expect(await screen.findByText(copy.connections.empty)).toBeInTheDocument()
 
@@ -504,7 +539,7 @@ describe('ConnectionsPage keyboard', () => {
         return () => {}
       }
     })
-    render(<ConnectionsPage />)
+    render(<HookedPage />)
 
     expect(await screen.findByText('gone-proc')).toBeInTheDocument()
     await focusList()
@@ -567,7 +602,7 @@ describe('ConnectionsPage keyboard', () => {
         return () => {}
       }
     })
-    const { container } = render(<ConnectionsPage />)
+    const { container } = render(<HookedPage />)
 
     expect(await screen.findByText('keep-proc')).toBeInTheDocument()
     await focusList()

@@ -13,10 +13,20 @@ const STATUS = {
 
 const HOUR = 60 * 60_000
 
+/** 没有采集器：活跃数、缓冲条数、内存与窗口都是未知。 */
+const NO_CONNECTIONS = { active: null, total: null, memory: null, retainMs: null } as const
+
 describe('Dashboard', () => {
   it('四块卡片齐全，无数据时不出现 NaN', () => {
     const { container } = render(
-      <Dashboard status={null} active={null} current={null} history={[]} dialFailures={null} />
+      <Dashboard
+        status={null}
+        active={null}
+        current={null}
+        history={[]}
+        connections={NO_CONNECTIONS}
+        dialFailures={null}
+      />
     )
 
     expect(screen.getByText(copy.dashboard.node.label)).toBeInTheDocument()
@@ -28,13 +38,14 @@ describe('Dashboard', () => {
     expect(container.textContent).not.toContain('NaN')
   })
 
-  it('有数据时把节点、内核与速率一起渲染出来', () => {
+  it('有数据时把节点、内核、速率与连接摘要一起渲染出来', () => {
     render(
       <Dashboard
         status={STATUS}
         active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
         current={{ up: 0, down: 0, upTotal: 2048, downTotal: 4096 }}
         history={[{ up: 0, down: 0 }]}
+        connections={{ active: 2, total: 5, memory: 24_944_640, retainMs: 60_000 }}
         dialFailures={null}
       />
     )
@@ -42,6 +53,13 @@ describe('Dashboard', () => {
     expect(screen.getByText('HK-01')).toBeInTheDocument()
     expect(screen.getByText('mihomo · v1.19.32')).toBeInTheDocument()
     expect(screen.getByText('端口 5566')).toBeInTheDocument()
+    // 内存来自连接快照，字节数直接格式化。
+    expect(screen.getByText('23.8 MB')).toBeInTheDocument()
+    // 活跃连接数只数未结束行；页脚条数含已结束行。
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(
+      screen.getByText(copy.dashboard.stats.connectionsFoot(5, '1 分钟'))
+    ).toBeInTheDocument()
     // 两个速率 + 累计流量，均已按格式规则输出
     expect(screen.getAllByText('0.00')).toHaveLength(2)
     expect(screen.getByText('累计 4.0 KB')).toBeInTheDocument()
@@ -52,7 +70,14 @@ describe('Dashboard', () => {
 
   it('hero 占两列、流量图跨满三列', () => {
     const { container } = render(
-      <Dashboard status={STATUS} active={null} current={null} history={[]} dialFailures={null} />
+      <Dashboard
+        status={STATUS}
+        active={null}
+        current={null}
+        history={[]}
+        connections={NO_CONNECTIONS}
+        dialFailures={null}
+      />
     )
 
     expect(container.querySelector('.card.hero')).not.toBeNull()
@@ -67,6 +92,7 @@ describe('Dashboard', () => {
         active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
         current={null}
         history={[]}
+        connections={NO_CONNECTIONS}
         dialFailures={null}
       />
     )
@@ -82,6 +108,7 @@ describe('Dashboard', () => {
         active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
         current={null}
         history={[]}
+        connections={NO_CONNECTIONS}
         dialFailures={{ recent: 3, windowMs: HOUR }}
       />
     )
@@ -97,6 +124,7 @@ describe('Dashboard', () => {
         active={{ group: 'Proxy', node: 'HK-01' }}
         current={null}
         history={[]}
+        connections={NO_CONNECTIONS}
         dialFailures={{ recent: 1, windowMs: HOUR }}
         onViewLogs={onViewLogs}
       />

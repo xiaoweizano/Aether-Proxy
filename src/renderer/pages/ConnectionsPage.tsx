@@ -12,7 +12,8 @@ import {
 import { CONNECTION_DETAIL_HEIGHT, ConnectionDetail } from '../components/ConnectionDetail'
 import { ConnectionRow, CONNECTION_ROW_HEIGHT } from '../components/ConnectionRow'
 import { copy } from '../copy'
-import { useConnections } from '../hooks/useConnections'
+import { formatWindow } from '../format'
+import type { ConnectionsState } from '../hooks/useConnections'
 import { scrollTopForRow, useVirtualRows, type RowExpansion } from '../hooks/useVirtualRows'
 import {
   connectionHeaders,
@@ -71,13 +72,14 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
 /**
  * 连接页：六列表格 + 虚拟滚动 + 行内详情。
  *
- * `now` 取最近一份快照的时刻并按秒取整——时长本来就是秒级，500ms 一帧的推送
- * 不会让可见行每秒重渲染超过一次；已结束行的时长由 `endedAt` 冻结。
+ * `connections` 由 App 传入：订阅只在 App 发生一次，离开本页后仪表盘的活跃连接数
+ * 仍然持续更新。`now` 取最近一份快照的时刻并按秒取整——时长本来就是秒级，
+ * 500ms 一帧的推送不会让可见行每秒重渲染超过一次；已结束行的时长由 `endedAt` 冻结。
  *
  * 选中与展开是两份状态：键盘移动选中行时详情会收起，详情永远属于当前选中行。
  */
-export function ConnectionsPage() {
-  const { items, at } = useConnections()
+export function ConnectionsPage({ connections }: { connections: ConnectionsState }) {
+  const { items, at, retainMs } = connections
   const [query, setQuery] = useState('')
   const [activeOnly, setActiveOnly] = useState(false)
   const [direction, setDirection] = useState<SortDirection>('desc')
@@ -315,11 +317,14 @@ export function ConnectionsPage() {
 
   const emptyMessage = items.length === 0 ? copy.connections.empty : copy.connections.noMatches
   const selected = selectedIndex >= 0 ? visible[selectedIndex] : undefined
+  // 窗口文案由采集器的保留时长推导；没有采集器时是未知，不写死「60 秒」。
+  const windowLabel =
+    retainMs === null ? copy.connections.windowUnknown : copy.connections.window(formatWindow(retainMs))
 
   return (
     <section className="connections-page">
       <div className="conn-toolbar">
-        <span className="conn-window">{copy.connections.window}</span>
+        <span className="conn-window">{windowLabel}</span>
         <span className="conn-count">{copy.connections.count(visible.length)}</span>
         <input
           className="conn-search"

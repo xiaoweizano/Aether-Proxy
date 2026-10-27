@@ -2,10 +2,10 @@ import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ConnectionsSnapshot } from '../../shared/ipc'
 import { makeAether, makeConnection } from '../test-utils'
-import { useConnections } from './useConnections'
+import { summarizeConnections, useConnections } from './useConnections'
 
 function snapshot(overrides: Partial<ConnectionsSnapshot> = {}): ConnectionsSnapshot {
-  return { items: [makeConnection()], memory: 1024, at: 1_000, ...overrides }
+  return { items: [makeConnection()], memory: 1024, retainMs: 60_000, at: 1_000, ...overrides }
 }
 
 describe('useConnections', () => {
@@ -22,6 +22,7 @@ describe('useConnections', () => {
     expect(getConnections).toHaveBeenCalledTimes(1)
     expect(result.current.items).toEqual(initial.items)
     expect(result.current.memory).toBe(1024)
+    expect(result.current.retainMs).toBe(60_000)
     expect(result.current.at).toBe(1_000)
   })
 
@@ -124,7 +125,7 @@ describe('useConnections', () => {
   it('window.aether 缺失时返回空快照且不抛错', () => {
     const { result } = renderHook(() => useConnections())
 
-    expect(result.current).toEqual({ items: [], memory: null, at: null })
+    expect(result.current).toEqual({ items: [], memory: null, retainMs: null, at: null })
   })
 
   it('memory 缺失保持 null，不填 0', async () => {
@@ -138,5 +139,46 @@ describe('useConnections', () => {
     })
 
     expect(result.current.memory).toBeNull()
+  })
+})
+
+describe('summarizeConnections', () => {
+  it('活跃数只数 ended === false 的行，保留期内的已结束行不进计数', () => {
+    const state = {
+      items: [
+        makeConnection({ id: 'a' }),
+        makeConnection({ id: 'b' }),
+        makeConnection({ id: 'c', ended: true, endedAt: 2_000 })
+      ],
+      memory: 24_944_640,
+      retainMs: 60_000,
+      at: 3_000
+    }
+
+    expect(summarizeConnections(state)).toEqual({
+      active: 2,
+      total: 3,
+      memory: 24_944_640,
+      retainMs: 60_000
+    })
+  })
+
+  it('没有采集器（retainMs 为 null）时连接数是未知，不是 0', () => {
+    const state = { items: [], memory: null, retainMs: null, at: 1_000 }
+
+    expect(summarizeConnections(state)).toEqual({
+      active: null,
+      total: null,
+      memory: null,
+      retainMs: null
+    })
+  })
+
+  it('采集器在线且零条连接时，零是测得的零', () => {
+    const summary = summarizeConnections({ items: [], memory: 0, retainMs: 60_000, at: 1_000 })
+
+    expect(summary.active).toBe(0)
+    expect(summary.total).toBe(0)
+    expect(summary.memory).toBe(0)
   })
 })

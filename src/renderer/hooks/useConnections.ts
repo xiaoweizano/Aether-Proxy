@@ -3,13 +3,45 @@ import type { ConnectionView, ConnectionsSnapshot } from '../../shared/ipc'
 
 export interface ConnectionsState {
   items: ConnectionView[]
-  /** 内核上报的内存；缺失保持 null，不填 0。 */
+  /** 内核上报的内存（字节）；缺失保持 null，不填 0。 */
   memory: number | null
+  /**
+   * 已结束连接的保留窗口（毫秒）；没有采集器（内核未运行）时为 null。
+   * 界面用它推导窗口文案，并用 null 区分「没有数据来源」与「测得零条」。
+   */
+  retainMs: number | null
   /** 最近一份快照的生成时刻；还没有快照时为 null。 */
   at: number | null
 }
 
-const EMPTY: ConnectionsState = { items: [], memory: null, at: null }
+/** 仪表盘需要的连接摘要；没有采集器时 active/total/retainMs 均为 null（未知，不是 0）。 */
+export interface ConnectionSummary {
+  /** 真正活跃的连接数（不含仍在保留期内的已结束行）。 */
+  active: number | null
+  /** 缓冲内条目总数，含已结束行；用来说明活跃数与连接页条数的差异。 */
+  total: number | null
+  /** 内核内存（字节）；未知为 null。 */
+  memory: number | null
+  /** 已结束连接的保留窗口（毫秒）；未知为 null。 */
+  retainMs: number | null
+}
+
+/**
+ * 从一份快照派生仪表盘数字。`retainMs === null` 只会在采集器不存在时出现
+ * （`getConnections` 的空快照），因此它同时是「有没有数据来源」的判据：
+ * 没有来源时连接数是未知，不能用 `items.length` 得到一个看似测量的 0。
+ */
+export function summarizeConnections(state: ConnectionsState): ConnectionSummary {
+  const known = state.retainMs !== null
+  return {
+    active: known ? state.items.filter((item) => !item.ended).length : null,
+    total: known ? state.items.length : null,
+    memory: state.memory,
+    retainMs: state.retainMs
+  }
+}
+
+const EMPTY: ConnectionsState = { items: [], memory: null, retainMs: null, at: null }
 
 function isConnection(value: unknown): value is ConnectionView {
   return (
@@ -32,7 +64,13 @@ function normalize(value: unknown): NormalizedSnapshot | null {
     typeof snapshot.memory === 'number' && Number.isFinite(snapshot.memory)
       ? snapshot.memory
       : null
-  return { items: snapshot.items.filter(isConnection), memory, at }
+  const retainMs =
+    typeof snapshot.retainMs === 'number' &&
+    Number.isFinite(snapshot.retainMs) &&
+    snapshot.retainMs >= 0
+      ? snapshot.retainMs
+      : null
+  return { items: snapshot.items.filter(isConnection), memory, retainMs, at }
 }
 
 /**
