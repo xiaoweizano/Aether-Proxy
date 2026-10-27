@@ -112,6 +112,16 @@ export const copy = {
     noMatches: '没有匹配的连接',
     ended: '已结束',
     rejected: '已拒绝',
+    /** 行内详情：四组，链路不省略中间层。 */
+    detail: {
+      label: '连接详情',
+      chain: '完整链路',
+      rule: '命中规则',
+      process: '进程',
+      data: '数据',
+      start: '开始',
+      end: '结束'
+    },
     columns: {
       time: '时间',
       process: '进程',

@@ -890,6 +890,11 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* 表格本身可获得焦点承载键盘操作；内缩描边，避免被滚动容器裁掉。 */
+.conn-table:focus-visible {
+  outline-offset: -2px;
+}
+
 /* 表头与表体共用同一个网格类，列宽和间距只有这一份定义。 */
 .conn-grid {
   display: grid;
@@ -954,10 +959,72 @@ body {
   color: var(--text-dim);
   font-size: var(--fs-body);
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
 }
 
 .conn-row:hover {
   background: var(--card-2);
+}
+
+/* 选中行：Wash Ladder 的 12% 强调色，与节点页选中态一致。 */
+.conn-row[aria-selected='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* 展开行比固定行高多出一块详情区域；行身随之增高，由虚拟滚动补偿。 */
+.conn-row-expanded {
+  grid-template-rows: var(--conn-row-height) var(--conn-detail-height);
+  height: calc(var(--conn-row-height) + var(--conn-detail-height));
+}
+
+.conn-detail {
+  grid-column: 1 / -1;
+  align-self: stretch;
+  min-width: 0;
+  overflow: hidden;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.conn-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: var(--space-4);
+  height: 100%;
+  margin: 0;
+}
+
+.conn-detail-group {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.conn-detail-label {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.conn-detail-values {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.conn-detail-value {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-label);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 进程路径是次要信息，降一档对比度；截断时靠 title 看全。 */
+.conn-detail-path {
+  color: var(--text-dim);
 }
 
 .conn-cell {

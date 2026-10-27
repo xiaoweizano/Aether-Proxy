@@ -1,10 +1,12 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import type { ConnectionView, ConnectionsSnapshot } from '../../shared/ipc'
+import { CONNECTION_DETAIL_HEIGHT } from '../components/ConnectionDetail'
+import { CONNECTION_ROW_HEIGHT } from '../components/ConnectionRow'
 import { copy } from '../copy'
 import { formatClock, UNKNOWN } from '../format'
 import { makeAether, makeConnection } from '../test-utils'
@@ -37,6 +39,17 @@ function mountPage(items: ConnectionView[], at = NOW) {
 
 function bodyRows(container: HTMLElement): Element[] {
   return Array.from(container.querySelectorAll('.conn-row'))
+}
+
+/** 键盘快捷键只在列表获得焦点时生效；点击表格容器即聚焦。 */
+async function focusList(): Promise<HTMLElement> {
+  const table = screen.getByRole('table', { name: copy.connections.label })
+  await userEvent.click(table)
+  return table
+}
+
+function selectedFlags(container: HTMLElement): (string | null)[] {
+  return bodyRows(container).map((row) => row.getAttribute('aria-selected'))
 }
 
 describe('ConnectionsPage', () => {
@@ -262,7 +275,199 @@ describe('ConnectionsPage', () => {
   })
 })
 
+describe('ConnectionsPage keyboard', () => {
+  it('Enter 展开四组详情，再按 Enter 收起', async () => {
+    const { container } = mountPage([makeConnection({ id: 'one', process: 'chrome' })])
+
+    expect(await screen.findByText('chrome')).toBeInTheDocument()
+    await focusList()
+    expect(container.querySelector('.conn-detail')).toBeNull()
+
+    await userEvent.keyboard('{Enter}')
+
+    const detail = container.querySelector('.conn-detail')
+    expect(detail).not.toBeNull()
+    const detailQueries = within(detail as HTMLElement)
+    for (const label of [
+      copy.connections.detail.chain,
+      copy.connections.detail.rule,
+      copy.connections.detail.process,
+      copy.connections.detail.data
+    ]) {
+      // 「进程」同时是列头文案，只在详情内部查找。
+      expect(detailQueries.getByText(label)).toBeInTheDocument()
+    }
+    expect(detailQueries.getByText('Proxy ▸ HK-01')).toBeInTheDocument()
+    expect(detailQueries.getByText('DomainSuffix(github.com)')).toBeInTheDocument()
+    expect(
+      detailQueries.getByText('C:\\Program Files\\Google\\Chrome\\chrome.exe')
+    ).toBeInTheDocument()
+
+    await userEvent.keyboard('{Enter}')
+
+    expect(container.querySelector('.conn-detail')).toBeNull()
+  })
+
+  it('选择行后按 Enter 展开该行，选中态通过 aria-selected 暴露', async () => {
+    mountPage([
+      makeConnection({ id: 'newer', process: 'newer-proc', startedAt: NOW - 1_000 }),
+      makeConnection({ id: 'older', process: 'older-proc', startedAt: NOW - 5_000 })
+    ])
+
+    expect(await screen.findByText('newer-proc')).toBeInTheDocument()
+    await focusList()
+    await userEvent.keyboard('{ArrowDown}{Enter}')
+
+    const selected = screen.getByRole('row', { selected: true })
+    expect(selected).toHaveAttribute('data-connection-id', 'newer')
+    expect(selected.querySelector('.conn-detail')).not.toBeNull()
+  })
+
+  it('A 切换「只看活跃」，搜索框聚焦时按 A 只输入文字', async () => {
+    const ended = makeConnection({ id: 'ended', process: 'ended-proc', ended: true, endedAt: NOW })
+    mountPage([makeConnection({ id: 'active', process: 'active-proc' }), ended])
+
+    expect(await screen.findByText('ended-proc')).toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: copy.connections.activeOnly })
+    await focusList()
+
+    await userEvent.keyboard('a')
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText('ended-proc')).toBeNull()
+
+    await userEvent.keyboard('a')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(await screen.findByText('ended-proc')).toBeInTheDocument()
+
+    // 搜索框聚焦时，单键快捷键不得拦截输入。
+    const search = screen.getByRole('searchbox', { name: copy.connections.searchLabel })
+    await userEvent.click(search)
+    await userEvent.type(search, 'a')
+
+    expect(search).toHaveValue('a')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('↑ ↓ 移动选中行，到两端停止，不循环', async () => {
+    const { container } = mountPage([
+      makeConnection({ id: 'r0', process: 'proc-0', startedAt: NOW }),
+      makeConnection({ id: 'r1', process: 'proc-1', startedAt: NOW - 1_000 }),
+      makeConnection({ id: 'r2', process: 'proc-2', startedAt: NOW - 2_000 })
+    ])
+
+    expect(await screen.findByText('proc-0')).toBeInTheDocument()
+    await focusList()
+    expect(selectedFlags(container)).toEqual(['false', 'false', 'false'])
+
+    await userEvent.keyboard('{ArrowDown}')
+    expect(selectedFlags(container)).toEqual(['true', 'false', 'false'])
+
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}')
+    expect(selectedFlags(container)).toEqual(['false', 'false', 'true'])
+
+    // 已在末端，继续按 ↓ 不动，也不回卷到第一行。
+    await userEvent.keyboard('{ArrowDown}')
+    expect(selectedFlags(container)).toEqual(['false', 'false', 'true'])
+
+    await userEvent.keyboard('{ArrowUp}{ArrowUp}{ArrowUp}{ArrowUp}')
+    expect(selectedFlags(container)).toEqual(['true', 'false', 'false'])
+  })
+
+  it('Esc 先收起详情，再清空搜索', async () => {
+    mountPage([makeConnection({ id: 'one', process: 'chrome', host: 'github.com' })])
+    expect(await screen.findByText('chrome')).toBeInTheDocument()
+
+    const search = screen.getByRole('searchbox', { name: copy.connections.searchLabel })
+    await userEvent.type(search, 'github')
+    await focusList()
+    await userEvent.keyboard('{Enter}')
+    expect(screen.getByRole('table').querySelector('.conn-detail')).not.toBeNull()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.getByRole('table').querySelector('.conn-detail')).toBeNull()
+    expect(search).toHaveValue('github')
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(search).toHaveValue('')
+    expect(screen.getByText('chrome')).toBeInTheDocument()
+  })
+
+  it('/ 把焦点移到搜索框', async () => {
+    mountPage([makeConnection({ id: 'one', process: 'chrome' })])
+    expect(await screen.findByText('chrome')).toBeInTheDocument()
+
+    await focusList()
+    await userEvent.keyboard('/')
+
+    const search = screen.getByRole('searchbox', { name: copy.connections.searchLabel })
+    expect(search).toHaveFocus()
+    expect(search).toHaveValue('')
+  })
+
+  it('搜索框聚焦时按 Esc 也能清空搜索', async () => {
+    mountPage([makeConnection({ id: 'one', process: 'chrome' })])
+    expect(await screen.findByText('chrome')).toBeInTheDocument()
+
+    const search = screen.getByRole('searchbox', { name: copy.connections.searchLabel })
+    await userEvent.type(search, 'no-such-host')
+    expect(screen.getByText(copy.connections.noMatches)).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(search).toHaveValue('')
+    expect(await screen.findByText('chrome')).toBeInTheDocument()
+  })
+
+  it('快照更新不会丢掉选中行（行仍在时）', async () => {
+    const connection = makeConnection({ id: 'keep', process: 'keep-proc' })
+    let push: ((next: ConnectionsSnapshot) => void) | undefined
+    window.aether = makeAether({
+      getConnections: vi.fn(async () => snapshotOf([connection])),
+      onConnections: (cb) => {
+        push = cb
+        return () => {}
+      }
+    })
+    const { container } = render(<ConnectionsPage />)
+
+    expect(await screen.findByText('keep-proc')).toBeInTheDocument()
+    await focusList()
+    await userEvent.keyboard('{ArrowDown}')
+    expect(selectedFlags(container)).toEqual(['true'])
+
+    act(() => {
+      push?.(snapshotOf([{ ...connection, chains: [...connection.chains], upload: 3_000 }], NOW + 500))
+    })
+
+    expect(selectedFlags(container)).toEqual(['true'])
+    expect(screen.getByRole('row', { selected: true })).toHaveAttribute(
+      'data-connection-id',
+      'keep'
+    )
+  })
+})
+
 describe('ConnectionsPage layout', () => {
+  it('虚拟列表展开行时把详情高度计入总高度，后续行不会叠在一起', async () => {
+    const items = Array.from({ length: 2000 }, (_, index) =>
+      makeConnection({ id: `d${index}`, process: `proc-${index}`, startedAt: NOW - index * 1_000 })
+    )
+    const { container } = mountPage(items)
+
+    expect(await screen.findByText(copy.connections.count(2000))).toBeInTheDocument()
+    await focusList()
+    await userEvent.keyboard('{Enter}')
+
+    expect(container.querySelector('.conn-detail')).not.toBeNull()
+    const spacer = container.querySelector<HTMLElement>('.conn-spacer')
+    expect(spacer?.style.height).toBe(
+      `${2000 * CONNECTION_ROW_HEIGHT + CONNECTION_DETAIL_HEIGHT}px`
+    )
+  })
+
   it('1024px 最小窗口下域名列吸收剩余宽度，不裁列', () => {
     const css = readRendererFile('styles', 'app.css')
     const tokens = readRendererFile('styles', 'tokens.css')

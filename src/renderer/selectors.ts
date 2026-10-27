@@ -79,8 +79,27 @@ export function formatOutbound(chains: readonly string[]): string {
   return `${first} ▸ … ▸ ${last}`
 }
 
-const REJECTED_CHAINS = new Set(['REJECT', 'REJECT-DROP'])
+/**
+ * 行内详情的「命中规则」：`DomainSuffix(github.com)`。
+ * 负载为空只显示规则名；规则本身缺失时是未知，不能拼出 `(github.com)`。
+ */
+export function formatRule(rule: string | null, rulePayload: string | null): string {
+  if (rule === null || rule === '') return UNKNOWN
+  if (rulePayload === null || rulePayload === '') return rule
+  return `${rule}(${rulePayload})`
+}
 
+/**
+ * 目标地址：`ip:port`。端口未知时只显示 IP；IP 未知时整体是未知——
+ * 单独一个端口定位不到目标，编造 IP 更糟。
+ */
+export function formatDestination(ip: string | null, port: string | null): string {
+  if (ip === null || ip === '') return UNKNOWN
+  if (port === null || port === '') return ip
+  return `${ip}:${port}`
+}
+
+const REJECTED_CHAINS = new Set(['REJECT', 'REJECT-DROP'])
 /** 被拒绝：链路上出现 REJECT / REJECT-DROP（DIRECT 不算）。 */
 export function isRejectedConnection(connection: Pick<ConnectionView, 'chains'>): boolean {
   return connection.chains.some((segment) => REJECTED_CHAINS.has(segment))

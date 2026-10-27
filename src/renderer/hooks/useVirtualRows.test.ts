@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { useVirtualRows } from './useVirtualRows'
+import { computeVirtualRows, useVirtualRows } from './useVirtualRows'
 
 const ROW_HEIGHT = 28
 const VIEWPORT_HEIGHT = 600
@@ -79,5 +79,48 @@ describe('useVirtualRows', () => {
 
     expect(result.current.rows.length).toBeGreaterThan(0)
     expect(result.current.rows.length).toBeLessThanOrEqual(3)
+  })
+
+  it('展开行计入总高度，后续行的偏移整体下移', () => {
+    const items = makeItems(1000)
+    const without = computeVirtualRows(items, ROW_HEIGHT, VIEWPORT_HEIGHT, 1_400)
+    const withDetail = computeVirtualRows(items, ROW_HEIGHT, VIEWPORT_HEIGHT, 1_400, {
+      index: 10,
+      extraHeight: 112
+    })
+
+    expect(withDetail.totalHeight).toBe(items.length * ROW_HEIGHT + 112)
+    // 窗口起点在展开行之后，因此偏移 = 起点行高之和 + 详情高度。
+    expect(withDetail.start).toBeGreaterThan(10)
+    expect(withDetail.offset).toBe(withDetail.start * ROW_HEIGHT + 112)
+    expect(withDetail.start).toBeLessThan(without.start)
+  })
+
+  it('滚动位置落在展开行内部时窗口仍包含该行，不会跳过它', () => {
+    const items = makeItems(1000)
+    // 展开行 top = 10 * 28 = 280，往下 60px 已在详情区域内。
+    const result = computeVirtualRows(items, ROW_HEIGHT, VIEWPORT_HEIGHT, 280 + 60, {
+      index: 10,
+      extraHeight: 112
+    })
+
+    expect(result.start).toBeLessThanOrEqual(10)
+    expect(result.end).toBeGreaterThan(10)
+    expect(result.offset).toBe(result.start * ROW_HEIGHT)
+  })
+
+  it('展开下标越界或高度非法时按不展开处理', () => {
+    const items = makeItems(10)
+
+    expect(
+      computeVirtualRows(items, ROW_HEIGHT, VIEWPORT_HEIGHT, 0, { index: 99, extraHeight: 112 })
+        .totalHeight
+    ).toBe(items.length * ROW_HEIGHT)
+    expect(
+      computeVirtualRows(items, ROW_HEIGHT, VIEWPORT_HEIGHT, 0, {
+        index: 2,
+        extraHeight: Number.NaN
+      }).totalHeight
+    ).toBe(items.length * ROW_HEIGHT)
   })
 })

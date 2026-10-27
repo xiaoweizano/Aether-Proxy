@@ -6,7 +6,9 @@ import {
   connectionHeaders,
   connectionHost,
   filterConnections,
+  formatDestination,
   formatOutbound,
+  formatRule,
   isRejectedConnection,
   pickActiveProxy,
   sortConnections,
@@ -190,6 +192,37 @@ describe('formatOutbound', () => {
     // 这里再反转一次就会显示成 HK ▸ … ▸ Proxy。
     expect(formatOutbound(['Proxy', 'Auto', 'HK'])).toBe('Proxy ▸ … ▸ HK')
     expect(formatOutbound(['HK', 'Auto', 'Proxy'])).toBe('HK ▸ … ▸ Proxy')
+  })
+})
+
+describe('formatRule', () => {
+  it('规则与负载写成 DomainSuffix(github.com)', () => {
+    expect(formatRule('DomainSuffix', 'github.com')).toBe('DomainSuffix(github.com)')
+  })
+
+  it('负载为空时只显示规则名', () => {
+    expect(formatRule('Match', null)).toBe('Match')
+    expect(formatRule('Match', '')).toBe('Match')
+  })
+
+  it('规则缺失时显示未知，绝不拼出空括号', () => {
+    expect(formatRule(null, 'github.com')).toBe(UNKNOWN)
+    expect(formatRule('', 'github.com')).toBe(UNKNOWN)
+  })
+})
+
+describe('formatDestination', () => {
+  it('IP 与端口齐全时拼成 ip:port', () => {
+    expect(formatDestination('140.82.112.3', '443')).toBe('140.82.112.3:443')
+  })
+
+  it('端口未知时只显示 IP，不编造端口', () => {
+    expect(formatDestination('140.82.112.3', null)).toBe('140.82.112.3')
+  })
+
+  it('IP 缺失时整体是未知，端口单独出现没有意义', () => {
+    expect(formatDestination(null, '443')).toBe(UNKNOWN)
+    expect(formatDestination(null, null)).toBe(UNKNOWN)
   })
 })
 

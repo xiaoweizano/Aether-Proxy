@@ -9,6 +9,7 @@ import {
   isRejectedConnection,
   truncateMiddle
 } from '../selectors'
+import { ConnectionDetail } from './ConnectionDetail'
 
 /** 与 tokens.css 的 `--conn-row-height` 保持一致；虚拟滚动依赖它。 */
 export const CONNECTION_ROW_HEIGHT = 28
@@ -20,6 +21,12 @@ export interface ConnectionRowProps {
    * 因此它的变化不会让已结束行重渲染。
    */
   now: number | null
+  /** 是否为当前选中行（键盘上下键移动的那一行）。 */
+  selected?: boolean
+  /** 是否展开行内详情。 */
+  expanded?: boolean
+  /** 点击行时调用：选中并切换详情。 */
+  onActivate?: (id: string) => void
   /** 测试用的渲染计数器；产品代码不传。 */
   onRender?: (id: string) => void
 }
@@ -58,6 +65,9 @@ function sameConnection(a: ConnectionView, b: ConnectionView): boolean {
 
 function propsEqual(previous: ConnectionRowProps, next: ConnectionRowProps): boolean {
   if (previous.onRender !== next.onRender) return false
+  if (previous.onActivate !== next.onActivate) return false
+  if (previous.selected !== next.selected) return false
+  if (previous.expanded !== next.expanded) return false
   if (!sameConnection(previous.connection, next.connection)) return false
   if (previous.now === next.now) return true
   // 两边都已结束且 endedAt 相同：时长与 now 无关。
@@ -69,7 +79,14 @@ function propsEqual(previous: ConnectionRowProps, next: ConnectionRowProps): boo
   )
 }
 
-function ConnectionRowView({ connection, now, onRender }: ConnectionRowProps) {
+function ConnectionRowView({
+  connection,
+  now,
+  selected,
+  expanded,
+  onActivate,
+  onRender
+}: ConnectionRowProps) {
   onRender?.(connection.id)
 
   const rejected = isRejectedConnection(connection)
@@ -86,13 +103,21 @@ function ConnectionRowView({ connection, now, onRender }: ConnectionRowProps) {
     'conn-row',
     'conn-grid',
     connection.ended ? 'ended' : '',
-    rejected ? 'rejected' : ''
+    rejected ? 'rejected' : '',
+    expanded ? 'conn-row-expanded' : ''
   ]
     .filter(Boolean)
     .join(' ')
 
   return (
-    <div className={rowClass} role="row" data-connection-id={connection.id}>
+    <div
+      className={rowClass}
+      role="row"
+      id={`conn-row-${connection.id}`}
+      aria-selected={selected === true}
+      data-connection-id={connection.id}
+      onClick={onActivate === undefined ? undefined : () => onActivate(connection.id)}
+    >
       <div className="conn-cell conn-time" role="cell">
         <span className={dotClass} aria-hidden="true" />
         <span className="conn-time-text">
@@ -128,6 +153,7 @@ function ConnectionRowView({ connection, now, onRender }: ConnectionRowProps) {
       <div className="conn-cell conn-duration" role="cell">
         {duration === null ? UNKNOWN : formatDuration(duration)}
       </div>
+      {expanded === true && <ConnectionDetail connection={connection} />}
     </div>
   )
 }
