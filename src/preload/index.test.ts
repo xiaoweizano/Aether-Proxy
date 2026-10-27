@@ -149,8 +149,8 @@ describe('preload', () => {
 
     const handlers = listeners.get(IPC.connectionsPush) ?? []
     expect(handlers).toHaveLength(1)
-    handlers[0]?.({}, { items: [], memory: null, at: 1 })
-    expect(seen).toEqual([{ items: [], memory: null, at: 1 }])
+    handlers[0]?.({}, { items: [], memory: null, retainMs: 60_000, at: 1 })
+    expect(seen).toEqual([{ items: [], memory: null, retainMs: 60_000, at: 1 }])
 
     off()
     expect(listeners.get(IPC.connectionsPush)).toHaveLength(0)

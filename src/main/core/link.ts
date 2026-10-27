@@ -3,7 +3,15 @@ import type { Mode } from '../../shared/types'
 export interface ProxiesResponse {
   proxies: Record<
     string,
-    { name: string; type: string; now?: string; history?: { delay: number }[]; all?: string[] }
+    {
+      name: string
+      type: string
+      now?: string
+      /** 自动组里被手动钉住的节点；空串或缺失表示没有钉选。 */
+      fixed?: string
+      history?: { delay: number }[]
+      all?: string[]
+    }
   >
 }
 

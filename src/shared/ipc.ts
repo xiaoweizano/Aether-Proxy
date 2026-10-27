@@ -15,6 +15,12 @@ export interface ProxyGroupView {
   name: string
   type: string
   now: string
+  /**
+   * 用户在自动组（URLTest / Fallback / LoadBalance）里钉住的节点；空串或缺失表示没有钉住。
+   * 这些组的 `PUT /proxies/<group>` 返回 204 但**不会**改 `now`，只把 `fixed` 设为所选节点
+   * （2026-10-27 对 mihomo v1.19.32 实测）。因此「界面上的选中节点」必须是 `fixed || now`。
+   */
+  fixed?: string
   nodes: { name: string; delay?: number }[]
 }
 
@@ -53,8 +59,19 @@ export interface ConnectionView {
 
 export interface ConnectionsSnapshot {
   items: ConnectionView[]
-  /** 内核上报的内存（字节）；缺省为 null，不得填 0。 */
+  /**
+   * 内核上报的内存，单位是**字节**；缺省为 null，不得填 0。
+   *
+   * 单位已实测：`/connections` 帧的 `memory` 与 `/memory` 的 `inuse` 同为字节，
+   * 2026-10-27 对 mihomo v1.19.32 测得 24,944,640，与该进程 `WorkingSet64`
+   * 24,571,904 相差 1.5%。界面用 `formatBytes` 直接格式化，不要再除 1024。
+   */
   memory: number | null
+  /**
+   * 已结束连接在快照里保留的时长（毫秒）；采集器不存在（内核未运行）时为 null。
+   * 界面必须由它推导「最近 N」窗口文案，不要照抄设计稿里的秒数。
+   */
+  retainMs: number | null
   /** 快照生成时刻（主进程时钟，毫秒）。 */
   at: number
 }

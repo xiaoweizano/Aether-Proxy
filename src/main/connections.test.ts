@@ -124,8 +124,18 @@ afterEach(() => {
 describe('ConnectionsCollector 帧解析', () => {
   it('任何帧到达前也能读快照，memory 为 null 而不是 0', () => {
     const h = harness({ now: () => 1_000 })
-    expect(h.collector.snapshot()).toEqual({ items: [], memory: null, at: 1_000 })
+    expect(h.collector.snapshot()).toEqual({
+      items: [],
+      memory: null,
+      retainMs: 60_000,
+      at: 1_000
+    })
     expect(h.calls).toHaveLength(0)
+  })
+
+  it('保留窗口来自配置而不是写死：界面据此推导「最近 N」文案', () => {
+    const h = harness({ retainEndedMs: 30_000 })
+    expect(h.collector.snapshot().retainMs).toBe(30_000)
   })
 
   it('把实测字段映射为视图模型，未知字段被忽略', () => {
@@ -324,8 +334,7 @@ describe('ConnectionsCollector 已结束缓冲', () => {
   })
 })
 
-describe('ConnectionsCollector 条目上限', () => {
-  it('超过上限先淘汰最早结束的，全部活跃后才淘汰最早的活跃条目', () => {
+describe('ConnectionsCollector 条目上限', () => {  it('超过上限先淘汰最早结束的，全部活跃后才淘汰最早的活跃条目', () => {
     let now = 1_000
     const h = harness({ now: () => now, maxEntries: 3 })
     h.collector.start()
@@ -355,6 +364,40 @@ describe('ConnectionsCollector 条目上限', () => {
     expect(items).toHaveLength(2_000)
     expect(items[0]?.id).toBe('c1')
     expect(items.at(-1)?.id).toBe('c2000')
+  })
+})
+
+describe('ConnectionsCollector 无消费方', () => {
+  it('没有订阅时保留期淘汰照常逐帧推进，只是不构建快照', () => {
+    let now = 1_000
+    const h = harness({ now: () => now, retainEndedMs: 60_000 })
+    // 窗口销毁：采集器继续跑，但没有回调。
+    h.collector.start()
+
+    h.socket().push(idsFrame(['a', 'b']))
+    now = 2_000
+    h.socket().push(idsFrame(['a'])) // b 在 2000 结束
+
+    now = 62_000 // 超过 60 秒保留期
+    h.socket().push(idsFrame(['a']))
+
+    // 不能读 snapshot() 来验证：它自己也会 prune，会掩盖「每帧推进」这条路径。
+    // 直接看缓冲：如果 prune 被挪进 onSnapshot 判空之后，b 会一直留在这里。
+    const entries = (
+      h.collector as unknown as { entries: Map<string, { id: string }> }
+    ).entries
+    expect([...entries.keys()]).toEqual(['a'])
+  })
+
+  it('有订阅时每帧仍然推送完整快照', () => {
+    const sent: ConnectionsSnapshot[] = []
+    const h = harness({ now: () => 1_000 })
+    h.collector.start((snapshot) => sent.push(snapshot))
+
+    h.socket().push(idsFrame(['a']))
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.items.map((item) => item.id)).toEqual(['a'])
   })
 })
 

@@ -293,6 +293,28 @@ describe('proxiesGet', () => {
   it('toProxyGroups 忽略缺少 all 的条目', () => {
     expect(toProxyGroups({ proxies: { HK: { name: 'HK', type: 'Shadowsocks' } } })).toEqual([])
   })
+
+  it('toProxyGroups 带出自动组的 fixed，空串按未钉选省略', () => {
+    const groups = toProxyGroups({
+      proxies: {
+        Auto: { name: 'Auto', type: 'URLTest', now: 'n1', fixed: 'n2', all: ['n1', 'n2'] },
+        Empty: { name: 'Empty', type: 'URLTest', now: 'n1', fixed: '', all: ['n1'] },
+        n1: { name: 'n1', type: 'Shadowsocks' },
+        n2: { name: 'n2', type: 'Shadowsocks' }
+      }
+    })
+
+    expect(groups).toEqual([
+      { name: 'Auto', type: 'URLTest', now: 'n1', fixed: 'n2', nodes: [{ name: 'n1' }, { name: 'n2' }] },
+      expect.objectContaining({ name: 'Empty', now: 'n1' })
+    ])
+    expect(groups[1]).not.toHaveProperty('fixed')
+  })
+
+  it('真实形状的 /proxies 没有 fixed 时不凭空补字段', () => {
+    const groups = toProxyGroups(realProxies())
+    for (const group of groups) expect(group).not.toHaveProperty('fixed')
+  })
 })
 
 describe('modeSet', () => {
@@ -472,6 +494,7 @@ describe('connectionsGet', () => {
 
     const snapshot = (await invoke(h.ipc, IPC.connectionsGet)) as ConnectionsSnapshot
     expect(snapshot.memory).toBe(28_000)
+    expect(snapshot.retainMs).toBe(60_000)
     expect(snapshot.items).toHaveLength(1)
     expect(snapshot.items[0]).toMatchObject({
       id: 'abc',
@@ -487,11 +510,12 @@ describe('connectionsGet', () => {
     connections.stop()
   })
 
-  it('无采集器时返回空快照，未知内存保持 null 而不是 0', async () => {
+  it('无采集器时返回空快照，未知内存与保留窗口保持 null 而不是 0', async () => {
     const h = await harness()
     const snapshot = (await invoke(h.ipc, IPC.connectionsGet)) as ConnectionsSnapshot
     expect(snapshot.items).toEqual([])
     expect(snapshot.memory).toBeNull()
+    expect(snapshot.retainMs).toBeNull()
     expect(typeof snapshot.at).toBe('number')
   })
 })

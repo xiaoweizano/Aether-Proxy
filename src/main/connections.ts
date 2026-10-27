@@ -189,7 +189,7 @@ export class ConnectionsCollector {
     for (const entry of this.entries.values()) {
       items.push({ ...entry, chains: [...entry.chains] })
     }
-    return { items, memory: this.memory, at: now }
+    return { items, memory: this.memory, retainMs: this.retainEndedMs, at: now }
   }
 
   private open(): void {
@@ -243,7 +243,9 @@ export class ConnectionsCollector {
     this.memory = frame.memory
     this.prune(now)
     this.enforceCap()
-    this.onSnapshot?.(this.build(now))
+    // 保留期与上限的推进必须每帧都做（上面两行），但快照的构建要按需：
+    // 没有窗口订阅时没必要为 2000 条连接分配视图对象，推送本身会被丢弃。
+    if (this.onSnapshot !== null) this.onSnapshot(this.build(now))
   }
 
   private prune(now: number): void {

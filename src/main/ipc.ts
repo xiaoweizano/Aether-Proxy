@@ -44,10 +44,6 @@ function isMode(value: unknown): value is Mode {
   return typeof value === 'string' && (MODES as readonly string[]).includes(value)
 }
 
-/**
- * 节点切换入参校验：两个字段都必须是非空字符串（只有空白也算空）。
- * 返回原值而不是 trim 后的值，避免悄悄改掉合法的节点名。
- */
 /** 组名与节点名的长度上限：正常订阅里没有这么长的名字，超长只可能是畸形输入。 */
 const MAX_PROXY_NAME_LENGTH = 256
 
@@ -68,9 +64,9 @@ function parseNodeSwitch(value: unknown): NodeSwitchInput | null {
   return { group, node }
 }
 
-/** 采集器不存在（内核未运行）时的空快照；内存未知保持 null，不能用 0 冒充。 */
+/** 采集器不存在（内核未运行）时的空快照；内存与保留窗口未知保持 null，不能用 0 冒充。 */
 function emptyConnectionsSnapshot(): ConnectionsSnapshot {
-  return { items: [], memory: null, at: Date.now() }
+  return { items: [], memory: null, retainMs: null, at: Date.now() }
 }
 
 /** 错误对象可能带堆栈或路径；只把可读短消息交给渲染层。 */
@@ -119,12 +115,16 @@ export function buildStatusView(ctx: AppContext): AppStatusView {
 /**
  * 只把具备 `all` 的策略组暴露给界面；节点顺序沿用内核给的顺序，
  * 延迟取该节点最近一次测试结果。策略组自身的 history 是聚合值，不作为节点延迟显示。
+ *
+ * `fixed` 是自动组（URLTest 等）里的手动钉选：它对 `PUT /proxies/<group>` 的响应
+ * 只改 `fixed` 不改 `now`。空串按「没有钉选」处理，避免界面把它画成一个叫空串的选中项。
  */
 export function toProxyGroups(res: ProxiesResponse): ProxyGroupView[] {
   const out: ProxyGroupView[] = []
   for (const entry of Object.values(res.proxies)) {
     if (entry === null || typeof entry !== 'object' || !Array.isArray(entry.all)) continue
-    out.push({
+    const fixed = typeof entry.fixed === 'string' && entry.fixed !== '' ? entry.fixed : undefined
+    const group: ProxyGroupView = {
       name: typeof entry.name === 'string' ? entry.name : '',
       type: typeof entry.type === 'string' ? entry.type : '',
       now: typeof entry.now === 'string' ? entry.now : '',
@@ -134,7 +134,9 @@ export function toProxyGroups(res: ProxiesResponse): ProxyGroupView[] {
         const delay = node.history?.at(-1)?.delay
         return typeof delay === 'number' ? { name, delay } : { name }
       })
-    })
+    }
+    if (fixed !== undefined) group.fixed = fixed
+    out.push(group)
   }
   return out
 }
