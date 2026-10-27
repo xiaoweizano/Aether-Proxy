@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar'
 import { StatePanel } from './components/StatePanel'
 import { TitleBar } from './components/TitleBar'
 import { TopBar } from './components/TopBar'
+import { useLogCounts } from './hooks/useLogCounts'
 import { useProxies } from './hooks/useProxies'
 import { useStats } from './hooks/useStats'
 import { useStatus } from './hooks/useStatus'
@@ -19,6 +20,8 @@ export function App() {
   const { status, error, refresh } = useStatus()
   const { groups } = useProxies()
   const { current, history } = useStats()
+  // 订阅 + 轮询都挂在 App：NodeCard 会因换页卸载，钩子放在卡片里会丢掉已落地的计数。
+  const dialFailures = useLogCounts()
   const active = pickActiveProxy(groups)
 
   // 状态刷新函数保持稳定：命令面板的 useCommands 以它为依赖，避免每次轮询重建动作集。
@@ -26,12 +29,26 @@ export function App() {
     void refresh()
   }, [refresh])
 
+  /** 失败计数点击后的去向；与命令面板的「查看日志」走同一个页面状态。 */
+  const viewLogs = useCallback(() => {
+    setPage('logs')
+  }, [])
+
   /**
    * 分发写成穷尽的 Record：新增页面必须同时在这里登记，否则 tsc 直接报缺键。
    * 用三元表达式时，`Placeholder` 接受任意非 dashboard 页，漏接的类型错误不会出现。
    */
   const pages: Record<Page, ReactNode> = {
-    dashboard: <Dashboard status={status} active={active} current={current} history={history} />,
+    dashboard: (
+      <Dashboard
+        status={status}
+        active={active}
+        current={current}
+        history={history}
+        dialFailures={dialFailures}
+        onViewLogs={viewLogs}
+      />
+    ),
     nodes: <NodesPage groups={groups} />,
     connections: <ConnectionsPage />,
     settings: <Placeholder page="settings" />,

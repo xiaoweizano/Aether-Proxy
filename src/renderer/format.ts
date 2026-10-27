@@ -63,3 +63,14 @@ export function formatClock(at: number): string {
   const part = (value: number): string => String(value).padStart(2, '0')
   return `${part(date.getHours())}:${part(date.getMinutes())}:${part(date.getSeconds())}`
 }
+
+/**
+ * 滚动窗口长度（`windowMs`）的人类可读写法：`60 分钟` / `30 秒`。
+ * 失败计数的文案必须由它推导：窗口改过一次，写死的分钟数就会说谎。
+ * 非法值或零窗口显示破折号，绝不退回到某个默认分钟数。
+ */
+export function formatWindow(windowMs: number): string {
+  if (!isCount(windowMs) || windowMs <= 0) return UNKNOWN
+  if (windowMs < 60_000) return `${Math.round(windowMs / 1000)} 秒`
+  return `${Math.round(windowMs / 60_000)} 分钟`
+}

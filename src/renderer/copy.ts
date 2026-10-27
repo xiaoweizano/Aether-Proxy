@@ -18,9 +18,19 @@ export const copy = {
     node: {
       label: '当前节点',
       sub: (mode: string) => `${mode} · TCP`,
-      /** 失败次数还没有数据源；保留标签，值一律是未知。 */
+      /**
+       * 没有计数来源（采集器为 null）：没有 `windowMs` 可推导，用 DESIGN.md 写明的
+       * 无数据来源句式，值保持破折号。有来源时下面两句的窗口长度一律由 `windowMs` 推导。
+       */
       healthUnknown: '最近 60 分钟 —',
-      healthUnknownWithDelay: (delay: string) => `最近 60 分钟 — · 最近 ${delay}`,
+      /** 采集器在线、窗口内零次失败：仍然不是「健康」，值保持破折号。 */
+      healthNoFailures: (window: string) => `最近 ${window} —`,
+      /** 有真实失败：窗口与次数都来自计数本身。 */
+      healthFailures: (window: string, count: number) => `最近 ${window} ${count} 次拨号失败`,
+      /** 可点计数是「去日志看」的入口；无障碍名带上可见文字，语音控制也能命中。 */
+      healthFailuresAction: (text: string) => `${text}，打开日志`,
+      /** 延迟是节点属性，与失败计数无关，始终单独成句。 */
+      healthDelay: (delay: string) => `· 最近 ${delay}`,
       noSession: '没有会话',
       session: '会话时长',
       used: '已用流量',

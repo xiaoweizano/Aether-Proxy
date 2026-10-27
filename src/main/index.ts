@@ -54,7 +54,11 @@ function pushConnections(snapshot: ConnectionsSnapshot): void {
   mainWindow.webContents.send(IPC.connectionsPush, snapshot)
 }
 
-/** 计数推送只在有新拨号失败时到达；渲染层还必须轮询 logsCountsGet 处理到期归零。 */
+/**
+ * 计数推送只在有新拨号失败时到达；失败滚出窗口时没有回调、没有推送。
+ * 渲染层必须同时轮询 `logsCountsGet`（`src/renderer/hooks/useLogCounts.ts`，3 秒一次）
+ * 处理到期归零，否则仪表盘会一直显示过期的非零计数。
+ */
 function pushLogCounts(counts: DialFailureCounts): void {
   if (mainWindow === null || mainWindow.isDestroyed()) return
   mainWindow.webContents.send(IPC.logsCountsPush, counts)

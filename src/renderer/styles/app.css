@@ -445,6 +445,35 @@ body {
   color: var(--text-faint);
 }
 
+/*
+ * 计数与延迟属于同一句健康陈述：内部只留 4px，外层仍用 8px 与右侧百分比拉开。
+ */
+.health-counts {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/*
+ * 失败计数是「去看日志」的入口：行内文字按钮，不带底色与边框，
+ * 只把句子本身变成可点的信号蓝（DESIGN.md 的 accent 可用作文字）。
+ */
+.health-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-label);
+  text-align: left;
+  cursor: pointer;
+}
+
+.health-action:hover {
+  text-decoration: underline;
+}
+
 .ticks {
   display: flex;
   align-items: flex-end;

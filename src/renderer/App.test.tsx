@@ -162,6 +162,53 @@ describe('App', () => {
     expect(search).toHaveFocus()
   })
 
+  it('仪表盘的失败计数来自 App 级订阅，点击后导航到日志页', async () => {
+    const groups = [
+      { name: 'Proxy', type: 'Selector', now: 'HK-01', nodes: [{ name: 'HK-01', delay: 38 }] }
+    ]
+    window.aether = makeAether({
+      getProxies: vi.fn(async () => groups),
+      getLogCounts: vi.fn(async () => ({ recent: 2, windowMs: 60 * 60_000 }))
+    })
+    render(<App />)
+
+    // 首屏轮询就足以让计数出现：不依赖推送。
+    const action = await screen.findByRole('button', {
+      name: copy.dashboard.node.healthFailuresAction(
+        copy.dashboard.node.healthFailures('60 分钟', 2)
+      )
+    })
+    await userEvent.click(action)
+
+    expect(screen.getByText(copy.pages.logs.note)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: copy.nav.logs })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+  })
+
+  it('切页再回来不会丢掉已经落地的失败计数（订阅在 App，不在卡片里）', async () => {
+    const groups = [
+      { name: 'Proxy', type: 'Selector', now: 'HK-01', nodes: [{ name: 'HK-01', delay: 38 }] }
+    ]
+    const onLogCounts = vi.fn(() => () => {})
+    window.aether = makeAether({
+      getProxies: vi.fn(async () => groups),
+      getLogCounts: vi.fn(async () => ({ recent: 1, windowMs: 60 * 60_000 })),
+      onLogCounts
+    })
+    render(<App />)
+    await screen.findByText(copy.dashboard.node.healthFailures('60 分钟', 1))
+
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.nodes }))
+    expect(screen.queryByText(copy.dashboard.node.healthFailures('60 分钟', 1))).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.dashboard }))
+
+    expect(screen.getByText(copy.dashboard.node.healthFailures('60 分钟', 1))).toBeInTheDocument()
+    // 订阅只有 App 一处：卡片卸载重挂不会新建（也不会漏掉）一个订阅。
+    expect(onLogCounts).toHaveBeenCalledTimes(1)
+  })
+
   it('非 ready 时导航不被阻断：切页后面板保留、导航项可操作', async () => {
     window.aether = makeAether({
       getStatus: vi.fn(

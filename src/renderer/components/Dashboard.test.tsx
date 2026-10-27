@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { copy } from '../copy'
 import { readyStatus } from '../test-utils'
 import { Dashboard } from './Dashboard'
@@ -10,10 +11,12 @@ const STATUS = {
   profile: { nodeCount: 12, groupCount: 3 }
 }
 
+const HOUR = 60 * 60_000
+
 describe('Dashboard', () => {
   it('四块卡片齐全，无数据时不出现 NaN', () => {
     const { container } = render(
-      <Dashboard status={null} active={null} current={null} history={[]} />
+      <Dashboard status={null} active={null} current={null} history={[]} dialFailures={null} />
     )
 
     expect(screen.getByText(copy.dashboard.node.label)).toBeInTheDocument()
@@ -32,6 +35,7 @@ describe('Dashboard', () => {
         active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
         current={{ up: 0, down: 0, upTotal: 2048, downTotal: 4096 }}
         history={[{ up: 0, down: 0 }]}
+        dialFailures={null}
       />
     )
 
@@ -48,11 +52,64 @@ describe('Dashboard', () => {
 
   it('hero 占两列、流量图跨满三列', () => {
     const { container } = render(
-      <Dashboard status={STATUS} active={null} current={null} history={[]} />
+      <Dashboard status={STATUS} active={null} current={null} history={[]} dialFailures={null} />
     )
 
     expect(container.querySelector('.card.hero')).not.toBeNull()
     expect(container.querySelector('.card.chart')).not.toBeNull()
     expect(container.querySelectorAll('.card.stat')).toHaveLength(3)
+  })
+
+  it('没有计数来源时健康行仍是未知，不出现 0 次失败', () => {
+    const { container } = render(
+      <Dashboard
+        status={STATUS}
+        active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
+        current={null}
+        history={[]}
+        dialFailures={null}
+      />
+    )
+
+    expect(screen.getByText(copy.dashboard.node.healthUnknown)).toBeInTheDocument()
+    expect(container.textContent).not.toContain('次拨号失败')
+  })
+
+  it('有失败计数时把 N 与由 windowMs 推导的窗口渲染到 hero 上', () => {
+    render(
+      <Dashboard
+        status={STATUS}
+        active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
+        current={null}
+        history={[]}
+        dialFailures={{ recent: 3, windowMs: HOUR }}
+      />
+    )
+
+    expect(screen.getByText(copy.dashboard.node.healthFailures('60 分钟', 3))).toBeInTheDocument()
+  })
+
+  it('点击失败计数调用 onViewLogs', async () => {
+    const onViewLogs = vi.fn()
+    render(
+      <Dashboard
+        status={STATUS}
+        active={{ group: 'Proxy', node: 'HK-01' }}
+        current={null}
+        history={[]}
+        dialFailures={{ recent: 1, windowMs: HOUR }}
+        onViewLogs={onViewLogs}
+      />
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', {
+        name: copy.dashboard.node.healthFailuresAction(
+          copy.dashboard.node.healthFailures('60 分钟', 1)
+        )
+      })
+    )
+
+    expect(onViewLogs).toHaveBeenCalledTimes(1)
   })
 })

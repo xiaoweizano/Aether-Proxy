@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatClock, formatDelay, formatDuration, formatRate, UNKNOWN } from './format'
+import {
+  formatBytes,
+  formatClock,
+  formatDelay,
+  formatDuration,
+  formatRate,
+  formatWindow,
+  UNKNOWN
+} from './format'
 
 describe('formatBytes', () => {
   it('0 字节显示真实零值而不是占位符', () => {
@@ -88,5 +96,27 @@ describe('formatClock', () => {
 
   it('非法值显示破折号', () => {
     expect(formatClock(Number.NaN)).toBe(UNKNOWN)
+  })
+})
+
+describe('formatWindow', () => {
+  it('一小时窗口写成 60 分钟，与既有「最近 60 分钟」文案一致', () => {
+    expect(formatWindow(60 * 60_000)).toBe('60 分钟')
+  })
+
+  it('窗口长度来自调用方，不写死：窗口换了文案跟着换', () => {
+    expect(formatWindow(5 * 60_000)).toBe('5 分钟')
+    expect(formatWindow(90 * 60_000)).toBe('90 分钟')
+  })
+
+  it('不足一分钟以秒表示', () => {
+    expect(formatWindow(30_000)).toBe('30 秒')
+  })
+
+  it('非法值显示破折号，绝不退回到某个默认分钟数', () => {
+    expect(formatWindow(Number.NaN)).toBe(UNKNOWN)
+    expect(formatWindow(0)).toBe(UNKNOWN)
+    expect(formatWindow(-1)).toBe(UNKNOWN)
+    expect(formatWindow(Number.POSITIVE_INFINITY)).toBe(UNKNOWN)
   })
 })
