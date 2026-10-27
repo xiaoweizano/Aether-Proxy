@@ -38,6 +38,11 @@ export interface BootstrapOptions {
   /** 测试注入；缺省时用 `ws` 建立真实连接。 */
   statsConnect?: StatsConnect
   /**
+   * 退出取消信号。首次启动还没返回 context 时，上层没有 stopAll 可用，
+   * 只能靠它叫停：置位后所有 await 边界放弃，并停掉可能已经 spawn 的内核。
+   */
+  signal?: AbortSignal
+  /**
    * 采样回调。内核可能在窗口之后才起来（无配置 → 导入 → 重启），所以由 bootstrap
    * 在创建采集器时直接接上；窗口侧再调一次 `stats.start()` 只会替换成等价的回调。
    */
@@ -216,7 +221,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
    * 这里做成每个 bootstrap 实例一份，而不是模块级全局：测试可以并行建多个上下文，
    * 全局标志会互相污染；语义上仍满足「清理开始前置位、每个 await 边界检查」。
    */
-  let shuttingDown = false
+  let shuttingDown = opts.signal?.aborted === true
+  // 外部取消（首次启动期间退出）与 stopAll 走同一套放弃语义。
+  opts.signal?.addEventListener('abort', () => { shuttingDown = true }, { once: true })
   const assertNotShuttingDown = (): void => {
     if (shuttingDown) throw new ShutdownAbortError()
   }
@@ -608,7 +615,25 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     })
   }
 
-  const result = await startCore()
+  // 首次启动没有 context，上层无法用 stopAll 取消；退出信号只能在这里兜住：
+  // 停掉可能已经 spawn 的内核，再把这个上下文交出去（stopAll 会被再次调用也无害）。
+  if (opts.signal?.aborted === true) {
+    shuttingDown = true
+    await activeSupervisor.stop().catch(() => {})
+    await clearCoreState(coreStateFile).catch(() => {})
+    return makeContext({ profileDir: configDir, startupStatus: 'core-error' })
+  }
+
+  let result: StartResult
+  try {
+    result = await startCore()
+  } catch (err) {
+    // 启动途中被取消：不再建窗口，也不要把「取消」当成启动失败。
+    if (err instanceof ShutdownAbortError) {
+      return makeContext({ profileDir: configDir, startupStatus: 'core-error' })
+    }
+    throw err
+  }
   if (!result.ok) {
     return makeContext({
       profileDir: result.status === 'no-config' ? null : configDir,

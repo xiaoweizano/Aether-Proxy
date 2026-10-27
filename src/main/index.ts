@@ -26,6 +26,10 @@ if (shotMode) {
 }
 
 let context: AppContext | null = null
+/** 首次 bootstrap 尚未返回时用它取消：context 还不存在，stopAll 无从调用。 */
+const startAbort = new AbortController()
+/** bootstrap 是否已经有结果（成功或失败）；退出清理要等这个，而不是死等 context。 */
+let startSettled = false
 let mainWindow: BrowserWindow | null = null
 let quitting = false
 /** 清理真正结束、允许放行的那一次 quit；此前所有 quit 都必须被挡住。 */
@@ -231,8 +235,15 @@ async function start(): Promise<void> {
       repoRoot: path.resolve(__dirname, '../..'),
       // 内核在窗口之后才起来时（导入配置后重启），采集器由 bootstrap 创建，
       // 这个回调保证它一建立就有消费者。
-      onStatsSample: pushStats
+      onStatsSample: pushStats,
+      // 首次启动期间退出时，context 还不存在；靠它叫停在途的校验与 spawn。
+      signal: startAbort.signal
     })
+    // 启动途中已经被取消：不要再建窗口，直接把清理走完退出。
+    if (startAbort.signal.aborted) {
+      app.quit()
+      return
+    }
     registerIpcHandlers(ipcMain, context, {
       settingsFile: path.join(userDataDir, 'settings.json'),
       pickImportFile
@@ -244,6 +255,9 @@ async function start(): Promise<void> {
     // 通道也要注册：否则渲染层的 getStatus 直接 reject，状态页无法显示。
     registerUnavailableHandlers(ipcMain)
     createWindow('core-error')
+  } finally {
+    // 取消信号与清理都靠这个标志判断「启动流程已经不会再 spawn 内核了」。
+    startSettled = true
   }
 }
 
@@ -251,19 +265,25 @@ app.whenReady().then(() => { void start() })
 
 app.on('before-quit', (event) => {
   // 清理已结束：放行最终这一次 quit（由下面的 finally 主动触发）。
-  if (context === null || cleanupDone) return
-  // 清理期间再次触发的 quit 也必须 preventDefault，否则用户/系统第二次退出会
-  // 在 stopAll 还在等内核（最多 3s）时直接结束进程，跳过还原代理与终止内核。
+  if (cleanupDone) return
+  // context 还没建好也必须挡：首次 bootstrap 可能已经在跑 `mihomo -t` 或 spawn 内核，
+  // 直接放行就会留下孤儿内核。先取消启动，再等 context 建好后正常清理。
   event.preventDefault()
   if (quitting) return
   quitting = true
-  void context
-    .stopAll()
-    .catch((err) => { console.error('[aether] 退出清理失败', err) })
-    .finally(() => {
-      cleanupDone = true
-      app.quit()
-    })
+  startAbort.abort()
+  const cleanup = async (): Promise<void> => {
+    // 在途 bootstrap 会看到取消信号并在下一个 await 边界放弃；等它返回再清理，
+    // 这样即使它已经 spawn 过内核，也能通过 stopAll 收掉。
+    while (context === null && !startSettled) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    await context?.stopAll().catch((err) => { console.error('[aether] 退出清理失败', err) })
+  }
+  void cleanup().finally(() => {
+    cleanupDone = true
+    app.quit()
+  })
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

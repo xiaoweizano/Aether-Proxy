@@ -730,6 +730,36 @@ rules:
     expect(h.spawnFn).toHaveBeenCalledTimes(1)
   })
 
+  it('首次启动途中被取消：不再 spawn，返回的上下文也没有内核', async () => {
+    const h = await harness()
+    const abort = new AbortController()
+    let validateStarted = false
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    h.opts.validateFn = async () => {
+      validateStarted = true
+      await gate
+      return { ok: true, output: 'ok' }
+    }
+    h.opts.signal = abort.signal
+
+    const starting = bootstrap(h.opts)
+    await waitFor(() => validateStarted)
+    // 模拟用户在校验途中退出：此时还没有 context，stopAll 无从调用。
+    abort.abort()
+    release()
+
+    const ctx = await starting
+    // 校验之后、spawn 之前放弃：没有启动内核。
+    expect(h.spawnFn).not.toHaveBeenCalled()
+    expect(ctx.supervisor.status).toBe('stopped')
+    expect(ctx.link).toBeNull()
+    expect(ctx.coreInfo).toBeNull()
+    // 清理仍然可以调用，且不会去动系统代理。
+    await ctx.stopAll()
+    expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+  })
+
   it('内核意外退出时转为 core-error、清空内核视图并还原系统代理', async () => {
     let child!: ChildProcess
     const sockets: FakeStatsSocket[] = []
