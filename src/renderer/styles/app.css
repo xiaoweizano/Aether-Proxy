@@ -189,6 +189,8 @@ body {
 
 /* ── 主内容 ───────────────────────────────────────────── */
 .main {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   padding: var(--space-5) var(--space-6);
   overflow-y: auto;
@@ -781,7 +783,7 @@ body {
   font-size: var(--fs-micro);
 }
 
-/* ── 后续计划的占位页（节点 / 连接 / 设置 / 日志） ────── */
+/* ── 后续计划的占位页（节点 / 设置 / 日志） ───────────── */
 .placeholder {
   display: grid;
   place-items: center;
@@ -800,5 +802,246 @@ body {
 .placeholder-note {
   margin: var(--space-3) 0 0;
   color: var(--text-dim);
+  font-size: var(--fs-body);
+}
+
+/* ── 连接页：六列表格 + 虚拟滚动 ─────────────────────── */
+.connections-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.conn-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.conn-window {
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+.conn-count {
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.conn-search {
+  margin-left: auto;
+  width: var(--conn-search-width);
+  height: var(--conn-control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+}
+
+.conn-search::placeholder {
+  color: var(--text-faint);
+}
+
+.conn-toggle {
+  height: var(--conn-control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-label);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.conn-toggle:hover {
+  color: var(--text);
+}
+
+.conn-toggle[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.conn-table {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.conn-head {
+  flex: none;
+  background: var(--card-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.conn-head-row,
+.conn-row {
+  display: grid;
+  grid-template-columns:
+    var(--conn-col-time)
+    var(--conn-col-process)
+    minmax(var(--conn-col-host), 1fr)
+    var(--conn-col-outbound)
+    var(--conn-col-traffic)
+    var(--conn-col-duration);
+  column-gap: var(--space-3);
+  align-items: center;
+  height: var(--conn-row-height);
+  padding: 0 var(--space-3);
+}
+
+.conn-head-row {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.conn-head-cell {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.conn-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.conn-sort:hover {
+  color: var(--text);
+}
+
+.conn-sort-arrow {
+  color: var(--text-dim);
+}
+
+.conn-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.conn-spacer {
+  position: relative;
+}
+
+.conn-window-rows {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.conn-row {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.conn-row:hover {
+  background: var(--card-2);
+}
+
+.conn-cell {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.conn-time {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+}
+
+.conn-time-text {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 状态点：默认占位但不可见；已结束为空心，被拒绝为红色。 */
+.conn-dot {
+  flex: none;
+  width: var(--conn-status-size);
+  height: var(--conn-status-size);
+  border-radius: 50%;
+  visibility: hidden;
+}
+
+.conn-dot.ended {
+  visibility: visible;
+  background: transparent;
+  border: 1px solid var(--text-faint);
+}
+
+.conn-dot.rejected {
+  visibility: visible;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.conn-dot.ended.rejected {
+  background: transparent;
+  border: 1px solid var(--danger);
+}
+
+.conn-row.rejected .conn-outbound {
+  color: var(--danger);
+}
+
+/* 已结束行降到 40%，但状态点保持原对比度，免得连「已结束」都看不清。 */
+.conn-row.ended > .conn-cell {
+  opacity: 0.4;
+}
+
+.conn-row.ended > .conn-time {
+  opacity: 1;
+}
+
+.conn-row.ended > .conn-time > .conn-time-text {
+  opacity: 0.4;
+}
+
+.conn-traffic,
+.conn-duration {
+  text-align: right;
+}
+
+.conn-duration {
+  color: var(--text-faint);
+}
+
+.conn-empty {
+  display: grid;
+  place-items: center;
+  min-height: calc(var(--conn-row-height) * 4);
+  padding: var(--space-6);
+}
+
+.conn-empty-text {
+  color: var(--text-faint);
   font-size: var(--fs-body);
 }

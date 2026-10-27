@@ -13,10 +13,9 @@ const NON_READY = [
   ['in-use', copy.state.inUse.title]
 ] as const
 
-/** 节点 / 连接 / 设置 / 日志在 Task 4 都落在占位页。 */
+/** 节点 / 设置 / 日志仍落在占位页；连接页在 Task 5 已实现。 */
 const PLACEHOLDER_PAGES = [
   ['nodes', copy.nav.nodes],
-  ['connections', copy.nav.connections],
   ['settings', copy.nav.settings],
   ['logs', copy.nav.logs]
 ] as const
@@ -54,14 +53,15 @@ describe('App', () => {
 
     await userEvent.click(screen.getByRole('button', { name: copy.nav.connections }))
 
-    expect(screen.getByText(copy.pages.connections.note)).toBeInTheDocument()
+    expect(await screen.findByText(copy.connections.empty)).toBeInTheDocument()
+    expect(screen.getAllByRole('columnheader')).toHaveLength(6)
     expect(screen.queryByText(copy.dashboard.node.label)).toBeNull()
     expect(screen.getByRole('heading', { name: copy.nav.connections })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: copy.nav.dashboard }))
 
     expect(await screen.findByText(copy.dashboard.node.label)).toBeInTheDocument()
-    expect(screen.queryByText(copy.pages.connections.note)).toBeNull()
+    expect(screen.queryByText(copy.connections.empty)).toBeNull()
     expect(screen.getByRole('heading', { name: copy.dashboard.title })).toBeInTheDocument()
   })
 
@@ -110,7 +110,7 @@ describe('App', () => {
 
     // 状态面板在任意页面都是主区内容；页面状态只体现在导航选中态上。
     expect(screen.getByRole('heading', { name: copy.state.noConfig.title })).toBeInTheDocument()
-    expect(screen.queryByText(copy.pages.connections.note)).toBeNull()
+    expect(screen.queryByText(copy.connections.empty)).toBeNull()
     expect(connections).toHaveAttribute('aria-current', 'page')
     expect(connections).toBeEnabled()
   })

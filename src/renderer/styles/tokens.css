@@ -55,6 +55,18 @@
   --chart-line: 2px;
   --chart-baseline: 1.2px;
 
+  /* 连接表：行高与列宽来自设计文档「行解剖」。 */
+  --conn-row-height: 28px;
+  --conn-col-time: 72px;
+  --conn-col-process: 120px;
+  --conn-col-host: 280px;
+  --conn-col-outbound: 200px;
+  --conn-col-traffic: 140px;
+  --conn-col-duration: 56px;
+  --conn-status-size: 6px;
+  --conn-control-height: 30px;
+  --conn-search-width: 220px;
+
   /* 字体 */
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI", "PingFang SC", sans-serif;
   --num: "Cascadia Mono", "Consolas", ui-monospace, monospace;

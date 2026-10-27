@@ -7,6 +7,7 @@ import { TopBar } from './components/TopBar'
 import { useProxies } from './hooks/useProxies'
 import { useStats } from './hooks/useStats'
 import { useStatus } from './hooks/useStatus'
+import { ConnectionsPage } from './pages/ConnectionsPage'
 import { Placeholder } from './pages/Placeholder'
 import { PAGE_TITLES, type Page } from './page'
 import { pickActiveProxy } from './selectors'
@@ -25,7 +26,7 @@ export function App() {
   const pages: Record<Page, ReactNode> = {
     dashboard: <Dashboard status={status} active={active} current={current} history={history} />,
     nodes: <Placeholder page="nodes" />,
-    connections: <Placeholder page="connections" />,
+    connections: <ConnectionsPage />,
     settings: <Placeholder page="settings" />,
     logs: <Placeholder page="logs" />
   }

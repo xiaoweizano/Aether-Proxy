@@ -100,14 +100,32 @@ export const copy = {
   },
   modeSwitchFailed: '模式切换失败，请重试',
   proxyToggleFailed: '系统代理切换失败，请重试',
+  connections: {
+    label: '连接列表',
+    /** 采集器保留最近 60 秒的已结束连接；与设计文档的「近 60 秒」一致。 */
+    window: '近 60 秒',
+    count: (count: number) => `${count} 条`,
+    searchPlaceholder: '搜索域名或进程',
+    searchLabel: '搜索域名或进程',
+    activeOnly: '只看活跃',
+    empty: '暂无连接',
+    noMatches: '没有匹配的连接',
+    ended: '已结束',
+    rejected: '已拒绝',
+    columns: {
+      time: '时间',
+      process: '进程',
+      host: '域名',
+      outbound: '出站',
+      traffic: '流量',
+      duration: '时长'
+    }
+  },
   /** 还没落地的页面共用一句占位说明，明确指向后续计划而不是假装功能已存在。 */
   pages: {
     planned: '后续计划',
     nodes: {
       note: '节点页将按策略组列出节点与最近延迟，并支持切换。这一页在后续计划中实现。'
-    },
-    connections: {
-      note: '连接页将按进程、域名、命中规则与出站链路列出一条条连接。这一页在后续计划中实现。'
     },
     settings: {
       note: '设置页还没有实现，将在后续计划中补上。'
