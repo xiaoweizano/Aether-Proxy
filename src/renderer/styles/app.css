@@ -686,6 +686,162 @@ body {
   text-align: center;
 }
 
+/* ── 节点页：策略组 + 节点行 ─────────────────────────── */
+/* 页面本身不设滚动容器：主区 `.main` 已经是滚动区域，组多了自然整体滚动。 */
+.nodes-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.nodes-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-label);
+}
+
+.nodes-empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--fs-body);
+}
+
+.node-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+}
+
+.node-group {
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+/* 组头是真正的 disclosure 控件：整行可点，展开时底色升一档。 */
+.node-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--node-head-height);
+  padding: 0 var(--card-pad-x);
+  border: 0;
+  background: var(--card-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.node-group-head:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
+.node-group-chevron {
+  width: var(--node-chevron-width);
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.node-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-group-count {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.node-group-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 折叠用 hidden 属性表达语义；display: flex 会盖掉 UA 的 display: none，必须显式还原。 */
+.node-group-body[hidden] {
+  display: none;
+}
+
+.node-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--node-row-height);
+  padding: 0 var(--card-pad-x);
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.node-row:first-child {
+  border-top: 0;
+}
+
+.node-row:hover {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+/* 选中节点：Wash Ladder 的 12% 强调色，与连接页选中行、侧栏当前项同一档。 */
+.node-row[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+/* 选中标记：占位始终存在（visibility 而不是 display），未选中时不可见。 */
+.node-row-mark {
+  width: var(--conn-status-size);
+  height: var(--conn-status-size);
+  flex: none;
+  border-radius: 50%;
+  visibility: hidden;
+}
+
+.node-row[aria-pressed='true'] .node-row-mark {
+  visibility: visible;
+  background: var(--accent);
+}
+
+.node-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-row[aria-pressed='true'] .node-row-name {
+  font-weight: 600;
+}
+
+/* 延迟是实时数值：UI 字体的等宽数字（Tabular, Not Mono Rule），右对齐固定宽度。
+   等宽面只允许出现在健康百分比一处。 */
+.node-row-delay {
+  width: var(--node-delay-width);
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* ── 非 ready 状态（无配置 / 配置错误 / 内核异常 / 被占用） ── */
 .state-panel {
   display: grid;

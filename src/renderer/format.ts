@@ -47,6 +47,15 @@ export function formatDuration(ms: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
+/**
+ * 节点延迟：`38ms`。没有测速记录（`undefined`）时是未知，不是 0ms——
+ * 从没测过和测得 0 毫秒是两件事。
+ */
+export function formatDelay(delay: number | undefined): string {
+  if (delay === undefined || !Number.isFinite(delay) || delay < 0) return UNKNOWN
+  return `${delay}ms`
+}
+
 /** 本地时间 `HH:MM:SS`；用本地时区，避免把内核启动时间显示成 UTC。 */
 export function formatClock(at: number): string {
   if (!Number.isFinite(at)) return UNKNOWN

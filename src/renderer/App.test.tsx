@@ -13,9 +13,8 @@ const NON_READY = [
   ['in-use', copy.state.inUse.title]
 ] as const
 
-/** 节点 / 设置 / 日志仍落在占位页；连接页在 Task 5 已实现。 */
+/** 设置 / 日志仍落在占位页；连接页与节点页已实现。 */
 const PLACEHOLDER_PAGES = [
-  ['nodes', copy.nav.nodes],
   ['settings', copy.nav.settings],
   ['logs', copy.nav.logs]
 ] as const
@@ -90,6 +89,35 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: label }))
 
     expect(screen.getByText(copy.pages[page].note)).toBeInTheDocument()
+    expect(screen.queryByText(copy.dashboard.node.label)).toBeNull()
+  })
+
+  it('节点页与仪表盘共用同一个轮询器，切换节点走 switchNode', async () => {
+    const groups = [
+      {
+        name: 'Proxy',
+        type: 'Selector',
+        now: 'HK-01',
+        nodes: [{ name: 'HK-01', delay: 38 }, { name: 'US-01', delay: 120 }]
+      }
+    ]
+    const getProxies = vi.fn(async () => groups)
+    const switchNode = vi.fn(async () => ({ ok: true, status: 204 }))
+    window.aether = makeAether({ getProxies, switchNode })
+    render(<App />)
+    await screen.findByText(copy.dashboard.node.label)
+    const callsOnDashboard = getProxies.mock.calls.length
+
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.nodes }))
+
+    expect(screen.getByRole('heading', { name: copy.nav.nodes })).toBeInTheDocument()
+    // 进节点页不会再拉一份：App 的 useProxies 是唯一轮询器，节点页只是渲染它的结果。
+    expect(getProxies).toHaveBeenCalledTimes(callsOnDashboard)
+    expect(screen.getByRole('button', { name: /HK-01/ })).toHaveAttribute('aria-pressed', 'true')
+
+    await userEvent.click(screen.getByRole('button', { name: /US-01/ }))
+
+    expect(switchNode).toHaveBeenCalledWith({ group: 'Proxy', node: 'US-01' })
     expect(screen.queryByText(copy.dashboard.node.label)).toBeNull()
   })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatClock, formatDuration, formatRate, UNKNOWN } from './format'
+import { formatBytes, formatClock, formatDelay, formatDuration, formatRate, UNKNOWN } from './format'
 
 describe('formatBytes', () => {
   it('0 字节显示真实零值而不是占位符', () => {
@@ -60,6 +60,22 @@ describe('formatDuration', () => {
   it('非法值显示破折号', () => {
     expect(formatDuration(Number.NaN)).toBe(UNKNOWN)
     expect(formatDuration(-1)).toBe(UNKNOWN)
+  })
+})
+
+describe('formatDelay', () => {
+  it('毫秒整数加 ms 后缀', () => {
+    expect(formatDelay(0)).toBe('0ms')
+    expect(formatDelay(38)).toBe('38ms')
+  })
+
+  it('没有测速记录时是未知，不是 0ms', () => {
+    expect(formatDelay(undefined)).toBe(UNKNOWN)
+  })
+
+  it('非法值显示破折号', () => {
+    expect(formatDelay(Number.NaN)).toBe(UNKNOWN)
+    expect(formatDelay(-1)).toBe(UNKNOWN)
   })
 })
 

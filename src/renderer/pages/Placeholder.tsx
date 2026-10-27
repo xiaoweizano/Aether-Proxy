@@ -1,8 +1,8 @@
 import type { Page } from '../page'
 import { copy } from '../copy'
 
-/** 主区中尚未实现的页面：仪表盘与连接页已有真实内容，其余仍是占位。 */
-export type PlaceholderPage = Exclude<Page, 'dashboard' | 'connections'>
+/** 主区中尚未实现的页面：仪表盘、连接页与节点页已有真实内容，其余仍是占位。 */
+export type PlaceholderPage = Exclude<Page, 'dashboard' | 'connections' | 'nodes'>
 
 export interface PlaceholderProps {
   page: PlaceholderPage

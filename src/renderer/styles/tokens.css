@@ -68,6 +68,12 @@
   /* 行内详情展开后增加的高度；虚拟滚动靠它与行高补偿高度差。 */
   --conn-detail-height: 112px;
 
+  /* 节点页：组头比节点行矮一档，延迟列固定宽度让数值纵向对齐。 */
+  --node-head-height: 40px;
+  --node-row-height: 34px;
+  --node-delay-width: 56px;
+  --node-chevron-width: 12px;
+
   /* 字体 */
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI", "PingFang SC", sans-serif;
   --num: "Cascadia Mono", "Consolas", ui-monospace, monospace;

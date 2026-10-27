@@ -134,12 +134,15 @@ export const copy = {
       duration: '时长'
     }
   },
+  nodes: {
+    label: '策略组与节点',
+    count: (count: number) => `${count} 个节点`,
+    switchFailed: '节点切换失败，请重试',
+    empty: '还没有可用的策略组'
+  },
   /** 还没落地的页面共用一句占位说明，明确指向后续计划而不是假装功能已存在。 */
   pages: {
     planned: '后续计划',
-    nodes: {
-      note: '节点页将按策略组列出节点与最近延迟，并支持切换。这一页在后续计划中实现。'
-    },
     settings: {
       note: '设置页还没有实现，将在后续计划中补上。'
     },
