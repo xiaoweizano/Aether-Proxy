@@ -59,6 +59,14 @@ export interface ConnectionsSnapshot {
   at: number
 }
 
+/** 拨号失败的滚动窗口计数；界面用它显示「最近 N 分钟失败 M 次」。 */
+export interface DialFailureCounts {
+  /** 最近 `windowMs` 内的拨号失败次数。 */
+  recent: number
+  /** 窗口长度（毫秒），界面用它写「最近 5 分钟」。 */
+  windowMs: number
+}
+
 export interface ModeSetResult {
   ok: boolean
   status: number
