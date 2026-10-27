@@ -1,11 +1,14 @@
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import YAML from 'yaml'
 import { allocatePort } from './core/ports'
 import { newSecret } from './core/secret'
 import { CoreSupervisor } from './core/supervisor'
 import { resolveMihomoBinary } from './core/binary'
-import { writeCoreState, clearCoreState } from './core/state'
+import { classifyOrphan } from './core/orphan'
+import { writeCoreState, readCoreState, clearCoreState } from './core/state'
 import { mergeConfig } from './config/merge'
 import { missingReferences } from './config/references'
 import { writeRuntime } from './config/runtime'
@@ -44,6 +47,15 @@ export interface BootstrapOptions {
   connectionsConnect?: StatsConnect
   /** `/logs` 采集器的测试注入；缺省时用 `ws` 建立真实连接。 */
   logsConnect?: StatsConnect
+  /**
+   * 孤儿内核身份校验的测试注入；缺省用 `process.kill(pid, 0)` 判断存活
+   * （EPERM 说明进程存在但无权探测，仍按存活算）。
+   */
+  isProcessAliveFn?: (pid: number) => boolean
+  /** 孤儿内核身份校验的测试注入；缺省在 Windows 上用 tasklist 查询映像名。 */
+  processImageFn?: (pid: number) => Promise<string | null>
+  /** 孤儿内核终止的测试注入；缺省在 Windows 上用 `taskkill /F /PID <pid>`。 */
+  killFn?: (pid: number) => Promise<void>
   /**
    * 退出取消信号。首次启动还没返回 context 时，上层没有 stopAll 可用，
    * 只能靠它叫停：置位后所有 await 边界放弃，并停掉可能已经 spawn 的内核。
@@ -144,6 +156,74 @@ function describeError(err: unknown): string {
   return text.slice(0, 300)
 }
 
+const execFileAsync = promisify(execFile)
+
+/** 与代理所有权判断一致：EPERM 说明进程存在但无权探测，仍按存活算。 */
+function defaultIsProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/**
+ * 查询进程映像名。查不到（进程刚好退出、tasklist 不可用、无权限）时返回 null：
+ * 调用方必须把它当成「身份无法确认」，宁可放过也不能误杀。
+ */
+async function defaultProcessImage(pid: number): Promise<string | null> {
+  if (process.platform !== 'win32') return null
+  try {
+    const { stdout } = await execFileAsync(
+      'tasklist',
+      ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
+      { encoding: 'utf8', windowsHide: true, timeout: 3000 }
+    )
+    // 没有匹配项时 tasklist 输出的是 INFO 文案，首行拿不到带引号的映像名。
+    const firstLine = stdout.trim().split(/\r?\n/, 1)[0] ?? ''
+    return /^"([^"]+)"/.exec(firstLine)?.[1] ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Windows 上用 taskkill 强杀；其它平台（M1 不支持）退回进程信号。 */
+async function defaultKill(pid: number): Promise<void> {
+  if (process.platform === 'win32') {
+    await execFileAsync('taskkill', ['/F', '/PID', String(pid)], {
+      windowsHide: true,
+      timeout: 5000
+    })
+    return
+  }
+  process.kill(pid, 'SIGKILL')
+}
+
+type StaleProcessState = 'dead' | 'ours' | 'other'
+
+/**
+ * 终止前的身份校验：先确认 pid 仍存活，再确认映像名就是我们的 mihomo。
+ * 只凭 `core-state.json` 里的 pid 直接杀会误伤被复用的 pid。
+ */
+async function inspectStaleProcess(
+  pid: number,
+  binary: string,
+  isAlive: (pid: number) => boolean,
+  imageOf: (pid: number) => Promise<string | null>
+): Promise<StaleProcessState> {
+  if (!isAlive(pid)) return 'dead'
+  let image: string | null
+  try {
+    image = await imageOf(pid)
+  } catch {
+    return 'other'
+  }
+  if (image === null || image === '') return 'other'
+  return image.toLowerCase() === path.basename(binary).toLowerCase() ? 'ours' : 'other'
+}
+
 /**
  * 退出期间取消在途重启。单独成类是为了让 prepare 的 catch 能区分
  * 「配置有误」与「应用正在退出」：后者必须原样抛出，不能转成 config-error。
@@ -153,6 +233,32 @@ class ShutdownAbortError extends Error {
     super('应用正在退出，内核重启已取消')
     this.name = 'ShutdownAbortError'
   }
+}
+
+/**
+ * 让一个可能耗时（孤儿探测最多 1.5 秒）的 await 能被退出信号打断。
+ * `work` 本身不会被取消（classifyOrphan 自带超时会自行收尾），只是不再等它。
+ */
+function raceShutdown<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return work
+  if (signal.aborted) return Promise.reject(new ShutdownAbortError())
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      reject(new ShutdownAbortError())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (err: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(err)
+      }
+    )
+  })
 }
 
 function normalizeMode(value: unknown): Mode {
@@ -328,6 +434,65 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         ctx.proxyEnabled = false
       }
     })()
+  }
+
+  /**
+   * 上次运行可能在 core-state.json 里留下一个没被回收的 mihomo
+   * （Windows 不会随父进程回收子进程）。启动前按旧 secret 探测：
+   * - `ours`：身份校验通过才 taskkill /F，避免 pid 复用误杀；
+   * - `foreign` / `none`：不动对方，交给 allocatePort 另选端口；
+   * - 无论结果如何都删除旧记录，否则每次启动都会重复探测同一个端口。
+   *
+   * 探测、身份校验、终止失败都只记 warning，绝不阻断启动。
+   * 探测最多 1.5 秒，退出信号必须在 await 边界就能打断它。
+   */
+  const cleanStaleCore = async (): Promise<void> => {
+    const stale = await readCoreState(coreStateFile)
+    if (stale === null) return
+    const isAlive = opts.isProcessAliveFn ?? defaultIsProcessAlive
+    const imageOf = opts.processImageFn ?? defaultProcessImage
+    const kill = opts.killFn ?? defaultKill
+    try {
+      assertNotShuttingDown()
+      const verdict = await raceShutdown(
+        // secret 只作为探测参数使用，不写日志、不进错误消息。
+        classifyOrphan({ port: stale.port, oldSecret: stale.secret, fetchFn: opts.fetchFn }),
+        opts.signal
+      )
+      assertNotShuttingDown()
+      if (verdict !== 'ours') return
+
+      const state = await raceShutdown(
+        inspectStaleProcess(stale.pid, binary, isAlive, imageOf),
+        opts.signal
+      )
+      assertNotShuttingDown()
+      if (state === 'dead') return
+      if (state === 'other') {
+        console.warn(
+          `[aether] 上次记录的内核进程仍在运行，但身份无法确认（pid ${stale.pid}），已跳过终止`
+        )
+        return
+      }
+
+      try {
+        await raceShutdown(kill(stale.pid), opts.signal)
+        console.info(`[aether] 已终止上次遗留的内核进程（pid ${stale.pid}）`)
+      } catch (err) {
+        // 退出取消必须原样向上抛，由启动流程统一处理。
+        if (err instanceof ShutdownAbortError) throw err
+        console.warn(
+          `[aether] 未能终止上次遗留的内核进程（pid ${stale.pid}）：`,
+          describeError(err)
+        )
+      }
+    } finally {
+      // 旧记录无论对应 ours / foreign / none 都已失效：保留它只会让下次启动
+      // 把同一个端口再探测一遍。清理失败也只是 warning。
+      await clearCoreState(coreStateFile).catch((err) => {
+        console.warn('[aether] 无法删除遗留的内核状态文件：', describeError(err))
+      })
+    }
   }
 
   interface Prepared {
@@ -708,6 +873,20 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     await activeSupervisor.stop().catch(() => {})
     await clearCoreState(coreStateFile).catch(() => {})
     return makeContext({ profileDir: configDir, startupStatus: 'core-error' })
+  }
+
+  // 上次运行可能在后台留下了孤儿 mihomo。放在 in-use 与启动前取消检查之后：
+  // 另一个实例仍在使用那份记录时不能碰，已经在退出的进程也不必再清理。
+  try {
+    await cleanStaleCore()
+  } catch (err) {
+    // 探测途中用户退出：与启动前取消同一语义，不再拉起内核。
+    // 旧状态文件已由 cleanStaleCore 的 finally 删除。
+    if (err instanceof ShutdownAbortError) {
+      return makeContext({ profileDir: configDir, startupStatus: 'core-error' })
+    }
+    // 孤儿清理是尽力而为的兜底：任何意外都不得阻断启动。
+    console.warn('[aether] 清理上次遗留内核失败：', describeError(err))
   }
 
   let result: StartResult

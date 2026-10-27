@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ChildProcess } from 'node:child_process'
@@ -65,6 +66,51 @@ function okFetch(): typeof fetch {
   })) as unknown as typeof fetch
 }
 
+interface StoredCoreState {
+  pid: number
+  port: number
+  secret: string
+}
+
+async function readStoredCoreState(dir: string): Promise<StoredCoreState> {
+  return JSON.parse(await readFile(path.join(dir, 'core-state.json'), 'utf8')) as StoredCoreState
+}
+
+async function seedStaleCore(dir: string, state: StoredCoreState): Promise<void> {
+  await writeFile(path.join(dir, 'core-state.json'), JSON.stringify(state))
+}
+
+/** 旧端口按指定状态码应答；其余端口（新内核的握手）正常 200。 */
+function fetchForPort(stalePort: number, status: number): typeof fetch {
+  return vi.fn(async (input: string | URL | Request) => {
+    if (String(input).includes(`:${stalePort}/`)) {
+      return { ok: status >= 200 && status < 300, status, json: async () => ({}) } as Response
+    }
+    return { ok: true, status: 200, json: async () => ({ version: 'test' }) } as Response
+  }) as unknown as typeof fetch
+}
+
+/** 旧端口连接被拒（none）；其余端口正常，供新内核握手。 */
+function refusedFetch(stalePort: number): typeof fetch {
+  return vi.fn(async (input: string | URL | Request) => {
+    if (String(input).includes(`:${stalePort}/`)) throw new Error('ECONNREFUSED')
+    return { ok: true, status: 200, json: async () => ({ version: 'test' }) } as Response
+  }) as unknown as typeof fetch
+}
+
+/** 真的占住一个端口，让 allocatePort 不可能再选中它。 */
+function listenOn(port: number): Promise<net.Server> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => resolve(server))
+  })
+}
+
+function closeServer(server: net.Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()))
+}
+
 /** 记录 connect 调用并允许手动推进消息的最小 WS 替身。 */
 class FakeStatsSocket implements WebSocketLike {
   readonly messages: ((data: unknown) => void)[] = []
@@ -117,6 +163,9 @@ async function harness(options: {
   onStatsSample?: NonNullable<BootstrapOptions['onStatsSample']>
   onConnectionsSnapshot?: NonNullable<BootstrapOptions['onConnectionsSnapshot']>
   onLogCounts?: NonNullable<BootstrapOptions['onLogCounts']>
+  isProcessAliveFn?: NonNullable<BootstrapOptions['isProcessAliveFn']>
+  processImageFn?: NonNullable<BootstrapOptions['processImageFn']>
+  killFn?: NonNullable<BootstrapOptions['killFn']>
 } = {}): Promise<Harness> {
   const config = options.config === undefined ? VALID_CONFIG : options.config
   const dir = await makeUserDir(config !== null, config ?? VALID_CONFIG)
@@ -149,6 +198,10 @@ async function harness(options: {
       // sockets 数组不会被这两条 WS 污染。
       connectionsConnect: options.connectionsConnect ?? (() => new FakeStatsSocket()),
       logsConnect: options.logsConnect ?? (() => new FakeStatsSocket()),
+      // 测试绝不探测或终止真实进程：孤儿清理的三个系统调用全部注入。
+      isProcessAliveFn: options.isProcessAliveFn ?? (() => false),
+      processImageFn: options.processImageFn ?? (async () => null),
+      killFn: options.killFn ?? (async () => {}),
       ...(options.onStatsSample === undefined ? {} : { onStatsSample: options.onStatsSample }),
       ...(options.onConnectionsSnapshot === undefined
         ? {}
@@ -159,6 +212,10 @@ async function harness(options: {
 }
 
 describe('bootstrap', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('无配置时返回 no-config 且不启动内核', async () => {
     const h = await harness({ config: null })
     const ctx = await bootstrap(h.opts)
@@ -895,5 +952,267 @@ rules:
     await ctx.stopAll()
     // 退出清理同样不是崩溃。
     expect(ctx.startupStatus).toBe('ready')
+  })
+
+  it('上次留下的是我们自己的内核：终止旧进程后启动新内核', async () => {
+    const h = await harness()
+    const first = await bootstrap(h.opts)
+    const stale = await readStoredCoreState(h.dir)
+    expect(stale.pid).toBe(CORE_PID)
+    // 不调用 stopAll：模拟主进程被 taskkill /F，旧内核仍在后台运行。
+    expect(first.startupStatus).toBe('ready')
+
+    const killFn = vi.fn(async () => {})
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    const ctx = await bootstrap({
+      ...h.opts,
+      fetchFn: fetchForPort(stale.port, 200),
+      isProcessAliveFn: () => true,
+      processImageFn: async () => 'mihomo.exe',
+      killFn
+    })
+
+    // 旧 pid 被终止，随后本次启动真的拉起了新内核。
+    expect(killFn).toHaveBeenCalledTimes(1)
+    expect(killFn).toHaveBeenCalledWith(stale.pid)
+    expect(h.spawnFn).toHaveBeenCalledTimes(2)
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.coreInfo?.pid).toBe(CORE_PID)
+
+    // 状态文件已由本次启动重写，旧 secret 不再留在其中。
+    const current = await readStoredCoreState(h.dir)
+    expect(current.secret).not.toBe(stale.secret)
+    expect(current.port).toBe(ctx.coreInfo?.controllerPort)
+
+    // restore 只描述系统代理，不能把「清理了内核」伪装成代理恢复。
+    expect(ctx.restore).toBe('none')
+    const logged = infoSpy.mock.calls.map(([message]) => String(message)).join('\n')
+    expect(logged).toContain('遗留的内核')
+    // secret 永远不得进日志。
+    expect(logged).not.toContain(stale.secret)
+
+    await ctx.stopAll()
+  })
+
+  it('旧端口属于其它程序：不终止它，另选端口启动', async () => {
+    const h = await harness()
+    const first = await bootstrap(h.opts)
+    const stale = await readStoredCoreState(h.dir)
+    const staleMixed = Number(/:(\d+)$/.exec(first.proxyServer ?? '')?.[1])
+    expect(staleMixed).toBeGreaterThan(0)
+
+    // 真的占住旧端口：只有旧端口仍被监听时，allocatePort 才会保证换端口。
+    const servers = await Promise.all([listenOn(stale.port), listenOn(staleMixed)])
+    const killFn = vi.fn(async () => {})
+    try {
+      const ctx = await bootstrap({
+        ...h.opts,
+        fetchFn: fetchForPort(stale.port, 401),
+        isProcessAliveFn: () => true,
+        processImageFn: async () => 'mihomo.exe',
+        killFn
+      })
+
+      expect(killFn).not.toHaveBeenCalled()
+      expect(ctx.startupStatus).toBe('ready')
+      expect(ctx.coreInfo?.controllerPort).not.toBe(stale.port)
+      expect(ctx.proxyServer).not.toBe(first.proxyServer)
+      expect(first.proxyServer).not.toBeNull()
+
+      await ctx.stopAll()
+    } finally {
+      await Promise.all(servers.map(closeServer))
+    }
+  })
+
+  it('旧端口无人监听：判为 none，不终止任何进程', async () => {
+    const h = await harness()
+    await bootstrap(h.opts)
+    const stale = await readStoredCoreState(h.dir)
+
+    const killFn = vi.fn(async () => {})
+    const ctx = await bootstrap({
+      ...h.opts,
+      fetchFn: refusedFetch(stale.port),
+      isProcessAliveFn: () => true,
+      processImageFn: async () => 'mihomo.exe',
+      killFn
+    })
+
+    expect(killFn).not.toHaveBeenCalled()
+    expect(ctx.startupStatus).toBe('ready')
+    await ctx.stopAll()
+  })
+
+  it('没有 core-state.json：不探测，直接启动', async () => {
+    const h = await harness()
+    const urls: string[] = []
+    h.opts.fetchFn = (async (input: string | URL | Request) => {
+      urls.push(String(input))
+      return { ok: true, status: 200, json: async () => ({ version: 'test' }) } as Response
+    }) as unknown as typeof fetch
+    const killFn = vi.fn(async () => {})
+    const isAliveFn = vi.fn(() => false)
+
+    const ctx = await bootstrap({ ...h.opts, killFn, isProcessAliveFn: isAliveFn })
+
+    expect(ctx.startupStatus).toBe('ready')
+    expect(killFn).not.toHaveBeenCalled()
+    expect(isAliveFn).not.toHaveBeenCalled()
+    // 没有旧记录就没有探测：全部请求都指向本次启动的 controller 端口。
+    expect(urls.length).toBeGreaterThan(0)
+    const port = ctx.coreInfo?.controllerPort
+    expect(urls.every((url) => url.includes(`:${port}/`))).toBe(true)
+
+    await ctx.stopAll()
+  })
+
+  it('旧 pid 已经不存在：不尝试终止，正常启动', async () => {
+    const h = await harness()
+    await bootstrap(h.opts)
+    const stale = await readStoredCoreState(h.dir)
+
+    const killFn = vi.fn(async () => {})
+    const imageFn = vi.fn(async () => 'mihomo.exe')
+    const ctx = await bootstrap({
+      ...h.opts,
+      fetchFn: fetchForPort(stale.port, 200),
+      isProcessAliveFn: () => false,
+      processImageFn: imageFn,
+      killFn
+    })
+
+    // 进程已死就不必查映像名，更不能调 taskkill。
+    expect(imageFn).not.toHaveBeenCalled()
+    expect(killFn).not.toHaveBeenCalled()
+    expect(ctx.startupStatus).toBe('ready')
+    await ctx.stopAll()
+  })
+
+  it('pid 仍存活但可执行文件不是 mihomo：不终止，启动继续', async () => {
+    const h = await harness()
+    await bootstrap(h.opts)
+    const stale = await readStoredCoreState(h.dir)
+
+    const killFn = vi.fn(async () => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const ctx = await bootstrap({
+      ...h.opts,
+      fetchFn: fetchForPort(stale.port, 200),
+      isProcessAliveFn: () => true,
+      processImageFn: async () => 'chrome.exe',
+      killFn
+    })
+
+    expect(killFn).not.toHaveBeenCalled()
+    expect(ctx.startupStatus).toBe('ready')
+    const logged = warnSpy.mock.calls.map(([message]) => String(message)).join('\n')
+    expect(logged).toContain('身份')
+    expect(logged).not.toContain(stale.secret)
+
+    await ctx.stopAll()
+  })
+
+  it('终止旧进程失败时记一条 warning，但不阻断启动', async () => {
+    const h = await harness()
+    await bootstrap(h.opts)
+    const stale = await readStoredCoreState(h.dir)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const ctx = await bootstrap({
+      ...h.opts,
+      fetchFn: fetchForPort(stale.port, 200),
+      isProcessAliveFn: () => true,
+      processImageFn: async () => 'mihomo.exe',
+      killFn: async () => {
+        throw new Error('taskkill failed')
+      }
+    })
+
+    expect(ctx.startupStatus).toBe('ready')
+    expect(h.spawnFn).toHaveBeenCalledTimes(2)
+    const logged = warnSpy.mock.calls.map(([message]) => String(message)).join('\n')
+    expect(logged).toContain('未能终止')
+    expect(logged).not.toContain(stale.secret)
+
+    await ctx.stopAll()
+  })
+
+  it.each([
+    { name: 'ours', status: 200, refused: false, alive: true, image: 'mihomo.exe', killThrows: false },
+    { name: 'foreign', status: 401, refused: false, alive: true, image: 'mihomo.exe', killThrows: false },
+    { name: 'none', status: 0, refused: true, alive: true, image: 'mihomo.exe', killThrows: false },
+    { name: 'dead', status: 200, refused: false, alive: false, image: 'mihomo.exe', killThrows: false },
+    {
+      name: 'identity-mismatch',
+      status: 200,
+      refused: false,
+      alive: true,
+      image: 'chrome.exe',
+      killThrows: false
+    },
+    { name: 'kill-failure', status: 200, refused: false, alive: true, image: 'mihomo.exe', killThrows: true }
+  ])('清理分支 $name 都会删除遗留的 core-state.json', async (branch) => {
+    const h = await harness({ config: null })
+    const stale = { pid: 400_000, port: 39_999, secret: 'stale-secret' }
+    await seedStaleCore(h.dir, stale)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    const ctx = await bootstrap({
+      ...h.opts,
+      fetchFn: branch.refused ? refusedFetch(stale.port) : fetchForPort(stale.port, branch.status),
+      isProcessAliveFn: () => branch.alive,
+      processImageFn: async () => branch.image,
+      killFn: branch.killThrows
+        ? async () => {
+            throw new Error('boom')
+          }
+        : async () => {}
+    })
+
+    // 无配置不会写入新的状态文件，因此文件消失只能来自清理本身。
+    expect(ctx.startupStatus).toBe('no-config')
+    expect(h.spawnFn).not.toHaveBeenCalled()
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+    await ctx.stopAll()
+  })
+
+  it('探测途中退出：中止探测，不再启动内核', async () => {
+    const h = await harness()
+    await bootstrap(h.opts)
+    const stale = await readStoredCoreState(h.dir)
+
+    const abort = new AbortController()
+    let probeStarted = false
+    let releaseProbe!: () => void
+    const gate = new Promise<void>((resolve) => {
+      releaseProbe = resolve
+    })
+    h.opts.fetchFn = (async (input: string | URL | Request) => {
+      if (String(input).includes(`:${stale.port}/`)) {
+        probeStarted = true
+        await gate
+        return { ok: true, status: 200, json: async () => ({}) } as Response
+      }
+      return { ok: true, status: 200, json: async () => ({ version: 'test' }) } as Response
+    }) as unknown as typeof fetch
+
+    const starting = bootstrap({ ...h.opts, signal: abort.signal })
+    await waitFor(() => probeStarted)
+    // 用户退出：探测必须立刻放弃，不能把退出拖到 1.5 秒超时。
+    abort.abort()
+    releaseProbe()
+
+    const ctx = await starting
+    expect(h.spawnFn).toHaveBeenCalledTimes(1) // 只有第一次启动；本次没有 spawn
+    expect(ctx.startupStatus).toBe('core-error')
+    expect(ctx.coreInfo).toBeNull()
+    expect(ctx.link).toBeNull()
+    // 清理分支同样删掉了旧记录。
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+
+    await ctx.stopAll()
   })
 })
