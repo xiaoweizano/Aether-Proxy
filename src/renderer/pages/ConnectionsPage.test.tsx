@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -43,7 +43,7 @@ function bodyRows(container: HTMLElement): Element[] {
 
 /** 键盘快捷键只在列表获得焦点时生效；点击表格容器即聚焦。 */
 async function focusList(): Promise<HTMLElement> {
-  const table = screen.getByRole('table', { name: copy.connections.label })
+  const table = screen.getByRole('grid', { name: copy.connections.label })
   await userEvent.click(table)
   return table
 }
@@ -63,6 +63,8 @@ describe('ConnectionsPage', () => {
     }
     expect(screen.getByText(copy.connections.count(0))).toBeInTheDocument()
     expect(screen.getByText(copy.connections.window)).toBeInTheDocument()
+    // 表头 + 空状态提示行。
+    expect(screen.getByRole('grid')).toHaveAttribute('aria-rowcount', '2')
     expect(bodyRows(container)).toHaveLength(0)
   })
 
@@ -243,7 +245,7 @@ describe('ConnectionsPage', () => {
     const { container } = mountPage(items)
 
     expect(await screen.findByText(copy.connections.count(2000))).toBeInTheDocument()
-    const table = screen.getByRole('table', { name: copy.connections.label })
+    const table = screen.getByRole('grid', { name: copy.connections.label })
     expect(table).toHaveAttribute('aria-rowcount', '2001')
     expect(table).toHaveAttribute('aria-colcount', '6')
     const rows = bodyRows(container)
@@ -303,13 +305,30 @@ describe('ConnectionsPage keyboard', () => {
       detailQueries.getByText('C:\\Program Files\\Google\\Chrome\\chrome.exe')
     ).toBeInTheDocument()
 
+    // 详情是独立的一行，插在展开行之后；行号与行数同步 +1。
+    const grid = screen.getByRole('grid')
+    const dataRow = container.querySelector('[data-connection-id="one"]')
+    expect(dataRow).toHaveAttribute('aria-rowindex', '2')
+    expect(dataRow).toHaveAttribute('aria-expanded', 'true')
+    expect(grid).toHaveAttribute('aria-rowcount', '3')
+    const detailRow = container.querySelector('.conn-detail-row')
+    expect(detailRow).toHaveAttribute('role', 'row')
+    expect(detailRow).toHaveAttribute('aria-rowindex', '3')
+    expect(detailRow?.querySelector('[role="gridcell"]')).toHaveAttribute('aria-colspan', '6')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      copy.connections.detail.expanded('github.com')
+    )
+
     await userEvent.keyboard('{Enter}')
 
     expect(container.querySelector('.conn-detail')).toBeNull()
+    expect(grid).toHaveAttribute('aria-rowcount', '2')
+    expect(dataRow).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('status')).toHaveTextContent(copy.connections.detail.collapsed)
   })
 
   it('选择行后按 Enter 展开该行，选中态通过 aria-selected 暴露', async () => {
-    mountPage([
+    const { container } = mountPage([
       makeConnection({ id: 'newer', process: 'newer-proc', startedAt: NOW - 1_000 }),
       makeConnection({ id: 'older', process: 'older-proc', startedAt: NOW - 5_000 })
     ])
@@ -320,7 +339,7 @@ describe('ConnectionsPage keyboard', () => {
 
     const selected = screen.getByRole('row', { selected: true })
     expect(selected).toHaveAttribute('data-connection-id', 'newer')
-    expect(selected.querySelector('.conn-detail')).not.toBeNull()
+    expect(selected.nextElementSibling).toBe(container.querySelector('.conn-detail-row'))
   })
 
   it('A 切换「只看活跃」，搜索框聚焦时按 A 只输入文字', async () => {
@@ -382,11 +401,11 @@ describe('ConnectionsPage keyboard', () => {
     await userEvent.type(search, 'github')
     await focusList()
     await userEvent.keyboard('{Enter}')
-    expect(screen.getByRole('table').querySelector('.conn-detail')).not.toBeNull()
+    expect(screen.getByRole('grid').querySelector('.conn-detail')).not.toBeNull()
 
     await userEvent.keyboard('{Escape}')
 
-    expect(screen.getByRole('table').querySelector('.conn-detail')).toBeNull()
+    expect(screen.getByRole('grid').querySelector('.conn-detail')).toBeNull()
     expect(search).toHaveValue('github')
 
     await userEvent.keyboard('{Escape}')
@@ -395,19 +414,134 @@ describe('ConnectionsPage keyboard', () => {
     expect(screen.getByText('chrome')).toBeInTheDocument()
   })
 
-  it('/ 把焦点移到搜索框', async () => {
+  it('↓ 越过视口时把选中行滚进视口，详情不会展开在看不见的地方', async () => {
+    const items = Array.from({ length: 2000 }, (_, index) =>
+      makeConnection({
+        id: `d${index}`,
+        process: `proc-${index}`,
+        startedAt: NOW - index * 1_000
+      })
+    )
+    const { container } = mountPage(items)
+
+    expect(await screen.findByText(copy.connections.count(2000))).toBeInTheDocument()
+    const table = await focusList()
+    expect(table.scrollTop).toBe(0)
+
+    for (let press = 0; press < 30; press += 1) {
+      fireEvent.keyDown(table, { key: 'ArrowDown' })
+    }
+
+    // 600px 视口、28px 行高：第 30 行（下标 29）的底部在 840px，滚动量 240px。
+    expect(table.scrollTop).toBe(240)
+    const selected = screen.getByRole('row', { selected: true })
+    expect(selected).toHaveAttribute('data-connection-id', 'd29')
+    expect(table).toHaveAttribute('aria-activedescendant', 'conn-row-d29')
+    // 选中的行确实挂载在虚拟窗口里。
+    expect(container.querySelector('[data-connection-id="d29"]')).not.toBeNull()
+
+    fireEvent.keyDown(table, { key: 'Enter' })
+
+    expect(container.querySelector('.conn-detail')).not.toBeNull()
+  })
+
+  it('没有选中行时从当前滚动位置起跳，而不是列表头或尾', async () => {
+    const items = Array.from({ length: 2000 }, (_, index) =>
+      makeConnection({
+        id: `a${index}`,
+        process: `proc-${index}`,
+        startedAt: NOW - index * 1_000
+      })
+    )
+    mountPage(items)
+
+    expect(await screen.findByText(copy.connections.count(2000))).toBeInTheDocument()
+    const table = screen.getByRole('grid', { name: copy.connections.label })
+    table.scrollTop = 100 * 28
+    fireEvent.scroll(table)
+    await focusList()
+
+    fireEvent.keyDown(table, { key: 'ArrowDown' })
+
+    expect(screen.getByRole('row', { selected: true })).toHaveAttribute(
+      'data-connection-id',
+      'a100'
+    )
+  })
+
+  it('表头排序按钮聚焦时方向键仍移动选中行，Enter 仍归按钮', async () => {
+    const { container } = mountPage([
+      makeConnection({ id: 'r0', process: 'proc-0', startedAt: NOW }),
+      makeConnection({ id: 'r1', process: 'proc-1', startedAt: NOW - 1_000 })
+    ])
+
+    expect(await screen.findByText('proc-0')).toBeInTheDocument()
+    const sortButton = screen.getByRole('button', { name: copy.connections.columns.time })
+    await userEvent.click(sortButton)
+    const timeHeader = screen.getByRole('columnheader', { name: copy.connections.columns.time })
+    expect(timeHeader).toHaveAttribute('aria-sort', 'ascending')
+    expect(sortButton).toHaveFocus()
+
+    // Enter 属于排序按钮：继续切换排序，不展开详情。
+    await userEvent.keyboard('{Enter}')
+    expect(timeHeader).toHaveAttribute('aria-sort', 'descending')
+    expect(container.querySelector('.conn-detail')).toBeNull()
+
+    // 方向键仍然操作列表，并把焦点交还列表。
+    await userEvent.keyboard('{ArrowDown}')
+    expect(screen.getByRole('grid')).toHaveFocus()
+    expect(selectedFlags(container)).toEqual(['true', 'false'])
+  })
+
+  it('选中行从快照消失后清空选中，下一次方向键从当前滚动位置起跳', async () => {
+    const gone = makeConnection({ id: 'gone', process: 'gone-proc', startedAt: NOW })
+    const keep = makeConnection({ id: 'keep', process: 'keep-proc', startedAt: NOW - 1_000 })
+    let push: ((next: ConnectionsSnapshot) => void) | undefined
+    window.aether = makeAether({
+      getConnections: vi.fn(async () => snapshotOf([gone, keep])),
+      onConnections: (cb) => {
+        push = cb
+        return () => {}
+      }
+    })
+    render(<ConnectionsPage />)
+
+    expect(await screen.findByText('gone-proc')).toBeInTheDocument()
+    await focusList()
+    await userEvent.keyboard('{ArrowDown}')
+    expect(screen.getByRole('row', { selected: true })).toHaveAttribute(
+      'data-connection-id',
+      'gone'
+    )
+
+    act(() => {
+      push?.(snapshotOf([keep], NOW + 500))
+    })
+
+    expect(screen.queryByRole('row', { selected: true })).toBeNull()
+
+    await userEvent.keyboard('{ArrowDown}')
+
+    expect(screen.getByRole('row', { selected: true })).toHaveAttribute(
+      'data-connection-id',
+      'keep'
+    )
+  })
+
+  it('/ 是主视图快捷键：列表没有焦点时也把焦点移到搜索框', async () => {
     mountPage([makeConnection({ id: 'one', process: 'chrome' })])
     expect(await screen.findByText('chrome')).toBeInTheDocument()
 
-    await focusList()
+    const search = screen.getByRole('searchbox', { name: copy.connections.searchLabel })
+    expect(search).not.toHaveFocus()
+
     await userEvent.keyboard('/')
 
-    const search = screen.getByRole('searchbox', { name: copy.connections.searchLabel })
     expect(search).toHaveFocus()
     expect(search).toHaveValue('')
   })
 
-  it('搜索框聚焦时按 Esc 也能清空搜索', async () => {
+  it('Esc 是全局快捷键：焦点离开搜索框后仍然清空搜索', async () => {
     mountPage([makeConnection({ id: 'one', process: 'chrome' })])
     expect(await screen.findByText('chrome')).toBeInTheDocument()
 
@@ -415,6 +549,8 @@ describe('ConnectionsPage keyboard', () => {
     await userEvent.type(search, 'no-such-host')
     expect(screen.getByText(copy.connections.noMatches)).toBeInTheDocument()
 
+    // 焦点回到页面主体，Esc 仍应生效。
+    search.blur()
     await userEvent.keyboard('{Escape}')
 
     expect(search).toHaveValue('')

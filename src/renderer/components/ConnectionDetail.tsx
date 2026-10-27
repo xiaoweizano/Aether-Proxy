@@ -14,7 +14,7 @@ export interface ConnectionDetailProps {
 }
 
 /**
- * 行内详情：四组信息，位于所展开的行下方。
+ * 行内详情：四组信息，由连接页渲染为展开行之后的一条独立 `role="row"`。
  *
  * 与列表里的 `formatOutbound` 不同，这里显示**完整**链路，不省略中间层。
  * 所有缺失字段统一显示破折号，绝不渲染 `undefined`。
@@ -33,12 +33,7 @@ export function ConnectionDetail({ connection }: ConnectionDetailProps) {
   const { detail } = copy.connections
 
   return (
-    <div
-      className="conn-detail"
-      role="cell"
-      aria-colspan={6}
-      aria-label={detail.label}
-    >
+    <div className="conn-detail">
       <dl className="conn-detail-grid">
         <div className="conn-detail-group">
           <dt className="conn-detail-label">{detail.chain}</dt>

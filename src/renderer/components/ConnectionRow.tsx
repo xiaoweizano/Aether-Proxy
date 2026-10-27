@@ -9,7 +9,6 @@ import {
   isRejectedConnection,
   truncateMiddle
 } from '../selectors'
-import { ConnectionDetail } from './ConnectionDetail'
 
 /** 与 tokens.css 的 `--conn-row-height` 保持一致；虚拟滚动依赖它。 */
 export const CONNECTION_ROW_HEIGHT = 28
@@ -23,8 +22,10 @@ export interface ConnectionRowProps {
   now: number | null
   /** 是否为当前选中行（键盘上下键移动的那一行）。 */
   selected?: boolean
-  /** 是否展开行内详情。 */
+  /** 是否展开行内详情（详情行由连接页插在本行之后）。 */
   expanded?: boolean
+  /** 在完整列表中的行号（含表头，从 1 开始）；虚拟滚动只挂载窗口内的行。 */
+  rowIndex?: number
   /** 点击行时调用：选中并切换详情。 */
   onActivate?: (id: string) => void
   /** 测试用的渲染计数器；产品代码不传。 */
@@ -68,6 +69,7 @@ function propsEqual(previous: ConnectionRowProps, next: ConnectionRowProps): boo
   if (previous.onActivate !== next.onActivate) return false
   if (previous.selected !== next.selected) return false
   if (previous.expanded !== next.expanded) return false
+  if (previous.rowIndex !== next.rowIndex) return false
   if (!sameConnection(previous.connection, next.connection)) return false
   if (previous.now === next.now) return true
   // 两边都已结束且 endedAt 相同：时长与 now 无关。
@@ -84,6 +86,7 @@ function ConnectionRowView({
   now,
   selected,
   expanded,
+  rowIndex,
   onActivate,
   onRender
 }: ConnectionRowProps) {
@@ -103,8 +106,7 @@ function ConnectionRowView({
     'conn-row',
     'conn-grid',
     connection.ended ? 'ended' : '',
-    rejected ? 'rejected' : '',
-    expanded ? 'conn-row-expanded' : ''
+    rejected ? 'rejected' : ''
   ]
     .filter(Boolean)
     .join(' ')
@@ -115,10 +117,12 @@ function ConnectionRowView({
       role="row"
       id={`conn-row-${connection.id}`}
       aria-selected={selected === true}
+      aria-expanded={expanded === true}
+      aria-rowindex={rowIndex}
       data-connection-id={connection.id}
       onClick={onActivate === undefined ? undefined : () => onActivate(connection.id)}
     >
-      <div className="conn-cell conn-time" role="cell">
+      <div className="conn-cell conn-time" role="gridcell">
         <span className={dotClass} aria-hidden="true" />
         <span className="conn-time-text">
           {connection.startedAt === null ? UNKNOWN : formatClock(connection.startedAt)}
@@ -128,32 +132,31 @@ function ConnectionRowView({
       </div>
       <div
         className="conn-cell conn-ellipsis"
-        role="cell"
+        role="gridcell"
         title={connection.process ?? undefined}
       >
         {connection.process ?? UNKNOWN}
       </div>
       <div
         className="conn-cell conn-ellipsis"
-        role="cell"
+        role="gridcell"
         title={connection.host ?? connection.destinationIp ?? undefined}
       >
         {truncateMiddle(host)}
       </div>
       <div
         className="conn-cell conn-ellipsis conn-outbound"
-        role="cell"
+        role="gridcell"
         title={connection.chains.join(' ▸ ')}
       >
         {formatOutbound(connection.chains)}
       </div>
-      <div className="conn-cell conn-traffic" role="cell">
+      <div className="conn-cell conn-traffic" role="gridcell">
         {`↑${formatBytes(connection.upload)} ↓${formatBytes(connection.download)}`}
       </div>
-      <div className="conn-cell conn-duration" role="cell">
+      <div className="conn-cell conn-duration" role="gridcell">
         {duration === null ? UNKNOWN : formatDuration(duration)}
       </div>
-      {expanded === true && <ConnectionDetail connection={connection} />}
     </div>
   )
 }

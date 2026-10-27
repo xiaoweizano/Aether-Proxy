@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,13 +9,14 @@ import {
   type KeyboardEvent,
   type RefObject
 } from 'react'
-import { CONNECTION_DETAIL_HEIGHT } from '../components/ConnectionDetail'
+import { CONNECTION_DETAIL_HEIGHT, ConnectionDetail } from '../components/ConnectionDetail'
 import { ConnectionRow, CONNECTION_ROW_HEIGHT } from '../components/ConnectionRow'
 import { copy } from '../copy'
 import { useConnections } from '../hooks/useConnections'
-import { useVirtualRows, type RowExpansion } from '../hooks/useVirtualRows'
+import { scrollTopForRow, useVirtualRows, type RowExpansion } from '../hooks/useVirtualRows'
 import {
   connectionHeaders,
+  connectionHost,
   filterConnections,
   sortConnections,
   type ConnectionHeader,
@@ -82,8 +84,10 @@ export function ConnectionsPage() {
   const [scrollTop, setScrollTop] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [announcement, setAnnouncement] = useState('')
   const viewportRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const headerRef = useRef<HTMLDivElement>(null)
   const viewportHeight = useViewportHeight(viewportRef)
 
   const now = at === null ? null : Math.floor(at / 1000) * 1000
@@ -99,7 +103,7 @@ export function ConnectionsPage() {
     () => (expandedId === null ? -1 : visible.findIndex((item) => item.id === expandedId)),
     [visible, expandedId]
   )
-  // 展开行把固定行高戳破；把额外高度交给虚拟滚动，后面的行才不会叠在一起。
+  // 展开的详情是独立一行：它把后面的行整体下移，虚拟滚动按额外高度补偿。
   const expansion = useMemo<RowExpansion>(
     () => ({ index: expandedIndex, extraHeight: CONNECTION_DETAIL_HEIGHT }),
     [expandedIndex]
@@ -111,11 +115,35 @@ export function ConnectionsPage() {
     scrollTop,
     expansion
   )
+  // 表头 1 行 + 数据行；详情展开时它自己也是一行。空状态保留一行提示。
+  const rowCount =
+    visible.length === 0 ? 2 : visible.length + 1 + (expandedIndex >= 0 ? 1 : 0)
+
+  // 选中行从快照里消失或被筛掉后清空，否则下一次 ↑/↓ 会从数组两端重新起跳。
+  useEffect(() => {
+    if (selectedId !== null && selectedIndex === -1) setSelectedId(null)
+  }, [selectedId, selectedIndex])
 
   // 展开的行被筛选掉（例如打开「只看活跃」）后收起，避免之后恢复时又冒出来。
   useEffect(() => {
     if (expandedId !== null && expandedIndex === -1) setExpandedId(null)
   }, [expandedId, expandedIndex])
+
+  // 展开 / 收起时通过 polite 状态区播报，屏幕阅读器不需要靠视觉发现。
+  const previousExpandedId = useRef<string | null>(null)
+  useEffect(() => {
+    const previous = previousExpandedId.current
+    previousExpandedId.current = expandedId
+    if (previous === expandedId) return
+    if (expandedId === null) {
+      if (previous !== null) setAnnouncement(copy.connections.detail.collapsed)
+      return
+    }
+    const row = items.find((item) => item.id === expandedId)
+    if (row !== undefined) {
+      setAnnouncement(copy.connections.detail.expanded(connectionHost(row)))
+    }
+  }, [expandedId, items])
 
   // 筛选或排序变化后列表会换一套，滚回顶部，避免停在一个已经不存在的位置。
   // 用 layout effect：在浏览器绘制前完成，不会闪一帧旧滚动位置。
@@ -128,38 +156,81 @@ export function ConnectionsPage() {
     setDirection((previous) => (previous === 'desc' ? 'asc' : 'desc'))
   }
 
-  /** 鼠标点行：选中并切换详情，同时把焦点交给列表，接着用键盘。 */
+  /**
+   * 没有选中行时从当前滚动位置所在的行开始，而不是跳到列表头/尾。
+   * 详情只在有选中行时展开，所以这里不需要补偿详情行的高度。
+   */
+  const scrollAnchorIndex = useMemo(() => {
+    if (visible.length === 0) return 0
+    const estimated = Math.floor(scrollTop / CONNECTION_ROW_HEIGHT)
+    return Math.min(Math.max(0, estimated), visible.length - 1)
+  }, [scrollTop, visible.length])
+
+  /**
+   * 把第 `index` 行滚进视口（行已可见时不动）。吸顶表头会挡住滚动容器顶部，
+   * 所以要从可用高度里扣掉它；`extraTotal` 是展开行的额外高度，用于钳制最大值。
+   */
+  const scrollRowIntoView = (index: number, extraTotal = 0): void => {
+    const element = viewportRef.current
+    if (element === null) return
+    const headerHeight = headerRef.current?.offsetHeight ?? 0
+    const next = scrollTopForRow(
+      index,
+      CONNECTION_ROW_HEIGHT,
+      element.scrollTop,
+      viewportHeight,
+      0,
+      headerHeight > 0 ? headerHeight : CONNECTION_ROW_HEIGHT,
+      visible.length * CONNECTION_ROW_HEIGHT + extraTotal
+    )
+    if (next === element.scrollTop) return
+    element.scrollTop = next
+    setScrollTop(next)
+  }
+
+  // 行组件是 memo 的，`onActivate` 必须保持稳定；它需要的最新状态经 ref 读取。
+  const latest = useRef({ visible, expandedId })
+  latest.current = { visible, expandedId }
+  const scrollRowIntoViewRef = useRef(scrollRowIntoView)
+  scrollRowIntoViewRef.current = scrollRowIntoView
+
+  /** 鼠标点行：选中并切换详情，同时把焦点交给列表，接着就能用键盘。 */
   const activateRow = useCallback((id: string) => {
     setSelectedId(id)
     setExpandedId((previous) => (previous === id ? null : id))
     viewportRef.current?.focus({ preventScroll: true })
+    const index = latest.current.visible.findIndex((item) => item.id === id)
+    if (index === -1) return
+    const expanding = latest.current.expandedId !== id
+    scrollRowIntoViewRef.current(index, expanding ? CONNECTION_DETAIL_HEIGHT : 0)
   }, [])
 
   /**
    * ↑ ↓ 移动选中行，到两端停住，不回卷。详情跟着选中行走，所以移动即收起，
-   * 不会出现「选中 A、详情属于 B」的两套高亮。
+   * 不会出现「选中 A、详情属于 B」的两套高亮。没有选中时从当前滚动位置起跳。
    */
   const moveSelection = (delta: 1 | -1): void => {
     if (visible.length === 0) return
-    const current = visible.findIndex((item) => item.id === selectedId)
     const next =
-      current === -1
-        ? delta > 0
-          ? 0
-          : visible.length - 1
-        : Math.min(visible.length - 1, Math.max(0, current + delta))
+      selectedIndex === -1
+        ? scrollAnchorIndex
+        : Math.min(visible.length - 1, Math.max(0, selectedIndex + delta))
     const target = visible[next]
     if (target === undefined) return
     setSelectedId(target.id)
     setExpandedId(null)
+    scrollRowIntoView(next)
   }
 
-  /** Enter：展开 / 收起当前选中行的详情；没有选中时先选第一行。 */
+  /** Enter：展开 / 收起当前选中行的详情；没有选中时选中滚动位置所在的行。 */
   const toggleDetail = (): void => {
-    const target = selectedIndex >= 0 ? visible[selectedIndex] : visible[0]
+    const index = selectedIndex >= 0 ? selectedIndex : scrollAnchorIndex
+    const target = visible[index]
     if (target === undefined) return
+    const expanding = expandedId !== target.id
     setSelectedId(target.id)
-    setExpandedId((previous) => (previous === target.id ? null : target.id))
+    setExpandedId(expanding ? target.id : null)
+    scrollRowIntoView(index, expanding ? CONNECTION_DETAIL_HEIGHT : 0)
   }
 
   /** Esc：详情已展开时先收起，否则清空搜索。返回是否消费了这次按键。 */
@@ -175,8 +246,48 @@ export function ConnectionsPage() {
     return false
   }
 
+  // `/` 与 `Esc` 是主视图 / 全局作用域：焦点不在列表或搜索框时也生效。
+  // ↑ ↓ Enter A 仍然只在列表内生效，由 onListKeyDown 处理。
+  useEffect(() => {
+    const onWindowKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.defaultPrevented) return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.key === 'Escape') {
+        if (!collapseOrClear()) return
+        event.preventDefault()
+        return
+      }
+      if (event.key === '/' && !isInteractiveTarget(event.target)) {
+        event.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onWindowKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onWindowKeyDown)
+    }
+  }, [expandedId, query])
+
   const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.ctrlKey || event.metaKey || event.altKey) return
+    // 表头聚焦时 Enter / Space 属于排序按钮；方向键与 Esc 仍应操作列表，
+    // 否则 Tab 到排序按钮后方向键会「失灵」。操作完把焦点交还列表。
+    const inHeader =
+      event.target instanceof HTMLElement && event.target.closest('.conn-head') !== null
+    if (inHeader) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        moveSelection(event.key === 'ArrowDown' ? 1 : -1)
+        viewportRef.current?.focus()
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        collapseOrClear()
+        viewportRef.current?.focus()
+      }
+      return
+    }
     if (isInteractiveTarget(event.target)) return
     switch (event.key) {
       case 'ArrowDown':
@@ -192,14 +303,6 @@ export function ConnectionsPage() {
         event.preventDefault()
         toggleDetail()
         return
-      case 'Escape':
-        event.preventDefault()
-        collapseOrClear()
-        return
-      case '/':
-        event.preventDefault()
-        searchRef.current?.focus()
-        return
       default:
         break
     }
@@ -208,12 +311,6 @@ export function ConnectionsPage() {
       event.preventDefault()
       setActiveOnly((previous) => !previous)
     }
-  }
-
-  const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    collapseOrClear()
   }
 
   const emptyMessage = items.length === 0 ? copy.connections.empty : copy.connections.noMatches
@@ -234,7 +331,6 @@ export function ConnectionsPage() {
           onChange={(event) => {
             setQuery(event.target.value)
           }}
-          onKeyDown={onSearchKeyDown}
         />
         <button
           type="button"
@@ -251,21 +347,21 @@ export function ConnectionsPage() {
       <div
         className="conn-table"
         ref={viewportRef}
-        role="table"
+        role="grid"
         // 列表本身可获得焦点，键盘快捷键的作用域就是这里；搜索框在工具栏里，
         // 不在这个子树内，所以输入时不会被单键快捷键拦截。
         tabIndex={0}
         aria-label={copy.connections.label}
         aria-colcount={connectionHeaders.length}
-        aria-rowcount={visible.length + 1}
+        aria-rowcount={rowCount}
         aria-activedescendant={selected === undefined ? undefined : `conn-row-${selected.id}`}
         onKeyDown={onListKeyDown}
         onScroll={(event) => {
           setScrollTop(event.currentTarget.scrollTop)
         }}
       >
-        <div className="conn-head" role="rowgroup">
-          <div className="conn-grid conn-head-row" role="row">
+        <div className="conn-head" role="rowgroup" ref={headerRef}>
+          <div className="conn-grid conn-head-row" role="row" aria-rowindex={1}>
             {connectionHeaders.map((header) => (
               <div
                 key={header}
@@ -296,8 +392,12 @@ export function ConnectionsPage() {
 
         <div className="conn-body" role="rowgroup">
           {visible.length === 0 ? (
-            <div className="conn-empty" role="row">
-              <div className="conn-empty-text" role="cell" aria-colspan={connectionHeaders.length}>
+            <div className="conn-empty" role="row" aria-rowindex={2}>
+              <div
+                className="conn-empty-text"
+                role="gridcell"
+                aria-colspan={connectionHeaders.length}
+              >
                 {emptyMessage}
               </div>
             </div>
@@ -312,21 +412,44 @@ export function ConnectionsPage() {
                 role="presentation"
                 style={{ transform: `translateY(${windowed.offset}px)` }}
               >
-                {windowed.rows.map((connection) => (
-                  <ConnectionRow
-                    key={connection.id}
-                    connection={connection}
-                    now={now}
-                    selected={connection.id === selectedId}
-                    expanded={connection.id === expandedId}
-                    onActivate={activateRow}
-                  />
-                ))}
+                {windowed.rows.map((connection, offset) => {
+                  const absolute = windowed.start + offset
+                  // 详情行插在展开行之后，所以它后面的数据行号整体 +1。
+                  const rowIndex =
+                    absolute + 2 + (expandedIndex >= 0 && absolute > expandedIndex ? 1 : 0)
+                  return (
+                    <Fragment key={connection.id}>
+                      <ConnectionRow
+                        connection={connection}
+                        now={now}
+                        rowIndex={rowIndex}
+                        selected={connection.id === selectedId}
+                        expanded={connection.id === expandedId}
+                        onActivate={activateRow}
+                      />
+                      {connection.id === expandedId && (
+                        <div className="conn-detail-row" role="row" aria-rowindex={rowIndex + 1}>
+                          <div
+                            className="conn-detail-cell"
+                            role="gridcell"
+                            aria-colspan={connectionHeaders.length}
+                            aria-label={copy.connections.detail.label}
+                          >
+                            <ConnectionDetail connection={connection} />
+                          </div>
+                        </div>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </div>
             </div>
           )}
         </div>
       </div>
+      <span className="conn-sr-only" role="status">
+        {announcement}
+      </span>
     </section>
   )
 }

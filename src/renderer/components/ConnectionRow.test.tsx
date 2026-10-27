@@ -173,12 +173,30 @@ describe('ConnectionRow', () => {
     expect(counter.count(connection.id)).toBe(2)
   })
 
-  it('行容器带 role=row、单元格带 role=cell', () => {
+  it('行容器带 role=row、单元格带 role=gridcell', () => {
     const connection = makeConnection()
-    render(<ConnectionRow connection={connection} now={NOW} />)
+    render(<ConnectionRow connection={connection} now={NOW} rowIndex={2} />)
 
-    expect(screen.getByRole('row')).toBeInTheDocument()
-    expect(screen.getAllByRole('cell')).toHaveLength(6)
+    const row = screen.getByRole('row')
+    expect(row).toHaveAttribute('aria-rowindex', '2')
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getAllByRole('gridcell')).toHaveLength(6)
+  })
+
+  it('展开与选中状态通过 aria 暴露给辅助技术', () => {
+    const connection = makeConnection()
+    const { rerender } = render(
+      <ConnectionRow connection={connection} now={NOW} selected expanded rowIndex={2} />
+    )
+
+    const row = screen.getByRole('row')
+    expect(row).toHaveAttribute('aria-selected', 'true')
+    expect(row).toHaveAttribute('aria-expanded', 'true')
+
+    rerender(<ConnectionRow connection={connection} now={NOW} rowIndex={2} />)
+
+    expect(screen.getByRole('row')).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('row')).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('已结束 / 被拒绝状态有屏幕阅读器可读文本，不依赖 title', () => {

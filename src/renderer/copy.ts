@@ -120,7 +120,10 @@ export const copy = {
       process: '进程',
       data: '数据',
       start: '开始',
-      end: '结束'
+      end: '结束',
+      /** 展开/收起只用状态区播报给辅助技术，屏幕阅读器会读出来。 */
+      expanded: (host: string) => `已展开 ${host} 详情`,
+      collapsed: '已收起连接详情'
     },
     columns: {
       time: '时间',

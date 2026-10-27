@@ -97,6 +97,42 @@ export function computeVirtualRows<T>(
 }
 
 /**
+ * 让第 `index` 行完整出现在视口里所需的最小 `scrollTop`。
+ *
+ * - 行在视口上方（含被吸顶表头挡住）：把行顶对到表头下沿；
+ * - 行在视口下方：把行底对到视口底部；
+ * - 已经完整可见：原样返回，不产生无谓滚动。
+ *
+ * `extraAbove` 是目标行之前已经累积的额外高度（展开的详情行在它上方时）；
+ * `topInset` 是吸顶表头高度；`contentHeight` 用于把结果夹进 `[0, maxScroll]`。
+ */
+export function scrollTopForRow(
+  index: number,
+  rowHeight: number,
+  scrollTop: number,
+  viewportHeight: number,
+  extraAbove = 0,
+  topInset = 0,
+  contentHeight = Number.POSITIVE_INFINITY
+): number {
+  const row = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1
+  const viewport = Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0
+  const top = Number.isFinite(scrollTop) && scrollTop > 0 ? scrollTop : 0
+  const above = Number.isFinite(extraAbove) && extraAbove > 0 ? extraAbove : 0
+  const inset = Number.isFinite(topInset) && topInset > 0 ? topInset : 0
+  if (!Number.isInteger(index) || index < 0) return top
+
+  const maxScroll = Number.isFinite(contentHeight) ? Math.max(0, contentHeight - viewport) : Infinity
+  const clamp = (value: number): number => Math.min(Math.max(0, value), maxScroll)
+  const rowTop = index * row + above
+  const rowBottom = rowTop + row
+
+  if (rowTop < top + inset) return clamp(rowTop - inset)
+  if (rowBottom > top + viewport) return clamp(rowBottom - viewport)
+  return clamp(top)
+}
+
+/**
  * 固定行高窗口化：`items` 超过 200 条时只返回视口附近的行。
  * `scrollTop` 由调用方从滚动容器读出；默认 0，便于单测三参数形式。
  */
