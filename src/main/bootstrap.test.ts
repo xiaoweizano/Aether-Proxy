@@ -6,7 +6,18 @@ import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ChildProcess } from 'node:child_process'
-import { bootstrap, type BootstrapOptions } from './bootstrap'
+import {
+  bootstrap,
+  isProcessAliveWith,
+  parseTasklistCsvImage,
+  processPathWith,
+  queryFullPath,
+  queryImageName,
+  sameExecutable,
+  taskkillArgs,
+  terminateProcessWith
+} from './bootstrap'
+import type { BootstrapOptions, ExecFileFn } from './bootstrap'
 import { FakePlatformProxy } from './proxy/fake'
 import { ProxyOwnership } from './proxy/ownership'
 import type { WebSocketLike } from './stats'
@@ -19,6 +30,11 @@ rules:
 `
 
 const CORE_PID = 424242
+
+/** harness 的 repoRoot 是 process.cwd()，isPackaged=false：内核二进制固定在 vendor/。 */
+const MIHOMO_PATH = path.join(process.cwd(), 'vendor', 'mihomo.exe')
+/** 同名但不是我们的二进制：完整路径不同，必须拒绝终止。 */
+const FOREIGN_MIHOMO_PATH = path.join(process.cwd(), 'Clash Party', 'resources', 'sidecar', 'mihomo.exe')
 
 /** 轮询等待异步状态收敛；超时直接失败，避免测试挂死。 */
 async function waitFor(
@@ -70,6 +86,7 @@ interface StoredCoreState {
   pid: number
   port: number
   secret: string
+  ownerPid?: number
 }
 
 async function readStoredCoreState(dir: string): Promise<StoredCoreState> {
@@ -164,7 +181,7 @@ async function harness(options: {
   onConnectionsSnapshot?: NonNullable<BootstrapOptions['onConnectionsSnapshot']>
   onLogCounts?: NonNullable<BootstrapOptions['onLogCounts']>
   isProcessAliveFn?: NonNullable<BootstrapOptions['isProcessAliveFn']>
-  processImageFn?: NonNullable<BootstrapOptions['processImageFn']>
+  processPathFn?: NonNullable<BootstrapOptions['processPathFn']>
   killFn?: NonNullable<BootstrapOptions['killFn']>
 } = {}): Promise<Harness> {
   const config = options.config === undefined ? VALID_CONFIG : options.config
@@ -200,7 +217,7 @@ async function harness(options: {
       logsConnect: options.logsConnect ?? (() => new FakeStatsSocket()),
       // 测试绝不探测或终止真实进程：孤儿清理的三个系统调用全部注入。
       isProcessAliveFn: options.isProcessAliveFn ?? (() => false),
-      processImageFn: options.processImageFn ?? (async () => null),
+      processPathFn: options.processPathFn ?? (async () => null),
       killFn: options.killFn ?? (async () => {}),
       ...(options.onStatsSample === undefined ? {} : { onStatsSample: options.onStatsSample }),
       ...(options.onConnectionsSnapshot === undefined
@@ -969,7 +986,7 @@ rules:
       ...h.opts,
       fetchFn: fetchForPort(stale.port, 200),
       isProcessAliveFn: () => true,
-      processImageFn: async () => 'mihomo.exe',
+      processPathFn: async () => MIHOMO_PATH,
       killFn
     })
 
@@ -1010,7 +1027,7 @@ rules:
         ...h.opts,
         fetchFn: fetchForPort(stale.port, 401),
         isProcessAliveFn: () => true,
-        processImageFn: async () => 'mihomo.exe',
+        processPathFn: async () => MIHOMO_PATH,
         killFn
       })
 
@@ -1036,7 +1053,7 @@ rules:
       ...h.opts,
       fetchFn: refusedFetch(stale.port),
       isProcessAliveFn: () => true,
-      processImageFn: async () => 'mihomo.exe',
+      processPathFn: async () => MIHOMO_PATH,
       killFn
     })
 
@@ -1074,23 +1091,23 @@ rules:
     const stale = await readStoredCoreState(h.dir)
 
     const killFn = vi.fn(async () => {})
-    const imageFn = vi.fn(async () => 'mihomo.exe')
+    const pathFn = vi.fn(async () => MIHOMO_PATH)
     const ctx = await bootstrap({
       ...h.opts,
       fetchFn: fetchForPort(stale.port, 200),
       isProcessAliveFn: () => false,
-      processImageFn: imageFn,
+      processPathFn: pathFn,
       killFn
     })
 
-    // 进程已死就不必查映像名，更不能调 taskkill。
-    expect(imageFn).not.toHaveBeenCalled()
+    // 进程已死就不必查完整路径，更不能调 taskkill。
+    expect(pathFn).not.toHaveBeenCalled()
     expect(killFn).not.toHaveBeenCalled()
     expect(ctx.startupStatus).toBe('ready')
     await ctx.stopAll()
   })
 
-  it('pid 仍存活但可执行文件不是 mihomo：不终止，启动继续', async () => {
+  it('pid 仍存活但完整路径不是我们的 mihomo：不终止，启动继续', async () => {
     const h = await harness()
     await bootstrap(h.opts)
     const stale = await readStoredCoreState(h.dir)
@@ -1101,7 +1118,8 @@ rules:
       ...h.opts,
       fetchFn: fetchForPort(stale.port, 200),
       isProcessAliveFn: () => true,
-      processImageFn: async () => 'chrome.exe',
+      // 映像名同样是 mihomo.exe，但完整路径属于 Clash Party：只看名字会误杀。
+      processPathFn: async () => FOREIGN_MIHOMO_PATH,
       killFn
     })
 
@@ -1124,7 +1142,7 @@ rules:
       ...h.opts,
       fetchFn: fetchForPort(stale.port, 200),
       isProcessAliveFn: () => true,
-      processImageFn: async () => 'mihomo.exe',
+      processPathFn: async () => MIHOMO_PATH,
       killFn: async () => {
         throw new Error('taskkill failed')
       }
@@ -1139,21 +1157,159 @@ rules:
     await ctx.stopAll()
   })
 
+  it('记录属于另一个仍存活的 Aether 实例：不探测、不终止、不删记录', async () => {
+    const h = await harness({ config: null })
+    const foreign = { pid: 400_000, port: 39_999, secret: 'foreign-secret', ownerPid: 500_000 }
+    await seedStaleCore(h.dir, foreign)
+    const fetchFn = vi.fn(
+      async () => ({ ok: true, status: 200, json: async () => ({}) }) as Response
+    )
+    const pathFn = vi.fn(async () => MIHOMO_PATH)
+    const killFn = vi.fn(async () => {})
+
+    const ctx = await bootstrap({
+      ...h.opts,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      isProcessAliveFn: (pid) => pid === foreign.ownerPid,
+      processPathFn: pathFn,
+      killFn
+    })
+
+    expect(ctx.startupStatus).toBe('no-config')
+    expect(fetchFn).not.toHaveBeenCalled()
+    expect(pathFn).not.toHaveBeenCalled()
+    expect(killFn).not.toHaveBeenCalled()
+    expect(await readStoredCoreState(h.dir)).toEqual(foreign)
+
+    // stopAll 同样不能删另一个实例的记录。
+    await ctx.stopAll()
+    expect(await readStoredCoreState(h.dir)).toEqual(foreign)
+  })
+
+  it('记录的属主实例已退出：继续探测并清理遗留记录', async () => {
+    const h = await harness({ config: null })
+    const stale = { pid: 400_000, port: 39_999, secret: 'stale', ownerPid: 500_000 }
+    await seedStaleCore(h.dir, stale)
+    const fetchFn = refusedFetch(stale.port)
+
+    const ctx = await bootstrap({
+      ...h.opts,
+      fetchFn,
+      isProcessAliveFn: () => false,
+      killFn: async () => {}
+    })
+
+    // 属主已死，ownerPid 不再是保护理由：探测照常进行，none 让旧记录失效。
+    expect(fetchFn).toHaveBeenCalled()
+    expect(ctx.startupStatus).toBe('no-config')
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+    await ctx.stopAll()
+  })
+
+  it('记录属于当前进程：照常探测并清理', async () => {
+    const h = await harness({ config: null })
+    const stale = { pid: 400_000, port: 39_999, secret: 'own', ownerPid: process.pid }
+    await seedStaleCore(h.dir, stale)
+    const fetchFn = refusedFetch(stale.port)
+
+    const ctx = await bootstrap({ ...h.opts, fetchFn })
+
+    expect(fetchFn).toHaveBeenCalled()
+    expect(ctx.startupStatus).toBe('no-config')
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+    await ctx.stopAll()
+  })
+
+  it('core-state.json 内容损坏：删除损坏文件，不探测', async () => {
+    const h = await harness({ config: null })
+    await writeFile(path.join(h.dir, 'core-state.json'), 'not json', 'utf8')
+    const fetchFn = vi.fn(
+      async () => ({ ok: true, status: 200, json: async () => ({}) }) as Response
+    )
+
+    const ctx = await bootstrap({ ...h.opts, fetchFn: fetchFn as unknown as typeof fetch })
+
+    expect(ctx.startupStatus).toBe('no-config')
+    expect(fetchFn).not.toHaveBeenCalled()
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+    await ctx.stopAll()
+  })
+
+  it('core-state.json 读取失败（非 ENOENT）：不删除也不探测', async () => {
+    const h = await harness({ config: null })
+    const statePath = path.join(h.dir, 'core-state.json')
+    // 目录会让 readFile 以 EISDIR/EPERM 失败，但不是 ENOENT。
+    await mkdir(statePath)
+    const fetchFn = vi.fn(
+      async () => ({ ok: true, status: 200, json: async () => ({}) }) as Response
+    )
+
+    const ctx = await bootstrap({ ...h.opts, fetchFn: fetchFn as unknown as typeof fetch })
+
+    expect(ctx.startupStatus).toBe('no-config')
+    expect(fetchFn).not.toHaveBeenCalled()
+    expect(existsSync(statePath)).toBe(true)
+    await ctx.stopAll()
+    // stopAll 对读失败的记录同样不能强删。
+    expect(existsSync(statePath)).toBe(true)
+  })
+
   it.each([
-    { name: 'ours', status: 200, refused: false, alive: true, image: 'mihomo.exe', killThrows: false },
-    { name: 'foreign', status: 401, refused: false, alive: true, image: 'mihomo.exe', killThrows: false },
-    { name: 'none', status: 0, refused: true, alive: true, image: 'mihomo.exe', killThrows: false },
-    { name: 'dead', status: 200, refused: false, alive: false, image: 'mihomo.exe', killThrows: false },
+    {
+      name: 'ours',
+      status: 200,
+      refused: false,
+      alive: true,
+      path: MIHOMO_PATH,
+      killThrows: false,
+      expectCleared: true
+    },
+    {
+      name: 'foreign',
+      status: 401,
+      refused: false,
+      alive: true,
+      path: MIHOMO_PATH,
+      killThrows: false,
+      expectCleared: true
+    },
+    {
+      name: 'none',
+      status: 0,
+      refused: true,
+      alive: true,
+      path: MIHOMO_PATH,
+      killThrows: false,
+      expectCleared: true
+    },
+    {
+      name: 'dead',
+      status: 200,
+      refused: false,
+      alive: false,
+      path: MIHOMO_PATH,
+      killThrows: false,
+      expectCleared: true
+    },
     {
       name: 'identity-mismatch',
       status: 200,
       refused: false,
       alive: true,
-      image: 'chrome.exe',
-      killThrows: false
+      path: FOREIGN_MIHOMO_PATH,
+      killThrows: false,
+      expectCleared: false
     },
-    { name: 'kill-failure', status: 200, refused: false, alive: true, image: 'mihomo.exe', killThrows: true }
-  ])('清理分支 $name 都会删除遗留的 core-state.json', async (branch) => {
+    {
+      name: 'kill-failure',
+      status: 200,
+      refused: false,
+      alive: true,
+      path: MIHOMO_PATH,
+      killThrows: true,
+      expectCleared: false
+    }
+  ])('清理分支 $name 的 core-state.json 处理符合预期', async (branch) => {
     const h = await harness({ config: null })
     const stale = { pid: 400_000, port: 39_999, secret: 'stale-secret' }
     await seedStaleCore(h.dir, stale)
@@ -1164,7 +1320,7 @@ rules:
       ...h.opts,
       fetchFn: branch.refused ? refusedFetch(stale.port) : fetchForPort(stale.port, branch.status),
       isProcessAliveFn: () => branch.alive,
-      processImageFn: async () => branch.image,
+      processPathFn: async () => branch.path,
       killFn: branch.killThrows
         ? async () => {
             throw new Error('boom')
@@ -1172,10 +1328,15 @@ rules:
         : async () => {}
     })
 
-    // 无配置不会写入新的状态文件，因此文件消失只能来自清理本身。
+    // 无配置不会写入新的状态文件，因此文件变化只能来自清理本身。
     expect(ctx.startupStatus).toBe('no-config')
     expect(h.spawnFn).not.toHaveBeenCalled()
-    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+    if (branch.expectCleared) {
+      expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+    } else {
+      // 身份不明 / 终止失败：保留唯一的孤儿记录，下次启动还能再试。
+      expect(await readStoredCoreState(h.dir)).toEqual(stale)
+    }
     await ctx.stopAll()
   })
 
@@ -1210,9 +1371,128 @@ rules:
     expect(ctx.startupStatus).toBe('core-error')
     expect(ctx.coreInfo).toBeNull()
     expect(ctx.link).toBeNull()
-    // 清理分支同样删掉了旧记录。
-    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+    // 探测被中止时没有结论，唯一的孤儿记录必须保留，下次启动才能再找到它。
+    expect(await readStoredCoreState(h.dir)).toEqual(stale)
 
     await ctx.stopAll()
+  })
+})
+
+/** 生产适配器的纯函数与执行器：用假的 execFile 覆盖，不碰真实进程。 */
+function fakeExec(
+  handler: (file: string, args: string[]) => { stdout: string }
+): ExecFileFn & ReturnType<typeof vi.fn> {
+  return vi.fn(async (file: string, args: string[]) => handler(file, args)) as unknown as
+    ExecFileFn &
+    ReturnType<typeof vi.fn>
+}
+
+describe('孤儿清理的生产适配器', () => {
+  it('解析 tasklist CSV 的映像名', () => {
+    expect(parseTasklistCsvImage('"mihomo.exe","1234","Console","1","24,000 K"\r\n')).toBe(
+      'mihomo.exe'
+    )
+    expect(parseTasklistCsvImage('"Clash Party.exe","1","Services","0","1 K"')).toBe(
+      'Clash Party.exe'
+    )
+  })
+
+  it('本地化的「没有任务」输出不算映像名', () => {
+    expect(parseTasklistCsvImage('信息: 没有运行的任务匹配指定标准。\r\n')).toBeNull()
+    expect(
+      parseTasklistCsvImage('INFO: No tasks are running which match the specified criteria.\r\n')
+    ).toBeNull()
+  })
+
+  it('畸形的 tasklist 行返回 null', () => {
+    expect(parseTasklistCsvImage('')).toBeNull()
+    expect(parseTasklistCsvImage('mihomo.exe,1234')).toBeNull()
+    expect(parseTasklistCsvImage('"unterminated')).toBeNull()
+  })
+
+  it('存活判断：EPERM 视为存活，ESRCH 视为死亡，非法 pid 直接拒绝', () => {
+    expect(isProcessAliveWith(1234, () => {})).toBe(true)
+    expect(
+      isProcessAliveWith(1234, () => {
+        throw Object.assign(new Error('denied'), { code: 'EPERM' })
+      })
+    ).toBe(true)
+    expect(
+      isProcessAliveWith(1234, () => {
+        throw Object.assign(new Error('gone'), { code: 'ESRCH' })
+      })
+    ).toBe(false)
+    expect(isProcessAliveWith(0, () => {})).toBe(false)
+    expect(isProcessAliveWith(-1, () => {})).toBe(false)
+  })
+
+  it('Windows 终止使用 taskkill /F /PID，且不经过 shell', async () => {
+    const exec = fakeExec(() => ({ stdout: '' }))
+    const signal = vi.fn()
+    await terminateProcessWith(1234, exec, 'win32', signal)
+
+    expect(exec).toHaveBeenCalledWith(
+      'taskkill',
+      ['/F', '/PID', '1234'],
+      expect.objectContaining({ windowsHide: true, timeout: 5000 })
+    )
+    expect(signal).not.toHaveBeenCalled()
+    expect(taskkillArgs(1234)).toEqual(['/F', '/PID', '1234'])
+  })
+
+  it('非 Windows 退回信号，不调用 taskkill', async () => {
+    const exec = fakeExec(() => ({ stdout: '' }))
+    const signal = vi.fn()
+    await terminateProcessWith(1234, exec, 'linux', signal)
+
+    expect(exec).not.toHaveBeenCalled()
+    expect(signal).toHaveBeenCalledWith(1234, 'SIGKILL')
+  })
+
+  it('queryImageName 解析正常输出；无匹配与 exec 失败都返回 null', async () => {
+    const ok = fakeExec(() => ({ stdout: '"mihomo.exe","1","Console","1","1 K"\r\n' }))
+    expect(await queryImageName(1, ok, 'win32')).toBe('mihomo.exe')
+
+    const none = fakeExec(() => ({ stdout: '信息: 没有运行的任务匹配指定标准。\r\n' }))
+    expect(await queryImageName(1, none, 'win32')).toBeNull()
+
+    const failed = vi.fn(async () => {
+      throw new Error('tasklist missing')
+    }) as unknown as ExecFileFn
+    expect(await queryImageName(1, failed, 'win32')).toBeNull()
+  })
+
+  it('queryFullPath 去掉换行；空输出与执行失败返回 null', async () => {
+    const ok = fakeExec(() => ({ stdout: 'D:\\a-proxy\\vendor\\mihomo.exe\r\n' }))
+    expect(await queryFullPath(1, ok, 'win32')).toBe('D:\\a-proxy\\vendor\\mihomo.exe')
+
+    const empty = fakeExec(() => ({ stdout: ' \r\n' }))
+    expect(await queryFullPath(1, empty, 'win32')).toBeNull()
+
+    const failed = vi.fn(async () => {
+      throw new Error('powershell missing')
+    }) as unknown as ExecFileFn
+    expect(await queryFullPath(1, failed, 'win32')).toBeNull()
+  })
+
+  it('processPathWith：映像名不符就不查完整路径；同名不同路径返回后由身份判定拒绝', async () => {
+    const foreignImage = fakeExec(() => ({ stdout: '"chrome.exe","1","Console","1","1 K"\r\n' }))
+    expect(await processPathWith(1, MIHOMO_PATH, foreignImage, 'win32')).toBeNull()
+    expect(foreignImage).toHaveBeenCalledTimes(1)
+
+    const sameNameForeignPath = fakeExec((file) => ({
+      stdout:
+        file === 'tasklist'
+          ? '"mihomo.exe","1","Console","1","1 K"\r\n'
+          : 'C:\\Program Files\\Clash Party\\resources\\sidecar\\mihomo.exe\r\n'
+    }))
+    const actual = await processPathWith(1, MIHOMO_PATH, sameNameForeignPath, 'win32')
+    expect(actual).toBe('C:\\Program Files\\Clash Party\\resources\\sidecar\\mihomo.exe')
+    expect(sameExecutable(actual!, MIHOMO_PATH)).toBe(false)
+  })
+
+  it('sameExecutable 忽略大小写、区分不同路径', () => {
+    expect(sameExecutable(MIHOMO_PATH, MIHOMO_PATH.toUpperCase())).toBe(true)
+    expect(sameExecutable(MIHOMO_PATH, FOREIGN_MIHOMO_PATH)).toBe(false)
   })
 })

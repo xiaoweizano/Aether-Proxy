@@ -8,7 +8,7 @@ import { newSecret } from './core/secret'
 import { CoreSupervisor } from './core/supervisor'
 import { resolveMihomoBinary } from './core/binary'
 import { classifyOrphan } from './core/orphan'
-import { writeCoreState, readCoreState, clearCoreState } from './core/state'
+import { writeCoreState, inspectCoreState, clearCoreState } from './core/state'
 import { mergeConfig } from './config/merge'
 import { missingReferences } from './config/references'
 import { writeRuntime } from './config/runtime'
@@ -52,8 +52,8 @@ export interface BootstrapOptions {
    * （EPERM 说明进程存在但无权探测，仍按存活算）。
    */
   isProcessAliveFn?: (pid: number) => boolean
-  /** 孤儿内核身份校验的测试注入；缺省在 Windows 上用 tasklist 查询映像名。 */
-  processImageFn?: (pid: number) => Promise<string | null>
+  /** 孤儿内核身份校验的测试注入；缺省在 Windows 上查 tasklist 映像名 + PowerShell 完整路径。 */
+  processPathFn?: (pid: number, binary: string) => Promise<string | null>
   /** 孤儿内核终止的测试注入；缺省在 Windows 上用 `taskkill /F /PID <pid>`。 */
   killFn?: (pid: number) => Promise<void>
   /**
@@ -156,72 +156,165 @@ function describeError(err: unknown): string {
   return text.slice(0, 300)
 }
 
+export interface ExecResultLike {
+  stdout: string
+}
+
+/** 与 `execFile` 同形的最小执行器；测试可注入，生产实现见 `runExec`。 */
+export type ExecFileFn = (
+  file: string,
+  args: string[],
+  options: { encoding: 'utf8'; windowsHide: boolean; timeout: number }
+) => Promise<ExecResultLike>
+
 const execFileAsync = promisify(execFile)
 
+const runExec: ExecFileFn = async (file, args, options) => {
+  const { stdout } = await execFileAsync(file, args, options)
+  return { stdout: String(stdout) }
+}
+
+/**
+ * tasklist `/FO CSV /NH` 的首列就是映像名。没有匹配项时输出的是本地化的
+ * INFO 文案（没有引号），返回 null；调用方按「身份无法确认」处理。
+ */
+export function parseTasklistCsvImage(stdout: string): string | null {
+  const firstLine = stdout.trim().split(/\r?\n/, 1)[0] ?? ''
+  return /^"([^"]+)"/.exec(firstLine)?.[1] ?? null
+}
+
+export async function queryImageName(
+  pid: number,
+  exec: ExecFileFn,
+  platform: NodeJS.Platform = process.platform
+): Promise<string | null> {
+  if (platform !== 'win32') return null
+  try {
+    const { stdout } = await exec(
+      'tasklist',
+      ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
+      { encoding: 'utf8', windowsHide: true, timeout: 3000 }
+    )
+    return parseTasklistCsvImage(stdout)
+  } catch {
+    return null
+  }
+}
+
+/** 完整可执行路径；进程不存在、权限不足或 PowerShell 不可用时返回 null。 */
+export async function queryFullPath(
+  pid: number,
+  exec: ExecFileFn,
+  platform: NodeJS.Platform = process.platform
+): Promise<string | null> {
+  if (platform !== 'win32') return null
+  try {
+    const { stdout } = await exec(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-Process -Id ${pid} -ErrorAction Stop).Path`
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 5000 }
+    )
+    const text = stdout.trim()
+    return text === '' ? null : text
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 先用 tasklist 的映像名做快速排除，再用完整路径做权威判定：
+ * 同为 `mihomo.exe` 的 Clash Party sidecar 不能被误认成我们的内核。
+ */
+export async function processPathWith(
+  pid: number,
+  binary: string,
+  exec: ExecFileFn,
+  platform: NodeJS.Platform = process.platform
+): Promise<string | null> {
+  const image = await queryImageName(pid, exec, platform)
+  if (image === null || image.toLowerCase() !== path.basename(binary).toLowerCase()) return null
+  return queryFullPath(pid, exec, platform)
+}
+
+async function defaultProcessPath(pid: number, binary: string): Promise<string | null> {
+  return processPathWith(pid, binary, runExec)
+}
+
 /** 与代理所有权判断一致：EPERM 说明进程存在但无权探测，仍按存活算。 */
-function defaultIsProcessAlive(pid: number): boolean {
+export function isProcessAliveWith(
+  pid: number,
+  kill: (pid: number, signal: number) => void
+): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false
   try {
-    process.kill(pid, 0)
+    kill(pid, 0)
     return true
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
 
-/**
- * 查询进程映像名。查不到（进程刚好退出、tasklist 不可用、无权限）时返回 null：
- * 调用方必须把它当成「身份无法确认」，宁可放过也不能误杀。
- */
-async function defaultProcessImage(pid: number): Promise<string | null> {
-  if (process.platform !== 'win32') return null
-  try {
-    const { stdout } = await execFileAsync(
-      'tasklist',
-      ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
-      { encoding: 'utf8', windowsHide: true, timeout: 3000 }
-    )
-    // 没有匹配项时 tasklist 输出的是 INFO 文案，首行拿不到带引号的映像名。
-    const firstLine = stdout.trim().split(/\r?\n/, 1)[0] ?? ''
-    return /^"([^"]+)"/.exec(firstLine)?.[1] ?? null
-  } catch {
-    return null
-  }
+function defaultIsProcessAlive(pid: number): boolean {
+  return isProcessAliveWith(pid, process.kill)
+}
+
+export function taskkillArgs(pid: number): string[] {
+  return ['/F', '/PID', String(pid)]
 }
 
 /** Windows 上用 taskkill 强杀；其它平台（M1 不支持）退回进程信号。 */
-async function defaultKill(pid: number): Promise<void> {
-  if (process.platform === 'win32') {
-    await execFileAsync('taskkill', ['/F', '/PID', String(pid)], {
+export async function terminateProcessWith(
+  pid: number,
+  exec: ExecFileFn,
+  platform: NodeJS.Platform = process.platform,
+  signal: (pid: number, sig: NodeJS.Signals) => void = process.kill
+): Promise<void> {
+  if (platform === 'win32') {
+    await exec('taskkill', taskkillArgs(pid), {
+      encoding: 'utf8',
       windowsHide: true,
       timeout: 5000
     })
     return
   }
-  process.kill(pid, 'SIGKILL')
+  signal(pid, 'SIGKILL')
+}
+
+async function defaultKill(pid: number): Promise<void> {
+  await terminateProcessWith(pid, runExec)
 }
 
 type StaleProcessState = 'dead' | 'ours' | 'other'
 
 /**
- * 终止前的身份校验：先确认 pid 仍存活，再确认映像名就是我们的 mihomo。
- * 只凭 `core-state.json` 里的 pid 直接杀会误伤被复用的 pid。
+ * 终止前的身份校验：先确认 pid 仍存活，再确认完整可执行路径就是我们的 mihomo。
+ * 只凭 `core-state.json` 里的 pid 直接杀会误伤被复用的 pid，或同名的其它 mihomo。
  */
 async function inspectStaleProcess(
   pid: number,
   binary: string,
   isAlive: (pid: number) => boolean,
-  imageOf: (pid: number) => Promise<string | null>
+  pathOf: (pid: number, binary: string) => Promise<string | null>
 ): Promise<StaleProcessState> {
   if (!isAlive(pid)) return 'dead'
-  let image: string | null
+  let actual: string | null
   try {
-    image = await imageOf(pid)
+    actual = await pathOf(pid, binary)
   } catch {
     return 'other'
   }
-  if (image === null || image === '') return 'other'
-  return image.toLowerCase() === path.basename(binary).toLowerCase() ? 'ours' : 'other'
+  if (actual === null || actual === '') return 'other'
+  return sameExecutable(actual, binary) ? 'ours' : 'other'
+}
+
+/** 路径比较按当前平台解析并忽略大小写（Windows 的可执行路径不区分大小写）。 */
+export function sameExecutable(actual: string, expected: string): boolean {
+  return path.resolve(actual).toLowerCase() === path.resolve(expected).toLowerCase()
 }
 
 /**
@@ -439,60 +532,105 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
   /**
    * 上次运行可能在 core-state.json 里留下一个没被回收的 mihomo
    * （Windows 不会随父进程回收子进程）。启动前按旧 secret 探测：
-   * - `ours`：身份校验通过才 taskkill /F，避免 pid 复用误杀；
-   * - `foreign` / `none`：不动对方，交给 allocatePort 另选端口；
-   * - 无论结果如何都删除旧记录，否则每次启动都会重复探测同一个端口。
+   * - 记录属于另一个仍存活的 Aether 实例：不探测、不终止、不删记录；
+   * - `ours`：完整路径身份校验通过才 taskkill /F，避免 pid 复用或同名 mihomo 误杀；
+   * - `foreign` / `none` / 进程已死：不动任何进程，旧记录已失效，删除；
+   * - 身份不明 / 终止失败 / 退出取消：保留记录，下次启动还能再试。
    *
    * 探测、身份校验、终止失败都只记 warning，绝不阻断启动。
    * 探测最多 1.5 秒，退出信号必须在 await 边界就能打断它。
    */
+  const clearStaleRecord = async (): Promise<void> => {
+    await clearCoreState(coreStateFile).catch((err) => {
+      console.warn('[aether] 无法删除遗留的内核状态文件：', describeError(err))
+    })
+  }
+
   const cleanStaleCore = async (): Promise<void> => {
-    const stale = await readCoreState(coreStateFile)
-    if (stale === null) return
-    const isAlive = opts.isProcessAliveFn ?? defaultIsProcessAlive
-    const imageOf = opts.processImageFn ?? defaultProcessImage
-    const kill = opts.killFn ?? defaultKill
-    try {
-      assertNotShuttingDown()
-      const verdict = await raceShutdown(
-        // secret 只作为探测参数使用，不写日志、不进错误消息。
-        classifyOrphan({ port: stale.port, oldSecret: stale.secret, fetchFn: opts.fetchFn }),
-        opts.signal
-      )
-      assertNotShuttingDown()
-      if (verdict !== 'ours') return
-
-      const state = await raceShutdown(
-        inspectStaleProcess(stale.pid, binary, isAlive, imageOf),
-        opts.signal
-      )
-      assertNotShuttingDown()
-      if (state === 'dead') return
-      if (state === 'other') {
-        console.warn(
-          `[aether] 上次记录的内核进程仍在运行，但身份无法确认（pid ${stale.pid}），已跳过终止`
-        )
-        return
-      }
-
-      try {
-        await raceShutdown(kill(stale.pid), opts.signal)
-        console.info(`[aether] 已终止上次遗留的内核进程（pid ${stale.pid}）`)
-      } catch (err) {
-        // 退出取消必须原样向上抛，由启动流程统一处理。
-        if (err instanceof ShutdownAbortError) throw err
-        console.warn(
-          `[aether] 未能终止上次遗留的内核进程（pid ${stale.pid}）：`,
-          describeError(err)
-        )
-      }
-    } finally {
-      // 旧记录无论对应 ours / foreign / none 都已失效：保留它只会让下次启动
-      // 把同一个端口再探测一遍。清理失败也只是 warning。
-      await clearCoreState(coreStateFile).catch((err) => {
-        console.warn('[aether] 无法删除遗留的内核状态文件：', describeError(err))
-      })
+    const read = await inspectCoreState(coreStateFile)
+    if (read.kind === 'missing' || read.kind === 'unreadable') return
+    if (read.kind === 'corrupt') {
+      // 读到了内容但解析/结构不对：确定损坏。临时读错误（EBUSY 等）在上面放过了。
+      await clearStaleRecord()
+      return
     }
+
+    const stale = read.state
+    const isAlive = opts.isProcessAliveFn ?? defaultIsProcessAlive
+    const pathOf = opts.processPathFn ?? defaultProcessPath
+    const kill = opts.killFn ?? defaultKill
+
+    // 写这条记录的实例仍活着：它的内核可能正在用，不能探测、终止，更不能删记录。
+    // 旧文件没有 ownerPid，只能走原来的探测路径（唯一的迁移情况）。
+    if (
+      stale.ownerPid !== undefined &&
+      stale.ownerPid !== process.pid &&
+      isAlive(stale.ownerPid)
+    ) {
+      return
+    }
+
+    assertNotShuttingDown()
+    const verdict = await raceShutdown(
+      // secret 只作为探测参数使用，不写日志、不进错误消息。
+      classifyOrphan({ port: stale.port, oldSecret: stale.secret, fetchFn: opts.fetchFn }),
+      opts.signal
+    )
+    assertNotShuttingDown()
+    if (verdict !== 'ours') {
+      // 端口属于别的程序，或已经没人监听：旧记录已失效。
+      await clearStaleRecord()
+      return
+    }
+
+    const state = await raceShutdown(
+      inspectStaleProcess(stale.pid, binary, isAlive, pathOf),
+      opts.signal
+    )
+    assertNotShuttingDown()
+    if (state === 'dead') {
+      // pid 已经不在了，孤儿内核也随之消失。
+      await clearStaleRecord()
+      return
+    }
+    if (state === 'other') {
+      console.warn(
+        `[aether] 上次记录的内核进程仍在运行，但身份无法确认（pid ${stale.pid}），已跳过终止`
+      )
+      // 保留记录：身份不明时删掉，真正的孤儿以后就找不到了。
+      return
+    }
+
+    try {
+      await raceShutdown(kill(stale.pid), opts.signal)
+      console.info(`[aether] 已终止上次遗留的内核进程（pid ${stale.pid}）`)
+      await clearStaleRecord()
+    } catch (err) {
+      // 退出取消必须原样向上抛，由启动流程统一处理；记录必须保留。
+      if (err instanceof ShutdownAbortError) throw err
+      console.warn(
+        `[aether] 未能终止上次遗留的内核进程（pid ${stale.pid}）：`,
+        describeError(err)
+      )
+      // 终止失败：保留记录，下次启动还能再试。
+    }
+  }
+
+  /**
+   * 退出 / 启动失败路径只清理属于自己的记录。另一个存活实例的记录不能删，
+   * 否则它下次崩溃时自己的内核就无法被识别。读失败（unreadable）同样不删。
+   */
+  const clearCoreStateIfOwned = async (): Promise<void> => {
+    const read = await inspectCoreState(coreStateFile)
+    if (read.kind === 'unreadable') return
+    if (
+      read.kind === 'ok' &&
+      read.state.ownerPid !== undefined &&
+      read.state.ownerPid !== process.pid
+    ) {
+      return
+    }
+    await clearCoreState(coreStateFile)
   }
 
   interface Prepared {
@@ -615,7 +753,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     } catch (err) {
       console.warn('[aether] 内核启动失败：', describeError(err))
       await prepared.supervisor.stop().catch(() => {})
-      await clearCoreState(coreStateFile).catch(() => {})
+      await clearCoreStateIfOwned().catch(() => {})
       return { ok: false, status: 'core-error', profile: prepared.profile }
     }
   }
@@ -845,7 +983,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
           // 同上。
         }
         try {
-          await clearCoreState(coreStateFile)
+          await clearCoreStateIfOwned()
         } catch (err) {
           errors.push(err)
         }
@@ -871,7 +1009,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
   if (opts.signal?.aborted === true) {
     shuttingDown = true
     await activeSupervisor.stop().catch(() => {})
-    await clearCoreState(coreStateFile).catch(() => {})
+    await clearCoreStateIfOwned().catch(() => {})
     return makeContext({ profileDir: configDir, startupStatus: 'core-error' })
   }
 
