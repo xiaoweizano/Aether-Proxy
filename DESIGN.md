@@ -377,7 +377,9 @@ When there is no data the figure is replaced rather than hidden: the hero node n
 
 Sixty 1px-radius bars, `flex:1` each, 2px apart, 22px tall, aligned to the bottom. Live: green at 85% for a healthy minute, with a missed minute drawn as a 55%-height `border-2` stub at full opacity. With no kernel the whole strip becomes 40%-height `border-2` bars — same geometry, no green — so "no history" cannot be mistaken for "healthy". Height carries the miss, colour carries the health; the strip is `aria-hidden` because the sentence above it already says the count.
 
-**Unknown, not healthy, by default.** v1 has no per-minute health source: mihomo reports a per-node delay but no failure history. Until one exists the strip renders in its dim form (40%-height `border-2`) and the health line states the absence — `最近 60 分钟 —`, plus `· 最近 480ms` when a delay is known — while the metric itself stays `—` in `faint`. A green strip is a claim, and the product may not make it without the data.
+**Unknown, not healthy, by default.** v1 has no *per-minute* health source: mihomo reports a per-node delay, and the log stream yields an hourly dial-failure count, but neither is a minute-by-minute record. So the strip renders in its dim form (40%-height `border-2`) at every count level, and the percentage stays `—` in `faint`. The health line reports only what is measured: `最近 60 分钟 —` when no count source exists (no kernel), `· 最近 480ms` when a delay is known, and `最近 60 分钟 N 次拨号失败` once the count source is present — where N = 0 stays unknown rather than being coloured green, because an hourly total cannot prove any individual minute was healthy. A green strip is a claim, and the product may not make it without the data.
+
+**The window is a measurement, not copy.** The failure-count label derives its duration from `DialFailureCounts.windowMs`, never from a hardcoded 「5 分钟」. The window moved once (5 → 60 minutes) during v1; a hardcoded label would have lied silently.
 
 ### Empty chart and idle state
 
