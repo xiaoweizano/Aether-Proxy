@@ -11,6 +11,9 @@ export interface WebSocketLike {
   close(): void
 }
 
+/** 所有 controller WS 采集器共用的断线重连间隔；两个采集器必须一致，避免漂移。 */
+export const DEFAULT_RECONNECT_MS = 2000
+
 export type StatsConnect = (
   url: string,
   options: { headers: Record<string, string> }

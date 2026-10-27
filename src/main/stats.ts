@@ -1,4 +1,10 @@
-import { connectWithWs, toText, type StatsConnect, type WebSocketLike } from './ws'
+import {
+  DEFAULT_RECONNECT_MS,
+  connectWithWs,
+  toText,
+  type StatsConnect,
+  type WebSocketLike
+} from './ws'
 
 // 连接抽象已抽到 ws.ts；这里保留再导出，既有 import 路径（bootstrap / 测试）不变。
 export { toText }
@@ -30,7 +36,6 @@ export interface StatsOptions {
 }
 
 const DEFAULT_MAX_SAMPLES = 60
-const DEFAULT_RECONNECT_MS = 2000
 
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)

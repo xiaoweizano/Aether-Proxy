@@ -1,5 +1,11 @@
 import type { ConnectionView, ConnectionsSnapshot } from '../shared/ipc'
-import { connectWithWs, toText, type StatsConnect, type WebSocketLike } from './ws'
+import {
+  DEFAULT_RECONNECT_MS,
+  connectWithWs,
+  toText,
+  type StatsConnect,
+  type WebSocketLike
+} from './ws'
 
 export interface ConnectionsOptions {
   /** 形如 `ws://127.0.0.1:<controllerPort>/connections?interval=500`；只在主进程内存在。 */
@@ -17,7 +23,6 @@ export interface ConnectionsOptions {
 
 const DEFAULT_RETAIN_ENDED_MS = 60_000
 const DEFAULT_MAX_ENTRIES = 2000
-const DEFAULT_RECONNECT_MS = 2000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
