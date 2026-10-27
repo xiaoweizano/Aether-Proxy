@@ -11,7 +11,10 @@ export interface NodesPageProps {
 /**
  * 节点页：按策略组列出节点，点击即切换。
  *
- * 成功时什么都不做——下一次 `getProxies` 轮询把新的 `now` 带回来，选中态自然跟上。
+ * 成功时什么都不做——下一次 `getProxies` 轮询把新的 `now` 或 `fixed` 带回来，
+ * 选中态自然跟上。自动组（URLTest / Fallback / LoadBalance）里内核只把选择写进
+ * `fixed`、不改 `now`，所以 NodeList 用 `fixed || now` 作为有效选中值；保留可点击
+ * 是因为钉选节点是这些组的真实能力，选中点会如实跟随 `fixed`。
  * 提前把点击目标画成选中会造成「界面说切了、内核没切」的假象；失败时只留一行错误，
  * 选中态仍然只反映内核给的事实。
  */

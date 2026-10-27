@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import type { ProxyGroupView } from '../../shared/ipc'
 import { copy } from '../copy'
 import { formatDelay } from '../format'
+import { effectiveSelection } from '../selectors'
 
 export interface NodeListProps {
   groups: ProxyGroupView[]
@@ -17,10 +18,11 @@ function isGlobal(name: string): boolean {
 /**
  * 策略组列表：组头是真正的 disclosure，节点是组内的真实按钮。
  *
- * 选中态**只**来自 `group.now`（内核事实），不来自点击——切换请求可能被内核拒绝，
- * 界面不能先自己认账。展开状态则相反，是纯粹的本地 UI 状态：用覆盖表记录用户
- * 手动开合过的组，未记录的组按名字决定默认值，这样首轮轮询后到达的组也能拿到
- * 正确默认值。
+ * 选中态**只**来自内核事实（`fixed || now`），不来自点击——切换请求可能被内核拒绝，
+ * 界面不能先自己认账。URLTest 等自动组里 `PUT` 只改 `fixed` 不改 `now`，所以两者
+ * 必须用同一个有效选中值，否则点击成功却永远看不到选中态。展开状态则相反，是纯粹的
+ * 本地 UI 状态：用覆盖表记录用户手动开合过的组，未记录的组按名字决定默认值，
+ * 这样首轮轮询后到达的组也能拿到正确默认值。
  */
 export function NodeList({ groups, onSelect }: NodeListProps) {
   const baseId = useId()
@@ -58,7 +60,7 @@ export function NodeList({ groups, onSelect }: NodeListProps) {
               hidden={!expanded}
             >
               {group.nodes.map((node) => {
-                const selected = group.now === node.name
+                const selected = effectiveSelection(group) === node.name
                 return (
                   <button
                     key={node.name}

@@ -142,6 +142,31 @@ describe('NodesPage', () => {
     expect(screen.getByRole('button', { name: /HK-01/ })).toHaveAttribute('aria-pressed', 'false')
   })
 
+  it('URLTest 组里切换后内核只改 fixed：选中态跟随 fixed，而不是一直停在 now', async () => {
+    const { rerender, switchNode } = mount([AUTO])
+
+    await userEvent.click(screen.getByRole('button', { name: /SG-01/ }))
+
+    expect(switchNode).toHaveBeenCalledWith({ group: 'Auto', node: 'SG-01' })
+    // 切换成功后：PUT 返回 204，now 仍是 JP-01，fixed 变成 SG-01。
+    rerender(<NodesPage groups={[{ ...AUTO, fixed: 'SG-01' }]} />)
+
+    expect(screen.getByRole('button', { name: /SG-01/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /JP-01/ })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('fixed 为空串时退回 now；两者都没有时没有选中行', () => {
+    const { rerender } = mount([{ ...AUTO, fixed: '' }])
+
+    expect(screen.getByRole('button', { name: /JP-01/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /SG-01/ })).toHaveAttribute('aria-pressed', 'false')
+
+    rerender(<NodesPage groups={[{ ...AUTO, now: '', fixed: '' }]} />)
+
+    expect(screen.getByRole('button', { name: /JP-01/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: /SG-01/ })).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('轮询换了一组新对象后，手动展开的 GLOBAL 仍然展开', async () => {
     const { rerender } = mount([GLOBAL, PROXY])
 

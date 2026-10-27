@@ -5,6 +5,7 @@ import {
   connectionDurationMs,
   connectionHeaders,
   connectionHost,
+  effectiveSelection,
   filterConnections,
   formatDestination,
   formatOutbound,
@@ -23,6 +24,22 @@ import { makeConnection } from './test-utils'
 function group(overrides: Partial<ProxyGroupView>): ProxyGroupView {
   return { name: 'Proxy', type: 'Selector', now: '', nodes: [], ...overrides }
 }
+
+describe('effectiveSelection', () => {
+  it('fixed 优先于 now：自动组里的手动钉选必须可见', () => {
+    expect(effectiveSelection({ now: 'n1', fixed: 'n2' })).toBe('n2')
+  })
+
+  it('fixed 为空串或缺失时退回 now', () => {
+    expect(effectiveSelection({ now: 'n1', fixed: '' })).toBe('n1')
+    expect(effectiveSelection({ now: 'n1' })).toBe('n1')
+  })
+
+  it('两者都没有时是空串，没有选中项', () => {
+    expect(effectiveSelection({ now: '', fixed: '' })).toBe('')
+    expect(effectiveSelection({ now: '' })).toBe('')
+  })
+})
 
 describe('pickActiveProxy', () => {
   it('空列表返回 null', () => {
@@ -129,6 +146,39 @@ describe('pickActiveProxy', () => {
     ]
 
     expect(pickActiveProxy(groups)).toEqual({ group: 'Auto', node: 'JP', delay: 55 })
+  })
+
+  it('自动组的手动钉选（fixed）优先于自动结果 now', () => {
+    const groups = [
+      group({
+        name: 'Auto',
+        type: 'URLTest',
+        now: 'JP',
+        fixed: 'US',
+        nodes: [
+          { name: 'JP', delay: 55 },
+          { name: 'US', delay: 120 }
+        ]
+      })
+    ]
+
+    expect(pickActiveProxy(groups)).toEqual({ group: 'Auto', node: 'US', delay: 120 })
+  })
+
+  it('fixed 为空串时退回 now，不显示空的选中节点', () => {
+    const groups = [
+      group({ name: 'Auto', type: 'URLTest', now: 'JP', fixed: '', nodes: [{ name: 'JP', delay: 55 }] })
+    ]
+
+    expect(pickActiveProxy(groups)).toEqual({ group: 'Auto', node: 'JP', delay: 55 })
+  })
+
+  it('fixed 与 now 都为空时跳过该组', () => {
+    const groups = [
+      group({ name: 'Auto', type: 'URLTest', now: '', fixed: '', nodes: [{ name: 'JP' }] })
+    ]
+
+    expect(pickActiveProxy(groups)).toBeNull()
   })
 })
 

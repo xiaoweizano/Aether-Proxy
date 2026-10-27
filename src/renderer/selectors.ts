@@ -19,8 +19,17 @@ function isSelector(type: string): boolean {
 }
 
 /**
- * 当前真正生效的节点：优先第一个有 `now` 的手选组（Selector），
- * 否则退回第一个有 `now` 的组（URLTest / fallback 的自动结果）。
+ * 组的有效选中节点：自动组（URLTest / Fallback / LoadBalance）里 `PUT /proxies/<group>`
+ * 只写 `fixed`，`now` 仍是自动测速的结果。用户钉住节点后，界面必须显示 `fixed`，
+ * 否则点击「成功但选中态永不出现」。空串与缺失等价，都退回内核给的 `now`。
+ */
+export function effectiveSelection(group: Pick<ProxyGroupView, 'now' | 'fixed'>): string {
+  return group.fixed !== undefined && group.fixed !== '' ? group.fixed : group.now
+}
+
+/**
+ * 当前真正生效的节点：优先第一个有有效选中的手选组（Selector），
+ * 否则退回第一个有有效选中的组（URLTest / fallback 的自动结果或钉选结果）。
  *
  * `GLOBAL` 不参与：它只在全局模式下有意义，且内核总是把它排在用户策略组前面，
  * 普通配置下会让「当前节点」显示成 GLOBAL / DIRECT。
@@ -29,14 +38,14 @@ function isSelector(type: string): boolean {
  * 折算进这个字段，渲染层不再访问上游原文。
  */
 export function pickActiveProxy(groups: ProxyGroupView[]): ActiveProxy | null {
-  const selected = groups.filter(
-    (group) => group.now !== '' && group.name.toUpperCase() !== 'GLOBAL'
-  )
+  const selected = groups
+    .map((group) => ({ group, node: effectiveSelection(group) }))
+    .filter((entry) => entry.node !== '' && entry.group.name.toUpperCase() !== 'GLOBAL')
   if (selected.length === 0) return null
-  const group = selected.find((entry) => isSelector(entry.type)) ?? selected[0]
-  if (group === undefined) return null
-  const node = group.nodes.find((entry) => entry.name === group.now)
-  const active: ActiveProxy = { group: group.name, node: group.now }
+  const picked = selected.find((entry) => isSelector(entry.group.type)) ?? selected[0]
+  if (picked === undefined) return null
+  const node = picked.group.nodes.find((entry) => entry.name === picked.node)
+  const active: ActiveProxy = { group: picked.group.name, node: picked.node }
   if (node?.delay !== undefined) active.delay = node.delay
   return active
 }
