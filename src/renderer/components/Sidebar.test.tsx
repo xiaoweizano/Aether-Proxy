@@ -75,6 +75,30 @@ describe('Sidebar', () => {
     expect(onNavigate).toHaveBeenCalledWith('connections')
   })
 
+  it('导航项可用键盘到达并激活（Tab + Enter / Space）', async () => {
+    const onNavigate = vi.fn()
+    render(<Sidebar status={readyStatus} page="dashboard" onNavigate={onNavigate} />)
+    const user = userEvent.setup()
+
+    // 逐个 Tab 直到焦点落到「连接」，确认它是原生可聚焦元素而不是 div。
+    const target = document.querySelector<HTMLButtonElement>(
+      `button[data-page="connections"]`
+    )
+    expect(target).not.toBeNull()
+    let guard = 0
+    while (document.activeElement !== target && guard < 40) {
+      await user.tab()
+      guard += 1
+    }
+    expect(document.activeElement).toBe(target)
+
+    await user.keyboard('{Enter}')
+    expect(onNavigate).toHaveBeenLastCalledWith('connections')
+
+    await user.keyboard(' ')
+    expect(onNavigate).toHaveBeenLastCalledWith('connections')
+  })
+
   it('非 ready 时导航项仍可用', async () => {
     const onNavigate = vi.fn()
     const { getByRole } = render(

@@ -86,6 +86,7 @@ function NavGroup({ label, items, page, onNavigate }: NavGroupProps) {
           <button
             key={item.page}
             type="button"
+            data-page={item.page}
             className={active ? 'nav-item active' : 'nav-item'}
             aria-current={active ? 'page' : undefined}
             onClick={() => {
