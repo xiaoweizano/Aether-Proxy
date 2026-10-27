@@ -13,7 +13,7 @@ export interface LogsOptions {
   secret: string
   /** 测试注入；缺省用 `ws` 并带 Bearer 头。 */
   connect?: StatsConnect
-  /** 计数窗口，默认 5 分钟。 */
+  /** 计数窗口，默认 60 分钟（见 DEFAULT_WINDOW_MS 的注释）。 */
   windowMs?: number
   /** 环形缓冲条数，默认 200（错误面板与「查看日志」页用）。 */
   maxEntries?: number
@@ -31,7 +31,12 @@ export interface LogEntry {
   payload: string
 }
 
-const DEFAULT_WINDOW_MS = 5 * 60_000
+/**
+ * 窗口长度按规范定：`connection-inspector` 的 SHALL 写的是「最近 60 分钟 N 次失败」。
+ * （`openspec/.../design.md` 与 `tasks.md` 写的是 5 分钟，是文档内的旧说法；
+ * 规格是权威，这里以 60 分钟为准。）
+ */
+const DEFAULT_WINDOW_MS = 60 * 60_000
 const DEFAULT_MAX_ENTRIES = 200
 
 interface ParsedLogFrame {
@@ -76,11 +81,15 @@ function parseFrame(text: string): ParsedLogFrame | null {
 /**
  * `/logs?level=warning` 采集器，同时维护两样东西：
  * - `recent()`：日志尾巴的环形缓冲（默认 200 条），界面错误面板与「查看日志」页用；
- * - `counts()`：拨号失败的滚动窗口计数（默认 5 分钟），保留独立的时间戳队列。
+ * - `counts()`：拨号失败的滚动窗口计数（默认 60 分钟），保留独立的时间戳队列。
  *
  * 计数不依赖展示缓冲：`maxEntries` 淘汰日志条目不能把窗口内的真实失败次数一起抹掉。
  * 计数在 `counts()` 读取时按注入时钟惰性滚动，拨号失败到达时同步回调 `onCounts`，
- * 因此 5 秒 SLA 内消费方（回调或轮询）一定能看到。
+ * 因此「失败到达后 5 秒内可见」对回调与轮询两条路径都成立。
+ *
+ * 注意：`onCounts` **只在有新失败时触发**，窗口到期不会有通知。只订阅推送的消费方
+ * 会一直显示过期的非零计数（失败滚出窗口后没有帧到达就不会有推送），所以消费方
+ * 必须同时以不超过窗口的量级轮询 `counts()`；这也是 `logsCountsGet` 存在的原因。
  *
  * 生命周期与 `ConnectionsCollector` 一致：`start()` 幂等，断线自动重连，`stop()` 关闭
  * 连接并取消重连。任何日志与推送都不含 secret；连接错误直接吞掉（内核重启期间会周期性发生）。

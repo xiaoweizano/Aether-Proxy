@@ -5,7 +5,7 @@ import type { WebSocketLike } from './ws'
 
 const URL = 'ws://127.0.0.1:9090/logs?level=warning'
 const SECRET = 's3cret-token'
-const WINDOW = 5 * 60_000
+const WINDOW = 60 * 60_000
 
 /** 2026-10-27 从真实的 vendored 内核抓到的拨号失败原文（TCP 版）。 */
 const DIAL_TCP =
@@ -176,10 +176,10 @@ describe('LogsCollector 计数与缓冲', () => {
     c.set(1_000 + WINDOW - 1)
     expect(h.collector.counts().recent).toBe(2)
 
-    c.set(1_000 + WINDOW) // 第一条恰好满 5 分钟，掉出
+    c.set(1_000 + WINDOW) // 第一条恰好满窗口，掉出
     expect(h.collector.counts().recent).toBe(1)
 
-    c.set(2_000 + WINDOW) // 第二条也满 5 分钟
+    c.set(2_000 + WINDOW) // 第二条也满窗口
     expect(h.collector.counts().recent).toBe(0)
     // 计数滚出不影响日志尾巴本身。
     expect(h.collector.recent()).toHaveLength(2)
@@ -264,6 +264,38 @@ describe('LogsCollector 计数与缓冲', () => {
       DIAL_TCP,
       OTHER_WARNING
     ])
+  })
+
+  it('空字符串的 type / payload 按坏帧丢弃，不计数也不进缓冲', () => {
+    const c = clock(1_000)
+    const h = harness({ now: c.now })
+    h.collector.start()
+
+    h.socket().push(JSON.stringify({ type: '', payload: DIAL_TCP }))
+    h.socket().push(JSON.stringify({ type: 'warning', payload: '' }))
+    h.socket().push(JSON.stringify({ type: '', payload: '' }))
+
+    expect(h.collector.counts().recent).toBe(0)
+    expect(h.collector.recent()).toEqual([])
+
+    // 真事件仍然工作：坏帧没有把采集器弄坏。
+    h.push('warning', DIAL_TCP)
+    expect(h.collector.counts().recent).toBe(1)
+  })
+
+  it('非法的 windowMs / maxEntries 回落到默认值', () => {
+    const bad = [0, -1, Number.NaN, Number.POSITIVE_INFINITY]
+    for (const value of bad) {
+      const windowMs = harness({ windowMs: value }).collector.counts().windowMs
+      expect(windowMs).toBe(WINDOW)
+    }
+    for (const value of [0, -5, Number.NaN]) {
+      const h = harness({ now: clock(1_000).now, maxEntries: value })
+      h.collector.start()
+      // 默认 200：推 201 条，尾巴长度仍是 200。
+      for (let i = 0; i < 201; i += 1) h.push('warning', OTHER_WARNING)
+      expect(h.collector.recent()).toHaveLength(200)
+    }
   })
 
   it('拨号失败到达时同步推送计数（无定时器：界面轮询/回调都能在 SLA 内看到）', () => {
