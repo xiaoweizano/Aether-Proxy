@@ -1,4 +1,8 @@
-import { WebSocket } from 'ws'
+import { connectWithWs, toText, type StatsConnect, type WebSocketLike } from './ws'
+
+// 连接抽象已抽到 ws.ts；这里保留再导出，既有 import 路径（bootstrap / 测试）不变。
+export { toText }
+export type { StatsConnect, WebSocketLike }
 
 /** 单个采样点：毫秒级瞬时速率（字节/秒），与 mihomo `/traffic` 推送一一对应。 */
 export interface TrafficSample {
@@ -12,22 +16,6 @@ export interface TrafficSnapshot extends TrafficSample {
   downTotal: number
   history: TrafficSample[]
 }
-
-/**
- * 只声明采集器用到的三个事件。Node 内建 WebSocket 不支持自定义头，所以真实连接用
- * `ws`；测试注入的假连接实现同一接口即可。
- */
-export interface WebSocketLike {
-  on(event: 'message', cb: (data: unknown) => void): void
-  on(event: 'close', cb: () => void): void
-  on(event: 'error', cb: (err: unknown) => void): void
-  close(): void
-}
-
-export type StatsConnect = (
-  url: string,
-  options: { headers: Record<string, string> }
-) => WebSocketLike
 
 export interface StatsOptions {
   /** 形如 `ws://127.0.0.1:<controllerPort>/traffic`；只在主进程内存在。 */
@@ -43,21 +31,6 @@ export interface StatsOptions {
 
 const DEFAULT_MAX_SAMPLES = 60
 const DEFAULT_RECONNECT_MS = 2000
-
-/** `ws` 的 WebSocket 结构上满足 WebSocketLike，但 RawData 与 unknown 需要一次收敛。 */
-const connectWithWs: StatsConnect = (url, options) =>
-  new WebSocket(url, { headers: options.headers }) as unknown as WebSocketLike
-
-/** ws 的 message 事件给 string 或 Buffer/ArrayBuffer；上游只发 JSON 文本。 */
-function toText(data: unknown): string | null {
-  if (typeof data === 'string') return data
-  if (Buffer.isBuffer(data)) return data.toString('utf8')
-  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8')
-  if (ArrayBuffer.isView(data)) {
-    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8')
-  }
-  return null
-}
 
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)

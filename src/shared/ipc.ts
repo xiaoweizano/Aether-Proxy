@@ -25,6 +25,40 @@ export interface TrafficView {
   downTotal: number
 }
 
+/** 主进程规范化后的单条连接；渲染层只读，不含 secret 或 controller 地址。 */
+export interface ConnectionView {
+  /** 内核给的不透明 id，渲染层只当 key 用。 */
+  id: string
+  /** 建立时刻（毫秒）。解析失败时为 null。 */
+  startedAt: number | null
+  /** 已反转：最外层策略组在前，实际出站在后。空数组表示内核没给。 */
+  chains: string[]
+  rule: string | null
+  rulePayload: string | null
+  host: string | null
+  process: string | null
+  processPath: string | null
+  network: string | null
+  destinationIp: string | null
+  destinationPort: string | null
+  sourceIp: string | null
+  sourcePort: string | null
+  upload: number
+  download: number
+  /** 已离开快照：界面降权显示，60 秒后移除。 */
+  ended: boolean
+  /** 离开快照的时刻（毫秒）；活跃时为 null。 */
+  endedAt: number | null
+}
+
+export interface ConnectionsSnapshot {
+  items: ConnectionView[]
+  /** 内核上报的内存（字节）；缺省为 null，不得填 0。 */
+  memory: number | null
+  /** 快照生成时刻（主进程时钟，毫秒）。 */
+  at: number
+}
+
 export interface ModeSetResult {
   ok: boolean
   status: number
