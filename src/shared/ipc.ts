@@ -63,7 +63,11 @@ export interface ConnectionsSnapshot {
 export interface DialFailureCounts {
   /** 最近 `windowMs` 内的拨号失败次数。 */
   recent: number
-  /** 窗口长度（毫秒），界面用它写「最近 5 分钟」。 */
+  /**
+   * 窗口长度（毫秒）。**界面必须由它生成文案**（默认 60 分钟 = 一小时），
+   * 不要照抄注释或设计稿里的分钟数——窗口改过一次，硬编码就会说谎。
+   * 另外计数只在「新的失败到达」时推送；失败滚出窗口没有推送，消费方必须轮询。
+   */
   windowMs: number
 }
 

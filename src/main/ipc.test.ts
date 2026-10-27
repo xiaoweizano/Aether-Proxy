@@ -567,6 +567,10 @@ describe('nodeSwitch', () => {
     ['node 为空串', { group: 'Proxy', node: '' }],
     ['group 只有空白', { group: '   ', node: 'HK-01' }],
     ['group 不是字符串', { group: 1, node: 'HK-01' }],
+    ['group 是单个点（URL 规范化会折叠成根路径）', { group: '.', node: 'HK-01' }],
+    ['group 是双点', { group: '..', node: 'HK-01' }],
+    ['group 超过长度上限', { group: 'a'.repeat(257), node: 'HK-01' }],
+    ['node 超过长度上限', { group: 'Proxy', node: 'n'.repeat(257) }],
     ['入参本身是字符串', 'Proxy']
   ])('非法入参（%s）返回 ok:false 而不是抛错，且不触碰内核', async (_label, arg) => {
     const h = await harness()

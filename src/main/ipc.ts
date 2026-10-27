@@ -48,11 +48,23 @@ function isMode(value: unknown): value is Mode {
  * 节点切换入参校验：两个字段都必须是非空字符串（只有空白也算空）。
  * 返回原值而不是 trim 后的值，避免悄悄改掉合法的节点名。
  */
+/** 组名与节点名的长度上限：正常订阅里没有这么长的名字，超长只可能是畸形输入。 */
+const MAX_PROXY_NAME_LENGTH = 256
+
+/**
+ * 节点切换入参校验：两个字段都必须是非空字符串（只有空白也算空）。
+ * 返回原值而不是 trim 后的值，避免悄悄改掉合法的节点名。
+ *
+ * `.` 与 `..` 必须拒绝：`encodeURIComponent` 不会转义点号，拼进 `/proxies/..` 后
+ * 会被 URL 规范化折叠成 `/`，请求打到 controller 根路径而不是换节点。
+ */
 function parseNodeSwitch(value: unknown): NodeSwitchInput | null {
   if (typeof value !== 'object' || value === null) return null
   const { group, node } = value as { group?: unknown; node?: unknown }
   if (typeof group !== 'string' || group.trim() === '') return null
   if (typeof node !== 'string' || node.trim() === '') return null
+  if (group.length > MAX_PROXY_NAME_LENGTH || node.length > MAX_PROXY_NAME_LENGTH) return null
+  if (group === '.' || group === '..') return null
   return { group, node }
 }
 
