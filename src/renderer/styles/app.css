@@ -780,3 +780,25 @@ body {
   color: var(--text-faint);
   font-size: var(--fs-micro);
 }
+
+/* ── 后续计划的占位页（节点 / 连接 / 设置 / 日志） ────── */
+.placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+
+.placeholder-card {
+  width: 100%;
+  max-width: 440px;
+  padding: var(--space-6);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.placeholder-note {
+  margin: var(--space-3) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+}

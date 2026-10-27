@@ -100,5 +100,21 @@ export const copy = {
   },
   modeSwitchFailed: '模式切换失败，请重试',
   proxyToggleFailed: '系统代理切换失败，请重试',
+  /** 还没落地的页面共用一句占位说明，明确指向后续计划而不是假装功能已存在。 */
+  pages: {
+    planned: '后续计划',
+    nodes: {
+      note: '节点页将按策略组列出节点与最近延迟，并支持切换。这一页在后续计划中实现。'
+    },
+    connections: {
+      note: '连接页将按进程、域名、命中规则与出站链路列出一条条连接。这一页在后续计划中实现。'
+    },
+    settings: {
+      note: '设置页还没有实现，将在后续计划中补上。'
+    },
+    logs: {
+      note: '日志页将展示内核日志。这一页在后续计划中实现。'
+    }
+  },
   version: 'Version 0.1.0'
 } as const

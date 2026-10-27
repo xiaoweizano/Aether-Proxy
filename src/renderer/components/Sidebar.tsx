@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { AppStatusView } from '../../shared/ipc'
 import { copy } from '../copy'
+import type { Page } from '../page'
 import { statusTone } from '../status'
 
 function DashboardIcon() {
@@ -51,46 +52,62 @@ function LogsIcon() {
   )
 }
 
-interface NavItem {
+interface NavEntry {
+  page: Page
   label: string
   icon: ReactNode
-  active?: boolean
 }
 
-const primaryNav: NavItem[] = [
-  { label: copy.nav.dashboard, icon: <DashboardIcon />, active: true },
-  { label: copy.nav.nodes, icon: <NodesIcon /> },
-  { label: copy.nav.connections, icon: <ConnectionsIcon /> }
+const primaryNav: NavEntry[] = [
+  { page: 'dashboard', label: copy.nav.dashboard, icon: <DashboardIcon /> },
+  { page: 'nodes', label: copy.nav.nodes, icon: <NodesIcon /> },
+  { page: 'connections', label: copy.nav.connections, icon: <ConnectionsIcon /> }
 ]
 
-const secondaryNav: NavItem[] = [
-  { label: copy.nav.settings, icon: <SettingsIcon /> },
-  { label: copy.nav.logs, icon: <LogsIcon /> }
+const secondaryNav: NavEntry[] = [
+  { page: 'settings', label: copy.nav.settings, icon: <SettingsIcon /> },
+  { page: 'logs', label: copy.nav.logs, icon: <LogsIcon /> }
 ]
 
-function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
+interface NavGroupProps {
+  label: string
+  items: NavEntry[]
+  page: Page
+  onNavigate(page: Page): void
+}
+
+/** 导航项是按钮而非链接：这是窗口内的视图切换，没有 URL 可去。 */
+function NavGroup({ label, items, page, onNavigate }: NavGroupProps) {
   return (
     <nav className="nav" aria-label={label}>
-      {items.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          className={item.active === true ? 'nav-item active' : 'nav-item'}
-          aria-current={item.active === true ? 'page' : undefined}
-        >
-          {item.icon}
-          {item.label}
-        </button>
-      ))}
+      {items.map((item) => {
+        const active = item.page === page
+        return (
+          <button
+            key={item.page}
+            type="button"
+            className={active ? 'nav-item active' : 'nav-item'}
+            aria-current={active ? 'page' : undefined}
+            onClick={() => {
+              onNavigate(item.page)
+            }}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        )
+      })}
     </nav>
   )
 }
 
 export interface SidebarProps {
   status: AppStatusView | null
+  page: Page
+  onNavigate(page: Page): void
 }
 
-export function Sidebar({ status }: SidebarProps) {
+export function Sidebar({ status, page, onNavigate }: SidebarProps) {
   // 版本点重复顶栏的状态，只是低一级：ready 绿、失败红、其余灰。
   const tone = statusTone(status)
   return (
@@ -101,9 +118,19 @@ export function Sidebar({ status }: SidebarProps) {
         </span>
         <span className="brand-word">{copy.app.name}</span>
       </div>
-      <NavGroup label={copy.nav.labelPrimary} items={primaryNav} />
+      <NavGroup
+        label={copy.nav.labelPrimary}
+        items={primaryNav}
+        page={page}
+        onNavigate={onNavigate}
+      />
       <div className="sidebar-grow" />
-      <NavGroup label={copy.nav.labelSecondary} items={secondaryNav} />
+      <NavGroup
+        label={copy.nav.labelSecondary}
+        items={secondaryNav}
+        page={page}
+        onNavigate={onNavigate}
+      />
       <div className="sidebar-meta">
         <span className={`sidebar-meta-dot ${tone}`} aria-hidden="true" />
         {copy.version}

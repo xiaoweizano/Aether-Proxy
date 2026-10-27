@@ -6,6 +6,8 @@ import { ModeSwitch } from './ModeSwitch'
 
 export interface TopBarProps {
   status: AppStatusView | null
+  /** 当前页面的标题；顶栏是外壳的一部分，所以它跟着侧栏切换而不是每页各自画 h1。 */
+  title?: string
   /** 模式或代理状态变化后请求父级重新拉取状态。 */
   onRefresh?(): void
 }
@@ -17,7 +19,7 @@ function statusLine(status: AppStatusView | null): { label: string; tone: Status
   return { label: copy.status.disconnected, tone }
 }
 
-export function TopBar({ status, onRefresh }: TopBarProps) {
+export function TopBar({ status, title, onRefresh }: TopBarProps) {
   const [proxyError, setProxyError] = useState<string | null>(null)
   const [proxyPending, setProxyPending] = useState(false)
   const line = statusLine(status)
@@ -47,7 +49,7 @@ export function TopBar({ status, onRefresh }: TopBarProps) {
 
   return (
     <header className="topbar">
-      <h1 className="page-title">{copy.dashboard.title}</h1>
+      <h1 className="page-title">{title ?? copy.dashboard.title}</h1>
       <div className={`topbar-status ${line.tone}`}>
         <span className="status-dot" aria-hidden="true" />
         {line.label}
