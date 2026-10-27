@@ -99,6 +99,23 @@ export class CoreLink {
     }
   }
 
+  /**
+   * 切换策略组里的节点：`PUT /proxies/<url-encoded group>`，body `{ "name": node }`，
+   * 成功返回 204。组名放在路径段里，必须整体编码，否则名字里的斜杠会拼出别的路径。
+   * 与 `setMode` 一致：失败不抛错，渲染层据此回滚而不是看到主进程崩溃。
+   */
+  async switchNode(group: string, node: string): Promise<ModeResult> {
+    try {
+      const res = await this.request(`/proxies/${encodeURIComponent(group)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: node })
+      })
+      return { ok: res.ok, status: res.status }
+    } catch {
+      return { ok: false, status: 0 }
+    }
+  }
+
   async memory(): Promise<CoreMemory> {
     const body = await this.getJson<{ inuse?: unknown }>('/memory')
     return { inuse: typeof body.inuse === 'number' ? body.inuse : 0 }

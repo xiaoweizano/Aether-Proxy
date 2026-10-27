@@ -18,6 +18,9 @@ import type { PlatformProxy } from './proxy/platform'
 import { readSettings, writeSettings } from './settings'
 import { CoreLink } from './core/link'
 import { TrafficCollector, type StatsConnect, type TrafficSnapshot } from './stats'
+import { ConnectionsCollector } from './connections'
+import { LogsCollector } from './logs'
+import type { ConnectionsSnapshot, DialFailureCounts } from '../shared/ipc'
 import type { Mode, CoreInfo } from '../shared/types'
 
 export interface BootstrapOptions {
@@ -37,6 +40,10 @@ export interface BootstrapOptions {
   ) => Promise<{ ok: boolean; output: string }>
   /** 测试注入；缺省时用 `ws` 建立真实连接。 */
   statsConnect?: StatsConnect
+  /** `/connections` 采集器的测试注入；缺省时用 `ws` 建立真实连接。 */
+  connectionsConnect?: StatsConnect
+  /** `/logs` 采集器的测试注入；缺省时用 `ws` 建立真实连接。 */
+  logsConnect?: StatsConnect
   /**
    * 退出取消信号。首次启动还没返回 context 时，上层没有 stopAll 可用，
    * 只能靠它叫停：置位后所有 await 边界放弃，并停掉可能已经 spawn 的内核。
@@ -47,6 +54,13 @@ export interface BootstrapOptions {
    * 在创建采集器时直接接上；窗口侧再调一次 `stats.start()` 只会替换成等价的回调。
    */
   onStatsSample?: (sample: TrafficSnapshot) => void
+  /**
+   * 连接快照回调。窗口销毁期间采集不能停（已结束连接要保留 60 秒），
+   * 所以回调由 bootstrap 持有，窗口重建时再由装配层替换成新窗口的推送函数。
+   */
+  onConnectionsSnapshot?: (snapshot: ConnectionsSnapshot) => void
+  /** 拨号失败计数回调；只在有新失败到达时触发（到期没有通知，见 logs.ts）。 */
+  onLogCounts?: (counts: DialFailureCounts) => void
 }
 
 export type AppStatus = 'no-config' | 'ready' | 'config-error' | 'core-error' | 'in-use'
@@ -75,6 +89,13 @@ export interface AppContext {
   coreInfo: CoreInfo | null
   /** `/traffic` 采集器；内核停止或重启失败后为 null。停止由装配层与 stopAll 负责。 */
   stats: TrafficCollector | null
+  /**
+   * `/connections` 采集器；内核未运行时为 null。
+   * 与 stats 不同：窗口销毁时**不停止**，否则重开窗口会丢掉 60 秒内的已结束连接。
+   */
+  connections: ConnectionsCollector | null
+  /** `/logs` 采集器；内核未运行时为 null。同样不随窗口销毁停止。 */
+  logs: LogsCollector | null
   /** 配置摘要（供状态页显示节点/策略组数量）；无配置时为 null。 */
   profile: { nodeCount: number; groupCount: number } | null
   /**
@@ -202,6 +223,34 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     return stats
   }
 
+  /**
+   * 连接采集器与 stats 一样按会话复用：重启内核不改变 controller 地址与 secret，
+   * 已有缓冲（含 60 秒内已结束的连接）必须保留。窗口销毁时**不停止**，
+   * 由装配层在重建窗口时替换回调。
+   */
+  let connections: ConnectionsCollector | null = null
+  const ensureConnections = (controllerPort: number, secret: string): ConnectionsCollector => {
+    connections ??= new ConnectionsCollector({
+      url: `ws://127.0.0.1:${controllerPort}/connections?interval=500`,
+      secret,
+      ...(opts.connectionsConnect === undefined ? {} : { connect: opts.connectionsConnect })
+    })
+    connections.start(opts.onConnectionsSnapshot)
+    return connections
+  }
+
+  /** 日志采集器同上：计数窗口跨窗口重建与内核重启都要连续。 */
+  let logs: LogsCollector | null = null
+  const ensureLogs = (controllerPort: number, secret: string): LogsCollector => {
+    logs ??= new LogsCollector({
+      url: `ws://127.0.0.1:${controllerPort}/logs?level=warning`,
+      secret,
+      ...(opts.logsConnect === undefined ? {} : { connect: opts.logsConnect })
+    })
+    logs.start(opts.onLogCounts)
+    return logs
+  }
+
   // 用户期望的代理开关独立于所有权快照：proxy-state.json 正常退出时会被删除，
   // 不能用来回答「上次代理是否开着」。
   const settings = await readSettings(settingsFile)
@@ -252,6 +301,19 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       // stop 不抛错；这里只防御性地不让崩溃处理再失败一次。
     }
     ctx.stats = null
+    // 连接与日志采集器同样要停：内核没了，重连定时器不能留着拖住退出。
+    try {
+      ctx.connections?.stop()
+    } catch {
+      // 同上：清理路径不把二次异常升级成致命错误。
+    }
+    ctx.connections = null
+    try {
+      ctx.logs?.stop()
+    } catch {
+      // 同上。
+    }
+    ctx.logs = null
     ctx.supervisor = supervisor
     void (async () => {
       // 内核死了，系统代理还指向 mixed-port 会让整机断网：与 stopAll 一样先还原。
@@ -381,6 +443,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       // 只有内核真的起来之后才有 /traffic 可连；采集器在这里创建并开始采样，
       // 消费者（窗口推送）由装配层通过 onStatsSample 提供。
       ensureStats(prepared.controllerPort, prepared.secret)
+      // 连接与日志采集器同理；它们的回调在窗口销毁期间只丢弃推送，采集本身继续。
+      ensureConnections(prepared.controllerPort, prepared.secret)
+      ensureLogs(prepared.controllerPort, prepared.secret)
       return { ok: true, prepared, info }
     } catch (err) {
       console.warn('[aether] 内核启动失败：', describeError(err))
@@ -400,6 +465,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     link?: CoreLink | null
     coreInfo?: CoreInfo | null
     stats?: TrafficCollector | null
+    connections?: ConnectionsCollector | null
+    logs?: LogsCollector | null
     profile?: Prepared['profile']
   }
 
@@ -464,6 +531,11 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         // 下次重启成功后 ensureStats 会复用它（连同已有缓冲）。
         ctx.stats?.stop()
         ctx.stats = null
+        // 连接与日志采集器同一处理：停掉 ws，避免对不存在的内核无限重连。
+        ctx.connections?.stop()
+        ctx.connections = null
+        ctx.logs?.stop()
+        ctx.logs = null
         // prepare 失败时 supervisor 可能已被替换（配置有误）；同步给调用方与 stopAll。
         ctx.supervisor = activeSupervisor
 
@@ -501,6 +573,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       ctx.proxyServer = prepared.proxyServer
       ctx.supervisor = prepared.supervisor
       ctx.stats = ensureStats(prepared.controllerPort, prepared.secret)
+      ctx.connections = ensureConnections(prepared.controllerPort, prepared.secret)
+      ctx.logs = ensureLogs(prepared.controllerPort, prepared.secret)
       await ctx.onCoreRestarted(info)
 
       // 重启后内核按 runtime.yaml 的模式启动；把本会话里用户选过的模式补回去。
@@ -557,6 +631,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       link: over.link ?? null,
       coreInfo: over.coreInfo ?? null,
       stats: over.stats ?? null,
+      connections: over.connections ?? null,
+      logs: over.logs ?? null,
       profile: over.profile ?? null,
       restartCore: async () => {
         throw new Error('内核未运行，无法重启')
@@ -592,6 +668,16 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
           ctx.stats?.stop()
         } catch {
           // stop 不抛错；这里只防御性地不把清理失败算进致命错误。
+        }
+        try {
+          ctx.connections?.stop()
+        } catch {
+          // 同上。
+        }
+        try {
+          ctx.logs?.stop()
+        } catch {
+          // 同上。
         }
         try {
           await clearCoreState(coreStateFile)
@@ -671,6 +757,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     link: result.prepared.link,
     coreInfo: result.info,
     stats,
+    connections,
+    logs,
     profile: result.prepared.profile
   })
 }

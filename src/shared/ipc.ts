@@ -72,6 +72,18 @@ export interface ModeSetResult {
   status: number
 }
 
+/** 节点切换入参；`group` 是策略组名，`node` 是该组内的节点名。 */
+export interface NodeSwitchInput {
+  group: string
+  node: string
+}
+
+/** 与 `ModeSetResult` 同形：内核状态码，传输失败为 0。 */
+export interface NodeSwitchResult {
+  ok: boolean
+  status: number
+}
+
 export interface SimpleResult {
   ok: boolean
   message?: string
@@ -109,7 +121,13 @@ export const IPC = {
   coreRestart: 'core:restart',
   configImport: 'config:import',
   configPickImport: 'config:pick-import',
-  statsPush: 'app:stats'
+  statsPush: 'app:stats',
+  connectionsGet: 'connections:get',
+  connectionsPush: 'connections:push',
+  logsCountsGet: 'logs:counts',
+  logsCountsPush: 'logs:counts-push',
+  nodeSwitch: 'proxies:switch',
+  configOpenDir: 'config:open-dir'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
@@ -126,4 +144,25 @@ export interface AetherApi {
   importConfig(): Promise<PickImportResult>
   /** 订阅流量推送；返回取消订阅函数。 */
   onStats(cb: (sample: StatsSample) => void): () => void
+
+  /** 连接缓冲的当前快照；窗口重建后用它补首屏。 */
+  getConnections(): Promise<ConnectionsSnapshot>
+  /** 订阅每次内核快照；返回取消订阅函数。窗口销毁期间采集不中断，只是没有推送。 */
+  onConnections(cb: (snapshot: ConnectionsSnapshot) => void): () => void
+
+  /**
+   * 拨号失败计数的惰性滚动值；内核未运行（没有计数来源）时为 null。
+   *
+   * **必须与 `onLogCounts` 一起用，而且必须轮询**：推送只在**新失败到达**时触发，
+   * 失败滚出窗口时没有任何回调。只订阅推送会让界面无限期显示过期的非零计数。
+   * 建议的用法是订阅推送负责即时更新，同时以不超过窗口量级的间隔调本方法兜底。
+   */
+  getLogCounts(): Promise<DialFailureCounts | null>
+  /** 订阅新失败到达时的计数；到期不会推送，见 `getLogCounts` 的注释。 */
+  onLogCounts(cb: (counts: DialFailureCounts) => void): () => void
+
+  /** 在指定策略组里切换节点；失败只回 `{ok:false}`，不抛错。 */
+  switchNode(input: NodeSwitchInput): Promise<NodeSwitchResult>
+  /** 打开主进程自己的配置目录；不接受路径参数。 */
+  openConfigDir(): Promise<SimpleResult>
 }

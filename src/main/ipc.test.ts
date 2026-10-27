@@ -10,7 +10,11 @@ import type { SystemProxyController } from './proxy/controller'
 import type { ProxyOwnership } from './proxy/ownership'
 import type { CoreLink, ProxiesResponse } from './core/link'
 import { CoreLink as RealCoreLink } from './core/link'
+import type { WebSocketLike } from './ws'
+import { ConnectionsCollector } from './connections'
+import { LogsCollector } from './logs'
 import { IPC } from '../shared/ipc'
+import type { ConnectionsSnapshot, DialFailureCounts } from '../shared/ipc'
 import {
   buildStatusView,
   registerIpcHandlers,
@@ -57,6 +61,30 @@ async function invoke(ipc: FakeIpc, channel: string, ...args: unknown[]): Promis
   return handler({}, ...args)
 }
 
+/** 采集器测试用的最小 WS 替身：记录消息回调，允许手动推帧。 */
+class FakeSocket implements WebSocketLike {
+  private readonly messages: ((data: unknown) => void)[] = []
+  closed = false
+
+  on(event: 'message', cb: (data: unknown) => void): void
+  on(event: 'close', cb: () => void): void
+  on(event: 'error', cb: (err: unknown) => void): void
+  on(
+    event: 'message' | 'close' | 'error',
+    cb: ((data: unknown) => void) | (() => void) | ((err: unknown) => void)
+  ): void {
+    if (event === 'message') this.messages.push(cb as (data: unknown) => void)
+  }
+
+  close(): void {
+    this.closed = true
+  }
+
+  push(data: unknown): void {
+    for (const cb of this.messages) cb(data)
+  }
+}
+
 interface FetchedCall {
   url: string
   init: RequestInit | undefined
@@ -89,6 +117,9 @@ async function harness(options: {
   proxyServer?: string | null
   linkStatus?: number | null
   pickImportFile?: () => Promise<string | null>
+  connections?: ConnectionsCollector | null
+  logs?: LogsCollector | null
+  openPath?: (target: string) => Promise<string>
 } = {}): Promise<Harness> {
   const dir = await mkdtemp(path.join(tmpdir(), 'aether-ipc-'))
   const controller = {
@@ -118,6 +149,8 @@ async function harness(options: {
     profile: { nodeCount: 3, groupCount: 1 },
     link,
     stats: null,
+    connections: options.connections ?? null,
+    logs: options.logs ?? null,
     setMode(mode) {
       ctx.mode = mode
     },
@@ -146,7 +179,8 @@ async function harness(options: {
   const ipc = fakeIpc()
   const deps = {
     settingsFile: path.join(dir, 'settings.json'),
-    ...(options.pickImportFile === undefined ? {} : { pickImportFile: options.pickImportFile })
+    ...(options.pickImportFile === undefined ? {} : { pickImportFile: options.pickImportFile }),
+    ...(options.openPath === undefined ? {} : { openPath: options.openPath })
   }
   registerIpcHandlers(ipc, ctx, deps)
   return { dir, ctx, ipc, deps, controller, supervisor, stopAll }
@@ -403,6 +437,207 @@ describe('coreRestart', () => {
   })
 })
 
+describe('connectionsGet', () => {
+  it('返回采集器快照，序列化结果不含 secret 与 controller 端口', async () => {
+    const socket = new FakeSocket()
+    const connections = new ConnectionsCollector({
+      url: 'ws://127.0.0.1:9090/connections?interval=500',
+      secret: 'top-secret-token',
+      connect: () => socket
+    })
+    const h = await harness({ connections })
+    connections.start()
+    socket.push(
+      JSON.stringify({
+        memory: 28_000,
+        connections: [
+          {
+            id: 'abc',
+            metadata: {
+              host: 'example.com',
+              process: 'curl.exe',
+              network: 'tcp',
+              destinationPort: '443'
+            },
+            upload: 1,
+            download: 2,
+            start: '2026-10-27T11:07:07.5185055+08:00',
+            chains: ['DIRECT'],
+            rule: 'Match',
+            rulePayload: ''
+          }
+        ]
+      })
+    )
+
+    const snapshot = (await invoke(h.ipc, IPC.connectionsGet)) as ConnectionsSnapshot
+    expect(snapshot.memory).toBe(28_000)
+    expect(snapshot.items).toHaveLength(1)
+    expect(snapshot.items[0]).toMatchObject({
+      id: 'abc',
+      host: 'example.com',
+      process: 'curl.exe',
+      chains: ['DIRECT']
+    })
+    const json = JSON.stringify(snapshot)
+    expect(json).not.toContain('top-secret-token')
+    expect(json).not.toContain('9090')
+    expect(json).not.toMatch(/secret|authorization|Bearer/i)
+
+    connections.stop()
+  })
+
+  it('无采集器时返回空快照，未知内存保持 null 而不是 0', async () => {
+    const h = await harness()
+    const snapshot = (await invoke(h.ipc, IPC.connectionsGet)) as ConnectionsSnapshot
+    expect(snapshot.items).toEqual([])
+    expect(snapshot.memory).toBeNull()
+    expect(typeof snapshot.at).toBe('number')
+  })
+})
+
+describe('logsCountsGet', () => {
+  it('返回 counts() 的惰性滚动结果：窗口到期后无需推送也能读到 0', async () => {
+    const socket = new FakeSocket()
+    let now = 1_000
+    const logs = new LogsCollector({
+      url: 'ws://127.0.0.1:9090/logs?level=warning',
+      secret: 'top-secret-token',
+      connect: () => socket,
+      windowMs: 60_000,
+      now: () => now
+    })
+    const h = await harness({ logs })
+    logs.start()
+    socket.push(
+      JSON.stringify({
+        type: 'warning',
+        payload:
+          '[TCP] dial Proxy (match Match/) 127.0.0.1:8608(curl.exe) --> example.com:80 error: refused'
+      })
+    )
+    expect(await invoke(h.ipc, IPC.logsCountsGet)).toEqual({ recent: 1, windowMs: 60_000 })
+
+    now += 60_000
+    // 失败滚出窗口时没有推送；渲染层必须靠轮询这条通道拿到降下来的计数。
+    expect(await invoke(h.ipc, IPC.logsCountsGet)).toEqual({ recent: 0, windowMs: 60_000 })
+
+    logs.stop()
+  })
+
+  it('无采集器时返回 null：没有计数来源，不能伪造 0', async () => {
+    const h = await harness()
+    expect(await invoke(h.ipc, IPC.logsCountsGet)).toBeNull()
+  })
+})
+
+describe('nodeSwitch', () => {
+  it('成功时 PUT /proxies/<group> 并返回内核状态码', async () => {
+    const h = await harness()
+    const { link, calls } = fakeLink(204)
+    h.ctx.link = link
+
+    expect(await invoke(h.ipc, IPC.nodeSwitch, { group: 'Proxy', node: 'HK-01' })).toEqual({
+      ok: true,
+      status: 204
+    })
+    expect(calls[0]?.url).toBe('http://127.0.0.1:9090/proxies/Proxy')
+    expect(calls[0]?.init?.method).toBe('PUT')
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ name: 'HK-01' })
+  })
+
+  it('组名做 URL 编码，避免把名字里的斜杠或查询串混进路径', async () => {
+    const h = await harness()
+    const { link, calls } = fakeLink(204)
+    h.ctx.link = link
+
+    await invoke(h.ipc, IPC.nodeSwitch, { group: '香港/01?x=1', node: 'HK-01' })
+    expect(calls[0]?.url).toBe(
+      `http://127.0.0.1:9090/proxies/${encodeURIComponent('香港/01?x=1')}`
+    )
+  })
+
+  it.each([
+    ['缺少入参', undefined],
+    ['null', null],
+    ['空对象', {}],
+    ['缺少 node', { group: 'Proxy' }],
+    ['缺少 group', { node: 'HK-01' }],
+    ['group 为空串', { group: '', node: 'HK-01' }],
+    ['node 为空串', { group: 'Proxy', node: '' }],
+    ['group 只有空白', { group: '   ', node: 'HK-01' }],
+    ['group 不是字符串', { group: 1, node: 'HK-01' }],
+    ['入参本身是字符串', 'Proxy']
+  ])('非法入参（%s）返回 ok:false 而不是抛错，且不触碰内核', async (_label, arg) => {
+    const h = await harness()
+    const { link, calls } = fakeLink(204)
+    h.ctx.link = link
+
+    await expect(invoke(h.ipc, IPC.nodeSwitch, arg)).resolves.toEqual({ ok: false, status: 0 })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('没有存活内核时返回 {ok:false,status:0}，不抛错', async () => {
+    const h = await harness({ linkStatus: null })
+    expect(await invoke(h.ipc, IPC.nodeSwitch, { group: 'Proxy', node: 'HK-01' })).toEqual({
+      ok: false,
+      status: 0
+    })
+  })
+
+  it('传输错误映射为 status 0，不向渲染层抛出', async () => {
+    const h = await harness()
+    const fn = (async () => {
+      throw new Error('ECONNREFUSED')
+    }) as unknown as typeof fetch
+    h.ctx.link = new RealCoreLink('http://127.0.0.1:9090', 'secret', fn)
+
+    await expect(
+      invoke(h.ipc, IPC.nodeSwitch, { group: 'Proxy', node: 'HK-01' })
+    ).resolves.toEqual({ ok: false, status: 0 })
+  })
+})
+
+describe('configOpenDir', () => {
+  it('只打开主进程的配置目录，忽略渲染层传入的任意路径', async () => {
+    const openPath = vi.fn(async (_target: string) => '')
+    const h = await harness({ openPath })
+
+    expect(
+      await invoke(h.ipc, IPC.configOpenDir, 'C:/Windows/System32', '../outside')
+    ).toEqual({ ok: true })
+    expect(openPath).toHaveBeenCalledTimes(1)
+    expect(openPath).toHaveBeenCalledWith(h.ctx.configDir)
+    expect(openPath).not.toHaveBeenCalledWith('C:/Windows/System32')
+  })
+
+  it('shell.openPath 返回非空错误串时返回可读消息，不回显路径', async () => {
+    const h = await harness({ openPath: async () => '拒绝访问：C:/secret/config' })
+    const result = (await invoke(h.ipc, IPC.configOpenDir)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBeTruthy()
+    expect(result.message).not.toContain('C:/secret')
+  })
+
+  it('打开目录抛错时返回 ok:false，不向渲染层抛异常', async () => {
+    const h = await harness({
+      openPath: async () => {
+        throw new Error('资源管理器不可用')
+      }
+    })
+    const result = (await invoke(h.ipc, IPC.configOpenDir)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBeTruthy()
+  })
+
+  it('没有注入打开目录能力时返回 ok:false', async () => {
+    const h = await harness()
+    const result = (await invoke(h.ipc, IPC.configOpenDir)) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBeTruthy()
+  })
+})
+
 describe('registerUnavailableHandlers', () => {
   it('装配失败时每个通道都有 handler，且不泄漏细节', async () => {
     const ipc = fakeIpc()
@@ -416,7 +651,13 @@ describe('registerUnavailableHandlers', () => {
       IPC.proxyDisable,
       IPC.coreRestart,
       IPC.configImport,
-      IPC.configPickImport
+      IPC.configPickImport,
+      IPC.connectionsGet,
+      IPC.connectionsPush,
+      IPC.logsCountsGet,
+      IPC.logsCountsPush,
+      IPC.nodeSwitch,
+      IPC.configOpenDir
     ]
     expect([...ipc.handlers.keys()].sort()).toEqual([...expected].sort())
 
@@ -424,12 +665,19 @@ describe('registerUnavailableHandlers', () => {
     expect(status.status).toBe('core-error')
     expect(await invoke(ipc, IPC.proxiesGet)).toEqual([])
     expect(await invoke(ipc, IPC.modeSet, 'global')).toEqual({ ok: false, status: 0 })
+    expect(await invoke(ipc, IPC.connectionsGet)).toMatchObject({ items: [], memory: null })
+    expect(await invoke(ipc, IPC.logsCountsGet)).toBeNull()
+    expect(await invoke(ipc, IPC.nodeSwitch, { group: 'P', node: 'N' })).toEqual({
+      ok: false,
+      status: 0
+    })
     for (const channel of [
       IPC.proxyEnable,
       IPC.proxyDisable,
       IPC.coreRestart,
       IPC.configImport,
-      IPC.configPickImport
+      IPC.configPickImport,
+      IPC.configOpenDir
     ]) {
       const result = (await invoke(ipc, channel, { sourcePath: 'x' })) as {
         ok: boolean
@@ -438,6 +686,9 @@ describe('registerUnavailableHandlers', () => {
       expect(result.ok).toBe(false)
       expect(result.message).not.toMatch(/[A-Za-z]:\\|secret|token/i)
     }
+    // 推送通道在主进程单向发送；不可用装配下也必须存在，误调用不会得到 "No handler"。
+    expect(await invoke(ipc, IPC.connectionsPush)).toBeUndefined()
+    expect(await invoke(ipc, IPC.logsCountsPush)).toBeUndefined()
   })
 })
 

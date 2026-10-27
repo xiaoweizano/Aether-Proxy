@@ -89,9 +89,12 @@ class FakeStatsSocket implements WebSocketLike {
   }
 
   push(up: number, down: number): void {
-    for (const cb of this.messages) {
-      cb(JSON.stringify({ up, down, upTotal: up * 10, downTotal: down * 10 }))
-    }
+    this.pushRaw(JSON.stringify({ up, down, upTotal: up * 10, downTotal: down * 10 }))
+  }
+
+  /** 连接 / 日志采集器的帧形状与流量不同，直接推原始文本。 */
+  pushRaw(data: unknown): void {
+    for (const cb of this.messages) cb(data)
   }
 }
 
@@ -109,7 +112,11 @@ async function harness(options: {
   spawn?: () => ChildProcess
   validateFn?: NonNullable<BootstrapOptions['validateFn']>
   statsConnect?: NonNullable<BootstrapOptions['statsConnect']>
+  connectionsConnect?: NonNullable<BootstrapOptions['connectionsConnect']>
+  logsConnect?: NonNullable<BootstrapOptions['logsConnect']>
   onStatsSample?: NonNullable<BootstrapOptions['onStatsSample']>
+  onConnectionsSnapshot?: NonNullable<BootstrapOptions['onConnectionsSnapshot']>
+  onLogCounts?: NonNullable<BootstrapOptions['onLogCounts']>
 } = {}): Promise<Harness> {
   const config = options.config === undefined ? VALID_CONFIG : options.config
   const dir = await makeUserDir(config !== null, config ?? VALID_CONFIG)
@@ -138,7 +145,15 @@ async function harness(options: {
       statsConnect:
         options.statsConnect ??
         (() => new FakeStatsSocket()),
-      ...(options.onStatsSample === undefined ? {} : { onStatsSample: options.onStatsSample })
+      // 连接 / 日志采集器与流量采集器分开注入，既有测试里按 stats 收线的
+      // sockets 数组不会被这两条 WS 污染。
+      connectionsConnect: options.connectionsConnect ?? (() => new FakeStatsSocket()),
+      logsConnect: options.logsConnect ?? (() => new FakeStatsSocket()),
+      ...(options.onStatsSample === undefined ? {} : { onStatsSample: options.onStatsSample }),
+      ...(options.onConnectionsSnapshot === undefined
+        ? {}
+        : { onConnectionsSnapshot: options.onConnectionsSnapshot }),
+      ...(options.onLogCounts === undefined ? {} : { onLogCounts: options.onLogCounts })
     }
   }
 }
@@ -598,6 +613,56 @@ rules:
     expect(sockets[0]?.closed).toBe(true)
   })
 
+  it('内核就绪时连接与日志采集器连接对应 WS 端点，并下发快照与计数', async () => {
+    const urls: string[] = []
+    const connectionSockets: FakeStatsSocket[] = []
+    const logSockets: FakeStatsSocket[] = []
+    const snapshots: unknown[] = []
+    const counts: unknown[] = []
+    const h = await harness({
+      connectionsConnect: (url) => {
+        urls.push(url)
+        const socket = new FakeStatsSocket()
+        connectionSockets.push(socket)
+        return socket
+      },
+      logsConnect: (url) => {
+        urls.push(url)
+        const socket = new FakeStatsSocket()
+        logSockets.push(socket)
+        return socket
+      },
+      onConnectionsSnapshot: (snapshot) => snapshots.push(snapshot),
+      onLogCounts: (sample) => counts.push(sample)
+    })
+    const ctx = await bootstrap(h.opts)
+    const port = ctx.coreInfo?.controllerPort
+
+    expect(ctx.connections).not.toBeNull()
+    expect(ctx.logs).not.toBeNull()
+    expect(urls).toEqual([
+      `ws://127.0.0.1:${port}/connections?interval=500`,
+      `ws://127.0.0.1:${port}/logs?level=warning`
+    ])
+
+    connectionSockets[0]?.pushRaw(JSON.stringify({ memory: 1, connections: [] }))
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0]).toMatchObject({ items: [], memory: 1 })
+
+    logSockets[0]?.pushRaw(
+      JSON.stringify({
+        type: 'warning',
+        payload: '[TCP] dial P (match M/) 127.0.0.1:1 --> example.com:80 error: refused'
+      })
+    )
+    expect(counts).toEqual([{ recent: 1, windowMs: 3_600_000 }])
+
+    await ctx.stopAll()
+    // 退出清理必须停掉这两条 WS，否则重连定时器会拖住进程。
+    expect(connectionSockets[0]?.closed).toBe(true)
+    expect(logSockets[0]?.closed).toBe(true)
+  })
+
   it('无配置时没有采集器，导入并重启后就有了', async () => {
     const sockets: FakeStatsSocket[] = []
     const h = await harness({
@@ -763,11 +828,23 @@ rules:
   it('内核意外退出时转为 core-error、清空内核视图并还原系统代理', async () => {
     let child!: ChildProcess
     const sockets: FakeStatsSocket[] = []
+    const connectionSockets: FakeStatsSocket[] = []
+    const logSockets: FakeStatsSocket[] = []
     const h = await harness({
       proxyEnabled: true,
       spawn: () => {
         child = fakeChild()
         return child
+      },
+      connectionsConnect: () => {
+        const socket = new FakeStatsSocket()
+        connectionSockets.push(socket)
+        return socket
+      },
+      logsConnect: () => {
+        const socket = new FakeStatsSocket()
+        logSockets.push(socket)
+        return socket
       }
     })
     h.opts.statsConnect = () => {
@@ -789,7 +866,11 @@ rules:
     expect(ctx.link).toBeNull()
     expect(ctx.proxyServer).toBeNull()
     expect(ctx.stats).toBeNull()
+    expect(ctx.connections).toBeNull()
+    expect(ctx.logs).toBeNull()
     expect(sockets[0]?.closed).toBe(true)
+    expect(connectionSockets[0]?.closed).toBe(true)
+    expect(logSockets[0]?.closed).toBe(true)
     // 还原代理是崩溃处理里的异步步骤；状态与视图字段已经同步转好。
     await waitFor(async () => (await h.pp.getSystemProxy()).enabled === false)
     await waitFor(() => ctx.proxyEnabled === false)

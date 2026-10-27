@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { OpenDialogOptions } from 'electron'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -6,6 +6,7 @@ import { bootstrap, type AppContext } from './bootstrap'
 import { registerIpcHandlers, registerUnavailableHandlers } from './ipc'
 import type { TrafficSnapshot } from './stats'
 import { IPC } from '../shared/ipc'
+import type { ConnectionsSnapshot, DialFailureCounts } from '../shared/ipc'
 
 /**
  * `--shot` 是开发期的截图冒烟：使用脚本给的临时 profile、截图后退出。
@@ -42,6 +43,21 @@ let cleanupDone = false
 function pushStats(sample: TrafficSnapshot): void {
   if (mainWindow === null || mainWindow.isDestroyed()) return
   mainWindow.webContents.send(IPC.statsPush, sample)
+}
+
+/**
+ * 与 pushStats 同一形状：只推当前窗口，窗口销毁就丢弃。
+ * 注意采集器本身不随窗口停止（连接缓冲要跨窗口重建存活），区别只在这里。
+ */
+function pushConnections(snapshot: ConnectionsSnapshot): void {
+  if (mainWindow === null || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send(IPC.connectionsPush, snapshot)
+}
+
+/** 计数推送只在有新拨号失败时到达；渲染层还必须轮询 logsCountsGet 处理到期归零。 */
+function pushLogCounts(counts: DialFailureCounts): void {
+  if (mainWindow === null || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send(IPC.logsCountsPush, counts)
 }
 
 const SHOT_SETTLE_MS = 500
@@ -172,13 +188,19 @@ function createWindow(startupStatus: AppContext['startupStatus']): void {
   win.webContents.on('will-navigate', (event) => event.preventDefault())
 
   // 采集器可能在内核起来时就已 start（bootstrap 侧），这里再 start 只替换回调。
+  // 连接与日志采集器即使窗口销毁也继续跑（见下面的 closed 处理），重建窗口时
+  // 同样只替换回调，缓冲因此不会丢。
   context?.stats?.start(pushStats)
+  context?.connections?.start(pushConnections)
+  context?.logs?.start(pushLogCounts)
 
   win.once('closed', () => {
     if (mainWindow === win) mainWindow = null
     // 没有窗口就没有消费者，继续每 2 秒重连只会拖住事件循环。
     // 退出路径由 stopAll 兜底，这里覆盖「窗口没了但进程还在」。
     context?.stats?.stop()
+    // connections / logs 刻意不在这里停：已结束连接要保留 60 秒，
+    // 窗口重建后 connectionsGet 必须拿到完整首屏（账本 Ruling）。
   })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
@@ -236,6 +258,8 @@ async function start(): Promise<void> {
       // 内核在窗口之后才起来时（导入配置后重启），采集器由 bootstrap 创建，
       // 这个回调保证它一建立就有消费者。
       onStatsSample: pushStats,
+      onConnectionsSnapshot: pushConnections,
+      onLogCounts: pushLogCounts,
       // 首次启动期间退出时，context 还不存在；靠它叫停在途的校验与 spawn。
       signal: startAbort.signal
     })
@@ -246,7 +270,9 @@ async function start(): Promise<void> {
     }
     registerIpcHandlers(ipcMain, context, {
       settingsFile: path.join(userDataDir, 'settings.json'),
-      pickImportFile
+      pickImportFile,
+      // 目标目录由 IPC 层用 ctx.configDir 给出，渲染层无法指定路径。
+      openPath: (target) => shell.openPath(target)
     })
     createWindow(context.startupStatus)
   } catch (err) {

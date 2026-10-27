@@ -3,8 +3,12 @@ import type { Mode } from '../shared/types'
 import { IPC } from '../shared/ipc'
 import type {
   AppStatusView,
+  ConnectionsSnapshot,
+  DialFailureCounts,
   ImportResult,
   ModeSetResult,
+  NodeSwitchInput,
+  NodeSwitchResult,
   PickImportResult,
   ProxyGroupView,
   SimpleResult
@@ -27,12 +31,34 @@ export interface IpcDeps {
    * 同时也把「渲染层从不出路径」约束在单一边界上。
    */
   pickImportFile?: () => Promise<string | null>
+  /**
+   * 打开一个目录（生产环境是 `shell.openPath`）。与 Electron 契约一致：
+   * 成功返回空串，失败返回错误说明。目标路径由主进程给出，渲染层无法指定。
+   */
+  openPath?: (target: string) => Promise<string>
 }
 
 const MODES: readonly Mode[] = ['rule', 'global', 'direct']
 
 function isMode(value: unknown): value is Mode {
   return typeof value === 'string' && (MODES as readonly string[]).includes(value)
+}
+
+/**
+ * 节点切换入参校验：两个字段都必须是非空字符串（只有空白也算空）。
+ * 返回原值而不是 trim 后的值，避免悄悄改掉合法的节点名。
+ */
+function parseNodeSwitch(value: unknown): NodeSwitchInput | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { group, node } = value as { group?: unknown; node?: unknown }
+  if (typeof group !== 'string' || group.trim() === '') return null
+  if (typeof node !== 'string' || node.trim() === '') return null
+  return { group, node }
+}
+
+/** 采集器不存在（内核未运行）时的空快照；内存未知保持 null，不能用 0 冒充。 */
+function emptyConnectionsSnapshot(): ConnectionsSnapshot {
+  return { items: [], memory: null, at: Date.now() }
 }
 
 /** 错误对象可能带堆栈或路径；只把可读短消息交给渲染层。 */
@@ -121,6 +147,17 @@ export function registerUnavailableHandlers(ipcMain: IpcMainLike): void {
   }
   ipcMain.handle(IPC.configImport, (): ImportResult => ({ ok: false, message }))
   ipcMain.handle(IPC.configPickImport, (): PickImportResult => ({ ok: false, message }))
+
+  // 新增通道也必须在「装配失败」变体里存在：否则渲染层第一次调用就会收到
+  // "No handler registered"，状态页连错误都显示不出来。
+  ipcMain.handle(IPC.connectionsGet, (): ConnectionsSnapshot => emptyConnectionsSnapshot())
+  ipcMain.handle(IPC.logsCountsGet, (): DialFailureCounts | null => null)
+  ipcMain.handle(IPC.nodeSwitch, (): NodeSwitchResult => ({ ok: false, status: 0 }))
+  ipcMain.handle(IPC.configOpenDir, (): SimpleResult => ({ ok: false, message }))
+  // 推送通道是主进程单向发送；这里注册空 handler 只为让通道集合完整，
+  // 渲染层误调用时得到 undefined 而不是 "No handler registered"。
+  ipcMain.handle(IPC.connectionsPush, () => {})
+  ipcMain.handle(IPC.logsCountsPush, () => {})
 }
 
 type ImportOutcome =
@@ -236,4 +273,39 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
     if (sourcePath === null) return { ok: false, cancelled: true }
     return importIntoConfigDir(ctx, sourcePath)
   })
+
+  ipcMain.handle(
+    IPC.connectionsGet,
+    (): ConnectionsSnapshot => ctx.connections?.snapshot() ?? emptyConnectionsSnapshot()
+  )
+
+  /**
+   * 计数推送只在「新失败到达」时触发；失败滚出窗口时没有回调、没有推送。
+   * 渲染层必须同时轮询本通道（`getLogCounts`），否则界面会一直显示过期的非零计数。
+   * 采集器不存在时返回 null：没有计数来源，不能用 0 冒充「零次失败」。
+   */
+  ipcMain.handle(IPC.logsCountsGet, (): DialFailureCounts | null => ctx.logs?.counts() ?? null)
+
+  ipcMain.handle(IPC.nodeSwitch, async (_event, arg: unknown): Promise<NodeSwitchResult> => {
+    const input = parseNodeSwitch(arg)
+    // 没有存活内核时与内核拒绝同形：渲染层只处理 ok:false，不需要区分原因。
+    if (input === null || ctx.link === null) return { ok: false, status: 0 }
+    return ctx.link.switchNode(input.group, input.node)
+  })
+
+  // 不接受任何入参：目标目录由主进程的 ctx 决定，渲染层传什么都忽略。
+  ipcMain.handle(IPC.configOpenDir, async (): Promise<SimpleResult> => {
+    if (deps.openPath === undefined) return { ok: false, message: '无法打开配置目录' }
+    try {
+      const error = await deps.openPath(ctx.configDir)
+      // shell.openPath 用空串表示成功；错误原文可能带本地路径，不交给渲染层。
+      return error === '' ? { ok: true } : { ok: false, message: '无法打开配置目录' }
+    } catch {
+      return { ok: false, message: '无法打开配置目录' }
+    }
+  })
+
+  // 推送通道由主进程单向发送；注册空 handler 让通道集合与不可用变体保持一致。
+  ipcMain.handle(IPC.connectionsPush, () => {})
+  ipcMain.handle(IPC.logsCountsPush, () => {})
 }

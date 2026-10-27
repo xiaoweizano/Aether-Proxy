@@ -95,6 +95,34 @@ describe('CoreLink', () => {
     await expect(link(fn).setMode('rule')).resolves.toEqual({ ok: false, status: 0 })
   })
 
+  it('switchNode 用 PUT /proxies/<url-encoded group> 发送节点名', async () => {
+    const { fn, calls } = recorder(() => response(null, true, 204))
+    const result = await link(fn).switchNode('香港 01', 'HK-01')
+    expect(result).toEqual({ ok: true, status: 204 })
+    expect(calls[0]?.url).toBe(`${BASE}/proxies/${encodeURIComponent('香港 01')}`)
+    expect(calls[0]?.init?.method).toBe('PUT')
+    expect(header(calls[0]!, 'authorization')).toBe(`Bearer ${SECRET}`)
+    expect(header(calls[0]!, 'content-type')).toBe('application/json')
+    expect(bodyOf(calls[0]!)).toEqual({ name: 'HK-01' })
+  })
+
+  it('switchNode 非 2xx 返回 ok:false 与状态码', async () => {
+    const { fn } = recorder(() => response({ message: 'bad' }, false, 404))
+    await expect(link(fn).switchNode('Proxy', 'missing')).resolves.toEqual({
+      ok: false,
+      status: 404
+    })
+  })
+
+  it('switchNode 传输失败返回 status 0，且不泄漏 secret', async () => {
+    const { fn } = recorder(() => {
+      throw new Error(`request with Bearer ${SECRET} failed`)
+    })
+    const result = await link(fn).switchNode('Proxy', 'HK-01')
+    expect(result).toEqual({ ok: false, status: 0 })
+    expect(JSON.stringify(result)).not.toContain(SECRET)
+  })
+
   it('memory 命中 /memory', async () => {
     const { fn, calls } = recorder(() => response({ inuse: 1024, oslimit: 0 }))
     expect(await link(fn).memory()).toEqual({ inuse: 1024 })

@@ -40,7 +40,13 @@ interface Api {
   disableProxy(): Promise<unknown>
   restartCore(): Promise<unknown>
   importConfig(): Promise<unknown>
+  getConnections(): Promise<unknown>
+  getLogCounts(): Promise<unknown>
+  switchNode(input: { group: string; node: string }): Promise<unknown>
+  openConfigDir(): Promise<unknown>
   onStats(cb: (sample: unknown) => void): () => void
+  onConnections(cb: (snapshot: unknown) => void): () => void
+  onLogCounts(cb: (counts: unknown) => void): () => void
 }
 
 function api(): Api {
@@ -59,12 +65,18 @@ describe('preload', () => {
     expect(Object.keys(api()).sort()).toEqual([
       'disableProxy',
       'enableProxy',
+      'getConnections',
+      'getLogCounts',
       'getProxies',
       'getStatus',
       'importConfig',
+      'onConnections',
+      'onLogCounts',
       'onStats',
+      'openConfigDir',
       'restartCore',
-      'setMode'
+      'setMode',
+      'switchNode'
     ])
   })
 
@@ -77,6 +89,10 @@ describe('preload', () => {
     await a.disableProxy()
     await a.restartCore()
     await a.importConfig()
+    await a.getConnections()
+    await a.getLogCounts()
+    await a.switchNode({ group: 'Proxy', node: 'HK-01' })
+    await a.openConfigDir()
 
     expect(invoke.mock.calls).toEqual([
       [IPC.statusGet],
@@ -85,8 +101,31 @@ describe('preload', () => {
       [IPC.proxyEnable],
       [IPC.proxyDisable],
       [IPC.coreRestart],
-      [IPC.configPickImport]
+      [IPC.configPickImport],
+      [IPC.connectionsGet],
+      [IPC.logsCountsGet],
+      [IPC.nodeSwitch, { group: 'Proxy', node: 'HK-01' }],
+      [IPC.configOpenDir]
     ])
+  })
+
+  it('switchNode 只转发 group 与 node，不把多余字段送进主进程', async () => {
+    const a = api()
+    const input = { group: 'Proxy', node: 'HK-01', evil: 'extra' } as {
+      group: string
+      node: string
+    }
+    await a.switchNode(input)
+
+    expect(invoke.mock.calls).toEqual([[IPC.nodeSwitch, { group: 'Proxy', node: 'HK-01' }]])
+  })
+
+  it('openConfigDir 不接受渲染层传入的路径', async () => {
+    const a = api() as unknown as { openConfigDir(...args: unknown[]): Promise<unknown> }
+    await a.openConfigDir('C:/Windows/System32', '../outside')
+
+    // 主进程只开自己的配置目录；渲染层的任何附加参数都不应被转发。
+    expect(invoke.mock.calls).toEqual([[IPC.configOpenDir]])
   })
 
   it('onStats 订阅推送，取消后不再收到', () => {
@@ -101,6 +140,34 @@ describe('preload', () => {
 
     off()
     expect(listeners.get(IPC.statsPush)).toHaveLength(0)
+  })
+
+  it('onConnections 订阅连接推送，取消后不再收到', () => {
+    const a = api()
+    const seen: unknown[] = []
+    const off = a.onConnections((snapshot) => seen.push(snapshot))
+
+    const handlers = listeners.get(IPC.connectionsPush) ?? []
+    expect(handlers).toHaveLength(1)
+    handlers[0]?.({}, { items: [], memory: null, at: 1 })
+    expect(seen).toEqual([{ items: [], memory: null, at: 1 }])
+
+    off()
+    expect(listeners.get(IPC.connectionsPush)).toHaveLength(0)
+  })
+
+  it('onLogCounts 订阅计数推送，取消后不再收到', () => {
+    const a = api()
+    const seen: unknown[] = []
+    const off = a.onLogCounts((counts) => seen.push(counts))
+
+    const handlers = listeners.get(IPC.logsCountsPush) ?? []
+    expect(handlers).toHaveLength(1)
+    handlers[0]?.({}, { recent: 3, windowMs: 3_600_000 })
+    expect(seen).toEqual([{ recent: 3, windowMs: 3_600_000 }])
+
+    off()
+    expect(listeners.get(IPC.logsCountsPush)).toHaveLength(0)
   })
 
   it('没有暴露任意 invoke / 通道透传能力', () => {
