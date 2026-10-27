@@ -121,6 +121,47 @@ describe('App', () => {
     expect(screen.queryByText(copy.dashboard.node.label)).toBeNull()
   })
 
+  it('Ctrl+K 打开命令面板，「查看日志」经同一套页面状态导航到日志页', async () => {
+    window.aether = makeAether()
+    render(<App />)
+    await screen.findByText(copy.dashboard.node.label)
+
+    await userEvent.keyboard('{Control>}k{/Control}')
+    const input = screen.getByRole('combobox', { name: copy.palette.inputLabel })
+    await userEvent.type(input, copy.palette.actions.viewLogs)
+    await userEvent.keyboard('{Enter}')
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText(copy.pages.logs.note)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: copy.nav.logs })).toBeInTheDocument()
+    // 导航仍走 sidebar 的同一个 page 状态，日志项的 aria-current 跟随。
+    expect(screen.getByRole('button', { name: copy.nav.logs })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+  })
+
+  it('面板打开时 Esc 只关闭面板，不会让连接页同时清空搜索', async () => {
+    window.aether = makeAether()
+    render(<App />)
+    await screen.findByText(copy.dashboard.node.label)
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.connections }))
+
+    const search = screen.getByRole('searchbox', { name: copy.connections.searchLabel })
+    await userEvent.type(search, 'github')
+    expect(search).toHaveValue('github')
+
+    await userEvent.keyboard('{Control>}k{/Control}')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    // 连接页的全局 Esc 会清空搜索；面板必须截断这次按键。
+    expect(search).toHaveValue('github')
+    expect(search).toHaveFocus()
+  })
+
   it('非 ready 时导航不被阻断：切页后面板保留、导航项可操作', async () => {
     window.aether = makeAether({
       getStatus: vi.fn(

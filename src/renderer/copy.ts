@@ -98,6 +98,25 @@ export const copy = {
     on: '系统代理 已开启',
     off: '系统代理 已关闭'
   },
+  palette: {
+    label: '命令面板',
+    inputLabel: '搜索节点或命令',
+    placeholder: '搜索节点或命令',
+    listLabel: '命令与节点',
+    actionsLabel: '动作',
+    nodesLabel: '节点',
+    empty: '没有匹配的命令',
+    /** 六个动作；「切换模式」按设计文档展开成规则 / 全局 / 直连三项。 */
+    actions: {
+      proxyOn: '开启系统代理',
+      proxyOff: '关闭系统代理',
+      mode: (mode: string) => `切换到${mode}模式`,
+      restartCore: '重启内核',
+      openConfigDir: '打开配置目录',
+      viewLogs: '查看日志',
+      copyNode: '复制当前节点名'
+    }
+  },
   modeSwitchFailed: '模式切换失败，请重试',
   proxyToggleFailed: '系统代理切换失败，请重试',
   connections: {

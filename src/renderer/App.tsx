@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
+import { CommandPalette } from './components/CommandPalette'
 import { Dashboard } from './components/Dashboard'
 import { Sidebar } from './components/Sidebar'
 import { StatePanel } from './components/StatePanel'
@@ -19,6 +20,11 @@ export function App() {
   const { groups } = useProxies()
   const { current, history } = useStats()
   const active = pickActiveProxy(groups)
+
+  // 状态刷新函数保持稳定：命令面板的 useCommands 以它为依赖，避免每次轮询重建动作集。
+  const refreshNow = useCallback(() => {
+    void refresh()
+  }, [refresh])
 
   /**
    * 分发写成穷尽的 Record：新增页面必须同时在这里登记，否则 tsc 直接报缺键。
@@ -41,9 +47,7 @@ export function App() {
           <TopBar
             status={status}
             title={PAGE_TITLES[page]}
-            onRefresh={() => {
-              void refresh()
-            }}
+            onRefresh={refreshNow}
           />
           {status === null ? null : status.status === 'ready' ? (
             pages[page]
@@ -53,13 +57,17 @@ export function App() {
               key={status.status}
               status={status.status}
               {...(error === null ? {} : { proxyError: error })}
-              onRefresh={() => {
-                void refresh()
-              }}
+              onRefresh={refreshNow}
             />
           )}
         </main>
       </div>
+      <CommandPalette
+        groups={groups}
+        status={status}
+        onNavigate={setPage}
+        onRefresh={refreshNow}
+      />
     </div>
   )
 }
