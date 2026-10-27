@@ -55,11 +55,10 @@
   --chart-line: 2px;
   --chart-baseline: 1.2px;
 
-  /* 连接表：行高与列宽来自设计文档「行解剖」。 */
+  /* 连接表：行高与列宽来自设计文档「行解剖」；域名列自适应，无固定宽度。 */
   --conn-row-height: 28px;
   --conn-col-time: 72px;
   --conn-col-process: 120px;
-  --conn-col-host: 280px;
   --conn-col-outbound: 200px;
   --conn-col-traffic: 140px;
   --conn-col-duration: 56px;

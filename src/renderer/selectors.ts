@@ -54,13 +54,15 @@ export const MIDDLE_TRUNCATE_LIMIT = 32
  */
 export function truncateMiddle(value: string, limit = MIDDLE_TRUNCATE_LIMIT): string {
   if (!Number.isFinite(limit) || limit < 2) return value.length <= limit ? value : '…'
-  if (value.length <= limit) return value
+  // 按码点切分：`slice` 作用在 UTF-16 码元上，会把 astral 字符（emoji）劈成半个。
+  const characters = Array.from(value)
+  if (characters.length <= limit) return value
   const keep = limit - 1
   const tail = Math.floor(keep / 2)
   const head = keep - tail
   // tail 为 0 时 `slice(-0)` 会返回整个字符串，必须单独处理。
-  if (tail === 0) return `${value.slice(0, head)}…`
-  return `${value.slice(0, head)}…${value.slice(-tail)}`
+  if (tail === 0) return `${characters.slice(0, head).join('')}…`
+  return `${characters.slice(0, head).join('')}…${characters.slice(-tail).join('')}`
 }
 
 /**

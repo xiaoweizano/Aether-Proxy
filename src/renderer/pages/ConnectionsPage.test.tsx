@@ -1,11 +1,26 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import type { ConnectionView, ConnectionsSnapshot } from '../../shared/ipc'
 import { copy } from '../copy'
 import { formatClock, UNKNOWN } from '../format'
 import { makeAether, makeConnection } from '../test-utils'
 import { ConnectionsPage } from './ConnectionsPage'
+
+const RENDERER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+function readRendererFile(...parts: string[]): string {
+  return readFileSync(path.join(RENDERER_DIR, ...parts), 'utf8')
+}
+
+function tokenPx(tokens: string, name: string): number {
+  const match = tokens.match(new RegExp(`--${name}:\\s*(\\d+)px`))
+  if (match?.[1] === undefined) throw new Error(`缺少 token --${name}`)
+  return Number(match[1])
+}
 
 const NOW = new Date(2026, 0, 2, 13, 42, 10).getTime()
 
@@ -159,6 +174,40 @@ describe('ConnectionsPage', () => {
     expect(timeHeader).toHaveAttribute('aria-sort', 'ascending')
   })
 
+  it('建立时刻相同的连接在两次快照之间保持相对顺序', async () => {
+    const first = makeConnection({ id: 'same-1', process: 'first-proc', startedAt: NOW })
+    const second = makeConnection({ id: 'same-2', process: 'second-proc', startedAt: NOW })
+    let push: ((next: ConnectionsSnapshot) => void) | undefined
+    window.aether = makeAether({
+      getConnections: vi.fn(async () => snapshotOf([first, second])),
+      onConnections: (cb) => {
+        push = cb
+        return () => {}
+      }
+    })
+    const { container } = render(<ConnectionsPage />)
+
+    expect(await screen.findByText('first-proc')).toBeInTheDocument()
+    const ids = (): (string | null)[] =>
+      bodyRows(container).map((row) => row.getAttribute('data-connection-id'))
+    expect(ids()).toEqual(['same-1', 'same-2'])
+
+    // 下一帧给每条连接新的对象与 chains 副本，但顺序不变。
+    act(() => {
+      push?.(
+        snapshotOf(
+          [
+            { ...first, chains: [...first.chains] },
+            { ...second, chains: [...second.chains] }
+          ],
+          NOW + 500
+        )
+      )
+    })
+
+    expect(ids()).toEqual(['same-1', 'same-2'])
+  })
+
   it('被拒绝的连接带 red-family 标记', async () => {
     const { container } = mountPage([
       makeConnection({ id: 'reject', process: 'blocked', chains: ['Proxy', 'REJECT'] })
@@ -181,6 +230,9 @@ describe('ConnectionsPage', () => {
     const { container } = mountPage(items)
 
     expect(await screen.findByText(copy.connections.count(2000))).toBeInTheDocument()
+    const table = screen.getByRole('table', { name: copy.connections.label })
+    expect(table).toHaveAttribute('aria-rowcount', '2001')
+    expect(table).toHaveAttribute('aria-colcount', '6')
     const rows = bodyRows(container)
     const viewportRows = Math.ceil(600 / 28)
     expect(rows.length).toBeGreaterThan(0)
@@ -207,5 +259,47 @@ describe('ConnectionsPage', () => {
 
     expect(await screen.findByText('pushed-proc')).toBeInTheDocument()
     expect(screen.queryByText(copy.connections.empty)).toBeNull()
+  })
+})
+
+describe('ConnectionsPage layout', () => {
+  it('1024px 最小窗口下域名列吸收剩余宽度，不裁列', () => {
+    const css = readRendererFile('styles', 'app.css')
+    const tokens = readRendererFile('styles', 'tokens.css')
+    const grid = css.match(/\.conn-grid\s*\{[^}]*\}/)?.[0] ?? ''
+
+    expect(grid).toContain('grid-template-columns')
+    expect(grid).toContain('minmax(0, 1fr)')
+    expect(grid).not.toContain('minmax(var(--conn-col-host)')
+
+    const fixed =
+      tokenPx(tokens, 'conn-col-time') +
+      tokenPx(tokens, 'conn-col-process') +
+      tokenPx(tokens, 'conn-col-outbound') +
+      tokenPx(tokens, 'conn-col-traffic') +
+      tokenPx(tokens, 'conn-col-duration')
+    const gap = tokenPx(tokens, 'space-3')
+    const rowPadding = 2 * tokenPx(tokens, 'space-3')
+    const mainPadding = 2 * tokenPx(tokens, 'space-6')
+    const sidebarMatch = css.match(/\.shell\s*\{[^}]*grid-template-columns:\s*(\d+)px/)
+    expect(sidebarMatch?.[1]).toBeDefined()
+    const sidebar = Number(sidebarMatch?.[1])
+
+    // BrowserWindow minWidth = 1024（产品决定，不抬高）；减去侧栏、主区留白、
+    // 表格边框与行留白后，域名列必须仍为正数，才不会被裁掉。
+    const windowWidth = 1024
+    const tableBorder = 2
+    const hostTrack =
+      windowWidth - sidebar - mainPadding - tableBorder - rowPadding - 5 * gap - fixed
+
+    expect(hostTrack).toBeGreaterThan(0)
+  })
+
+  it('表头行与表体行共用 conn-grid 这一份网格定义', async () => {
+    const { container } = mountPage([makeConnection()])
+
+    expect(await screen.findByText('chrome')).toBeInTheDocument()
+    expect(container.querySelector('.conn-head-row')).toHaveClass('conn-grid')
+    expect(container.querySelector('.conn-row')).toHaveClass('conn-grid')
   })
 })

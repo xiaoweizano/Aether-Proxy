@@ -82,25 +82,24 @@ function ConnectionRowView({ connection, now, onRender }: ConnectionRowProps) {
   ]
     .filter(Boolean)
     .join(' ')
-  const rowClass = ['conn-row', connection.ended ? 'ended' : '', rejected ? 'rejected' : '']
+  const rowClass = [
+    'conn-row',
+    'conn-grid',
+    connection.ended ? 'ended' : '',
+    rejected ? 'rejected' : ''
+  ]
     .filter(Boolean)
     .join(' ')
-  const dotTitle =
-    connection.ended && rejected
-      ? `${copy.connections.ended} · ${copy.connections.rejected}`
-      : connection.ended
-        ? copy.connections.ended
-        : rejected
-          ? copy.connections.rejected
-          : undefined
 
   return (
     <div className={rowClass} role="row" data-connection-id={connection.id}>
       <div className="conn-cell conn-time" role="cell">
-        <span className={dotClass} title={dotTitle} aria-hidden="true" />
+        <span className={dotClass} aria-hidden="true" />
         <span className="conn-time-text">
           {connection.startedAt === null ? UNKNOWN : formatClock(connection.startedAt)}
         </span>
+        {connection.ended && <span className="conn-sr-only">{copy.connections.ended}</span>}
+        {rejected && <span className="conn-sr-only">{copy.connections.rejected}</span>}
       </div>
       <div
         className="conn-cell conn-ellipsis"

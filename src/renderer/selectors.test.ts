@@ -154,6 +154,18 @@ describe('truncateMiddle', () => {
     expect(truncateMiddle('abcdef', 2)).toBe('a…')
     expect(truncateMiddle('abcdef', 1)).toBe('…')
   })
+
+  it('按码点截断：不会把 emoji 劈成半个', () => {
+    const value = `${'😀'.repeat(10)}.example.com`
+    const result = truncateMiddle(value, 6)
+
+    expect(result).toBe('😀😀😀…om')
+    expect(result).not.toContain('�')
+    // 没有落单的代理项。
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(result)).toBe(
+      false
+    )
+  })
 })
 
 describe('formatOutbound', () => {
@@ -308,6 +320,21 @@ describe('sortConnections', () => {
     const input = [older, newer]
     sortConnections(input, 'desc')
     expect(input).toEqual([older, newer])
+  })
+
+  it('建立时刻相同的条目保持输入顺序（两次快照的副本也不换位）', () => {
+    const first = makeConnection({ id: 'same-1', startedAt: 1_000 })
+    const second = makeConnection({ id: 'same-2', startedAt: 1_000 })
+
+    const snapshotA = sortConnections([first, second], 'desc').map((item) => item.id)
+    // 下一次快照会给每条连接新的对象与 chains 副本，但插入顺序不变。
+    const snapshotB = sortConnections(
+      [{ ...first, chains: [...first.chains] }, { ...second, chains: [...second.chains] }],
+      'desc'
+    ).map((item) => item.id)
+
+    expect(snapshotA).toEqual(['same-1', 'same-2'])
+    expect(snapshotB).toEqual(snapshotA)
   })
 })
 

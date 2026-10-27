@@ -1,10 +1,13 @@
 import { render, screen } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { ConnectionView } from '../../shared/ipc'
 import { copy } from '../copy'
 import { formatClock, UNKNOWN } from '../format'
 import { makeConnection } from '../test-utils'
-import { ConnectionRow } from './ConnectionRow'
+import { ConnectionRow, CONNECTION_ROW_HEIGHT } from './ConnectionRow'
 
 const NOW = new Date(2026, 0, 2, 13, 42, 10).getTime()
 
@@ -176,7 +179,40 @@ describe('ConnectionRow', () => {
 
     expect(screen.getByRole('row')).toBeInTheDocument()
     expect(screen.getAllByRole('cell')).toHaveLength(6)
-    // 状态点只做视觉标记，不进入无障碍名称。
-    expect(screen.getByRole('row').textContent).not.toContain(copy.connections.ended)
+  })
+
+  it('已结束 / 被拒绝状态有屏幕阅读器可读文本，不依赖 title', () => {
+    const ended = makeConnection({ ended: true, endedAt: NOW })
+    const { rerender } = render(<ConnectionRow connection={ended} now={NOW} />)
+
+    expect(screen.getByText(copy.connections.ended)).toHaveClass('conn-sr-only')
+    expect(screen.queryByTitle(copy.connections.ended)).toBeNull()
+
+    rerender(<ConnectionRow connection={makeConnection({ chains: ['REJECT'] })} now={NOW} />)
+
+    expect(screen.getByText(copy.connections.rejected)).toHaveClass('conn-sr-only')
+
+    rerender(
+      <ConnectionRow
+        connection={makeConnection({ chains: ['REJECT-DROP'], ended: true, endedAt: NOW })}
+        now={NOW}
+      />
+    )
+
+    expect(screen.getByText(copy.connections.ended)).toHaveClass('conn-sr-only')
+    expect(screen.getByText(copy.connections.rejected)).toHaveClass('conn-sr-only')
+  })
+
+  it('行高常量与 tokens.css 的 --conn-row-height 一致', () => {
+    const tokensPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+      'styles',
+      'tokens.css'
+    )
+    const tokens = readFileSync(tokensPath, 'utf8')
+    const match = tokens.match(/--conn-row-height:\s*(\d+)px/)
+
+    expect(match?.[1]).toBe(String(CONNECTION_ROW_HEIGHT))
   })
 })

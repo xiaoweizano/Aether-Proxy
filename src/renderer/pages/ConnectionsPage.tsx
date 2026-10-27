@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ConnectionRow, CONNECTION_ROW_HEIGHT } from '../components/ConnectionRow'
 import { copy } from '../copy'
 import { useConnections } from '../hooks/useConnections'
@@ -69,7 +69,8 @@ export function ConnectionsPage() {
   const windowed = useVirtualRows(visible, CONNECTION_ROW_HEIGHT, viewportHeight, scrollTop)
 
   // 筛选或排序变化后列表会换一套，滚回顶部，避免停在一个已经不存在的位置。
-  useEffect(() => {
+  // 用 layout effect：在浏览器绘制前完成，不会闪一帧旧滚动位置。
+  useLayoutEffect(() => {
     setScrollTop(0)
     if (viewportRef.current !== null) viewportRef.current.scrollTop = 0
   }, [query, activeOnly, direction])
@@ -80,7 +81,7 @@ export function ConnectionsPage() {
   const emptyMessage = items.length === 0 ? copy.connections.empty : copy.connections.noMatches
 
   return (
-    <section className="connections-page" aria-label={copy.connections.label}>
+    <section className="connections-page">
       <div className="conn-toolbar">
         <span className="conn-window">{copy.connections.window}</span>
         <span className="conn-count">{copy.connections.count(visible.length)}</span>
@@ -106,9 +107,19 @@ export function ConnectionsPage() {
         </button>
       </div>
 
-      <div className="conn-table" role="table" aria-label={copy.connections.label}>
+      <div
+        className="conn-table"
+        ref={viewportRef}
+        role="table"
+        aria-label={copy.connections.label}
+        aria-colcount={connectionHeaders.length}
+        aria-rowcount={visible.length + 1}
+        onScroll={(event) => {
+          setScrollTop(event.currentTarget.scrollTop)
+        }}
+      >
         <div className="conn-head" role="rowgroup">
-          <div className="conn-head-row" role="row">
+          <div className="conn-grid conn-head-row" role="row">
             {connectionHeaders.map((header) => (
               <div
                 key={header}
@@ -137,14 +148,7 @@ export function ConnectionsPage() {
           </div>
         </div>
 
-        <div
-          className="conn-viewport"
-          ref={viewportRef}
-          role="rowgroup"
-          onScroll={(event) => {
-            setScrollTop(event.currentTarget.scrollTop)
-          }}
-        >
+        <div className="conn-body" role="rowgroup">
           {visible.length === 0 ? (
             <div className="conn-empty" role="row">
               <div className="conn-empty-text" role="cell" aria-colspan={connectionHeaders.length}>
@@ -152,9 +156,14 @@ export function ConnectionsPage() {
               </div>
             </div>
           ) : (
-            <div className="conn-spacer" style={{ height: windowed.totalHeight }}>
+            <div
+              className="conn-spacer"
+              role="presentation"
+              style={{ height: windowed.totalHeight }}
+            >
               <div
                 className="conn-window-rows"
+                role="presentation"
                 style={{ transform: `translateY(${windowed.offset}px)` }}
               >
                 {windowed.rows.map((connection) => (
