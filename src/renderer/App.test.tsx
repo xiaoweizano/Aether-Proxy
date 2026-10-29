@@ -10,6 +10,7 @@ const NON_READY = [
   ['no-config', copy.state.noConfig.title],
   ['config-error', copy.state.configError.title],
   ['core-error', copy.state.coreError.title],
+  ['reconnecting', copy.state.reconnecting.title],
   ['in-use', copy.state.inUse.title]
 ] as const
 
@@ -42,6 +43,23 @@ describe('App', () => {
     // 侧栏与顶栏仍然在场：状态页不劫持整个外壳。
     expect(screen.getByRole('navigation', { name: copy.nav.labelPrimary })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: copy.dashboard.title })).toBeInTheDocument()
+  })
+
+  it('reconnecting 时不提供「重启内核」，顶栏说的是重连中而不是内核异常', async () => {
+    window.aether = makeAether({
+      getStatus: vi.fn(
+        async (): Promise<AppStatusView> => ({ ...readyStatus, status: 'reconnecting' })
+      )
+    })
+
+    const { container } = render(<App />)
+
+    expect(await screen.findByRole('heading', { name: copy.state.reconnecting.title })).toBeInTheDocument()
+    // 后台已有退避定时器在拉内核；再给手动重启会让两边抢着 spawn。
+    expect(screen.queryByRole('button', { name: copy.state.coreError.restartAction })).toBeNull()
+    // 顶栏与状态卡标题同名，按顶栏的状态元素取，避免歧义。
+    expect(container.querySelector('.topbar-status')?.textContent).toBe(copy.status.reconnecting)
+    expect(screen.queryByText(copy.status.coreError)).toBeNull()
   })
 
   it('点「连接」进入连接页，点回「仪表盘」恢复，标题跟随页面', async () => {

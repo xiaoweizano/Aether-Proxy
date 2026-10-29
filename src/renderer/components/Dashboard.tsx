@@ -32,20 +32,29 @@ export function Dashboard({
 }: DashboardProps) {
   const mode = status === null ? null : status.mode
   const startedAt = status?.core?.startedAt
+  /**
+   * 只有 ready 才有真实的会话、速率与健康数据。内核崩溃重连期间，残留的上一份
+   * 推送不是当前事实：速率必须是破折号，节点/会话/失败计数都退回未知。
+   */
+  const live = status?.status === 'ready'
 
   return (
     <div className="card-grid">
       <NodeCard
-        active={active}
+        active={live ? active : null}
         mode={mode}
         {...(startedAt === undefined ? {} : { startedAt })}
-        totals={current === null ? null : { upTotal: current.upTotal, downTotal: current.downTotal }}
-        dialFailures={dialFailures}
+        totals={
+          !live || current === null
+            ? null
+            : { upTotal: current.upTotal, downTotal: current.downTotal }
+        }
+        dialFailures={live ? dialFailures : null}
         {...(onViewLogs === undefined ? {} : { onViewLogs })}
       />
       <CoreCard status={status} memory={connections.memory} />
       <StatCards
-        current={current}
+        current={live ? current : null}
         active={connections.active}
         total={connections.total}
         retainMs={connections.retainMs}

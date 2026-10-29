@@ -68,6 +68,31 @@ describe('Dashboard', () => {
     expect(screen.getByText('6.0 KB')).toBeInTheDocument()
   })
 
+  it('reconnecting 时速率显示破折号、不沿用崩溃前的旧样本，也不声称健康', () => {
+    const { container } = render(
+      <Dashboard
+        status={{ ...readyStatus, status: 'reconnecting' }}
+        active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
+        // 崩溃前最后一次推送还在内存里：它不是当前事实。
+        current={{ up: 1024, down: 2 * 1024 * 1024, upTotal: 4096, downTotal: 8192 }}
+        history={[{ up: 1024, down: 2 * 1024 * 1024 }]}
+        connections={{ active: 2, total: 5, memory: 24_944_640, retainMs: 60_000 }}
+        dialFailures={{ recent: 3, windowMs: HOUR }}
+      />
+    )
+
+    // 速率必须是未知（破折号），不能显示 0.00 或崩溃前的 2.00 MB/s。
+    expect(screen.queryByText('2.00')).toBeNull()
+    expect(screen.queryByText('0.00')).toBeNull()
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
+    // 节点健康行退回未知：旧节点与旧失败计数都不能当成本次会话的事实。
+    expect(screen.getByText(copy.dashboard.node.noSession)).toBeInTheDocument()
+    expect(screen.queryByText('次拨号失败', { exact: false })).toBeNull()
+    // 当前节点也退回破折号：内核不在，无法说清现在走的是哪个节点。
+    expect(screen.queryByText('HK-01')).toBeNull()
+    expect(container.textContent).not.toContain('NaN')
+  })
+
   it('hero 占两列、流量图跨满三列', () => {
     const { container } = render(
       <Dashboard

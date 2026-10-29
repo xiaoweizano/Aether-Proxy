@@ -19,7 +19,9 @@ export interface CoreCardProps {
  */
 export function CoreCard({ status, memory }: CoreCardProps) {
   const core = status?.core
-  const running = core !== undefined && status?.status !== 'core-error'
+  // 重连中内核已经不在了：与 core-error 一样不能说「运行中」。
+  const running =
+    core !== undefined && status?.status !== 'core-error' && status?.status !== 'reconnecting'
   const version = core?.version ?? UNKNOWN
   const port = core === undefined ? UNKNOWN : String(core.proxyPort)
   const groupCount = status?.profile?.groupCount

@@ -15,6 +15,7 @@ export interface TopBarProps {
 function statusLine(status: AppStatusView | null): { label: string; tone: StatusTone } {
   const tone = statusTone(status)
   if (tone === 'ready') return { label: copy.status.connected, tone }
+  if (tone === 'pending') return { label: copy.status.reconnecting, tone }
   if (tone === 'error') return { label: copy.status.coreError, tone }
   return { label: copy.status.disconnected, tone }
 }

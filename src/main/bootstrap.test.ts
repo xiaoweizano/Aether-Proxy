@@ -60,8 +60,27 @@ async function makeUserDir(withConfig: boolean, configText = VALID_CONFIG): Prom
 }
 
 /** 让 CoreSupervisor 的握手走到 running，而不用真的 spawn mihomo。 */
-function fakeChild(onKill?: () => void): ChildProcess {
-  const child = new EventEmitter() as unknown as ChildProcess
+interface CrashableChild extends ChildProcess {
+  /**
+   * 绕过 `once` 的自动摘除，再投递一次 exit 事件。
+   * 模拟 Node 在生产里把退出事件延迟送达：此时 activeSupervisor 可能已被替换。
+   */
+  lateExit(code?: number | null): void
+}
+
+function fakeChild(onKill?: () => void): CrashableChild {
+  const child = new EventEmitter() as unknown as CrashableChild
+  const exitHandlers: ((code: number | null, signal: NodeJS.Signals | null) => void)[] = []
+  const originalOnce = child.once.bind(child)
+  ;(child as unknown as { once: typeof child.once }).once = ((
+    event: string,
+    listener: (...args: any[]) => void
+  ) => {
+    if (event === 'exit') {
+      exitHandlers.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
+    }
+    return originalOnce(event, listener)
+  }) as typeof child.once
   Object.assign(child, {
     pid: CORE_PID,
     exitCode: null,
@@ -70,9 +89,18 @@ function fakeChild(onKill?: () => void): ChildProcess {
       ;(child as unknown as { exitCode: number | null }).exitCode = 0
       child.emit('exit', 0, null)
       return true
-    })
+    }),
+    lateExit: (code: number | null = 1): void => {
+      for (const handler of exitHandlers) handler(code, null)
+    }
   })
   return child
+}
+
+/** 模拟内核自己退出（崩溃 / 被外部杀掉）：先把 exitCode 落成非零，再投递事件。 */
+function crash(child: CrashableChild, code = 1): void {
+  ;(child as unknown as { exitCode: number | null }).exitCode = code
+  child.emit('exit', code, null)
 }
 
 function okFetch(): typeof fetch {
@@ -183,6 +211,7 @@ async function harness(options: {
   isProcessAliveFn?: NonNullable<BootstrapOptions['isProcessAliveFn']>
   processPathFn?: NonNullable<BootstrapOptions['processPathFn']>
   killFn?: NonNullable<BootstrapOptions['killFn']>
+  restarter?: NonNullable<BootstrapOptions['restarter']>
 } = {}): Promise<Harness> {
   const config = options.config === undefined ? VALID_CONFIG : options.config
   const dir = await makeUserDir(config !== null, config ?? VALID_CONFIG)
@@ -223,7 +252,8 @@ async function harness(options: {
       ...(options.onConnectionsSnapshot === undefined
         ? {}
         : { onConnectionsSnapshot: options.onConnectionsSnapshot }),
-      ...(options.onLogCounts === undefined ? {} : { onLogCounts: options.onLogCounts })
+      ...(options.onLogCounts === undefined ? {} : { onLogCounts: options.onLogCounts }),
+      ...(options.restarter === undefined ? {} : { restarter: options.restarter })
     }
   }
 }
@@ -899,8 +929,8 @@ rules:
     expect((await h.pp.getSystemProxy()).enabled).toBe(false)
   })
 
-  it('内核意外退出时转为 core-error、清空内核视图并还原系统代理', async () => {
-    let child!: ChildProcess
+  it('内核意外退出时转为 reconnecting、清空内核视图并还原系统代理', async () => {
+    let child!: CrashableChild
     const sockets: FakeStatsSocket[] = []
     const connectionSockets: FakeStatsSocket[] = []
     const logSockets: FakeStatsSocket[] = []
@@ -921,6 +951,9 @@ rules:
         return socket
       }
     })
+    // 定时器只记录不执行：本条用例只断言「崩溃后的即时状态」。
+    const schedule = vi.fn()
+    h.opts.restarter = { schedule, now: () => 0 }
     h.opts.statsConnect = () => {
       const socket = new FakeStatsSocket()
       sockets.push(socket)
@@ -931,11 +964,9 @@ rules:
     expect((await h.pp.getSystemProxy()).enabled).toBe(true)
     expect(ctx.stats).not.toBeNull()
 
-    // 绕过 stop()：直接模拟内核自己退出（崩溃 / 被外部杀掉）。
-    ;(child as unknown as { exitCode: number | null }).exitCode = 1
-    child.emit('exit', 1, null)
+    crash(child)
 
-    expect(ctx.startupStatus).toBe('core-error')
+    expect(ctx.startupStatus).toBe('reconnecting')
     expect(ctx.coreInfo).toBeNull()
     expect(ctx.link).toBeNull()
     expect(ctx.proxyServer).toBeNull()
@@ -945,6 +976,9 @@ rules:
     expect(sockets[0]?.closed).toBe(true)
     expect(connectionSockets[0]?.closed).toBe(true)
     expect(logSockets[0]?.closed).toBe(true)
+    // 一次崩溃只调度一次，且在 1 秒后。
+    expect(schedule).toHaveBeenCalledTimes(1)
+    expect(schedule.mock.calls[0]?.[1]).toBe(1000)
     // 还原代理是崩溃处理里的异步步骤；状态与视图字段已经同步转好。
     await waitFor(async () => (await h.pp.getSystemProxy()).enabled === false)
     await waitFor(() => ctx.proxyEnabled === false)
@@ -1373,6 +1407,535 @@ rules:
     expect(ctx.link).toBeNull()
     // 探测被中止时没有结论，唯一的孤儿记录必须保留，下次启动才能再找到它。
     expect(await readStoredCoreState(h.dir)).toEqual(stale)
+
+    await ctx.stopAll()
+  })
+})
+
+/**
+ * 崩溃退避重启接线：1s / 2s / 4s，10 分钟内最多 3 次，用尽后转 core-error。
+ *
+ * 全部用注入的 `schedule` / `now` 驱动，没有真实定时器与真实进程。
+ */
+describe('崩溃退避重启', () => {
+  type Scheduled = { fn: () => void; ms: number }
+
+  /**
+   * 手动推进的调度器：不执行真实定时器，测试自己决定何时「到点」。
+   *
+   * `status` 用来判断一次尝试是否已经落地：重启里有真实的文件 I/O，
+   * 只等一个 0ms 定时器会在尝试完成之前就往下走。收敛条件覆盖三条出口：
+   * 成功（ready）、失败后重排（pending 变长）、退避用尽（core-error）。
+   */
+  function manualSchedule(status: () => string | undefined): {
+    schedule: (fn: () => void, ms: number) => void
+    pending: Scheduled[]
+    runAll(): Promise<void>
+    delays(): number[]
+  } {
+    const pending: Scheduled[] = []
+    const settled = (): boolean => {
+      const current = status()
+      // 终态只有 ready（成功）与 core-error（退避用尽）；中间型 config-error 只是
+      // 一次失败尝试的瞬时状态，随后会被 catch 改成 reconnecting 并重排。
+      return pending.length > 0 || current === 'ready' || current === 'core-error'
+    }
+    return {
+      schedule: (fn, ms) => {
+        pending.push({ fn, ms })
+      },
+      pending,
+      /**
+       * 只推进「此刻已排队」的定时器，一次调用对应一轮尝试。
+       * 一轮失败会排下一轮，但不会在同一轮里继续执行——否则永远走不到
+       * 「第 N 次尝试之间」的断言。
+       */
+      async runAll() {
+        const batch = pending.splice(0, pending.length)
+        for (const entry of batch) {
+          entry.fn()
+          await waitFor(settled)
+        }
+      },
+      delays() {
+        return pending.map((entry) => entry.ms)
+      }
+    }
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('一次崩溃只调度一次，1 秒后重启，成功后回到 ready', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    let child!: CrashableChild
+    const h = await harness({
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.startupStatus).toBe('ready')
+    expect(h.spawnFn).toHaveBeenCalledTimes(1)
+
+    crash(child)
+    expect(ctx.startupStatus).toBe('reconnecting')
+    // 一次崩溃只有一次调度：退出事件与「尝试失败」都不能各记一笔。
+    expect(scheduler.pending).toHaveLength(1)
+    expect(scheduler.delays()).toEqual([1000])
+    expect(h.spawnFn).toHaveBeenCalledTimes(1)
+
+    await scheduler.runAll()
+
+    expect(h.spawnFn).toHaveBeenCalledTimes(2)
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.coreInfo).not.toBeNull()
+    expect(ctx.proxyServer).not.toBeNull()
+    // 重启成功后没有残留调度：不会再冒出一次自动重启。
+    expect(scheduler.pending).toHaveLength(0)
+
+    await ctx.stopAll()
+  })
+
+  it('退避是 1s → 2s → 4s，第 4 次崩溃不再调度并转 core-error', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    const children: CrashableChild[] = []
+    const h = await harness({
+      spawn: () => {
+        const child = fakeChild()
+        children.push(child)
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+    expect(children).toHaveLength(1)
+
+    // 第 1 次崩溃 → 1000ms
+    crash(children[0]!)
+    expect(scheduler.delays()).toEqual([1000])
+    await scheduler.runAll()
+    expect(children).toHaveLength(2)
+    expect(ctx.startupStatus).toBe('ready')
+
+    // 第 2 次崩溃 → 2000ms
+    crash(children[1]!)
+    expect(scheduler.delays()).toEqual([2000])
+    await scheduler.runAll()
+    expect(children).toHaveLength(3)
+    expect(ctx.startupStatus).toBe('ready')
+
+    // 第 3 次崩溃 → 4000ms
+    crash(children[2]!)
+    expect(scheduler.delays()).toEqual([4000])
+    await scheduler.runAll()
+    expect(children).toHaveLength(4)
+    expect(ctx.startupStatus).toBe('ready')
+
+    // 第 4 次崩溃（10 分钟内）：不再调度，转 core-error 并把手动重启交还给用户。
+    const spawnsBefore = h.spawnFn.mock.calls.length
+    crash(children[3]!)
+    expect(scheduler.pending).toHaveLength(0)
+    expect(ctx.startupStatus).toBe('core-error')
+    expect(h.spawnFn.mock.calls.length).toBe(spawnsBefore)
+
+    await ctx.stopAll()
+  })
+
+  it('窗口之外的第 4 次崩溃仍可调度（10 分钟滚动窗口）', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    let now = 0
+    const children: CrashableChild[] = []
+    const h = await harness({
+      spawn: () => {
+        const child = fakeChild()
+        children.push(child)
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => now }
+    const ctx = await bootstrap(h.opts)
+
+    for (let index = 0; index < 3; index += 1) {
+      crash(children[index]!)
+      await scheduler.runAll()
+    }
+    expect(children).toHaveLength(4)
+
+    // 早先的 3 次都已滚出 10 分钟窗口：计数重新从 1 开始，延迟回到 1 秒。
+    now = 11 * 60_000
+    crash(children[3]!)
+    expect(ctx.startupStatus).toBe('reconnecting')
+    expect(scheduler.delays()).toEqual([1000])
+
+    await scheduler.runAll()
+    expect(ctx.startupStatus).toBe('ready')
+    await ctx.stopAll()
+  })
+
+  it('重启成功后自动重启不再触发（attempts 不清零，但窗口内没有第 4 次）', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    let child!: CrashableChild
+    const h = await harness({
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+
+    crash(child)
+    await scheduler.runAll()
+    expect(ctx.startupStatus).toBe('ready')
+    expect(h.spawnFn).toHaveBeenCalledTimes(2)
+
+    // 成功之后继续等一段时间：没有新调度，也没有额外 spawn。
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(scheduler.pending).toHaveLength(0)
+    expect(h.spawnFn).toHaveBeenCalledTimes(2)
+
+    await ctx.stopAll()
+  })
+
+  it('自动重启把崩溃后关掉的系统代理重新接管（用户原本开着）', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    let child!: CrashableChild
+    const h = await harness({
+      proxyEnabled: true,
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+    expect((await h.pp.getSystemProxy()).enabled).toBe(true)
+
+    crash(child)
+    // 崩溃先还原代理，整机不空指向一个死端口。
+    await waitFor(async () => (await h.pp.getSystemProxy()).enabled === false)
+    expect(ctx.proxyEnabled).toBe(false)
+
+    await scheduler.runAll()
+
+    // `ready` 在重启收尾的中间点就落下（与手动重启同一顺序）；代理重新接管在
+    // 那之后：系统代理先写回，再复核实际状态写进 ctx。两者分别等，避免只等到一半。
+    await waitFor(
+      async () => (await h.pp.getSystemProxy()).enabled === true && ctx.proxyEnabled === true
+    )
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.proxyEnabled).toBe(true)
+    expect((await h.pp.getSystemProxy()).server).toBe(ctx.proxyServer)
+
+    await ctx.stopAll()
+  })
+
+  it('用户原本关着代理时自动重启不会擅自打开系统代理', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    let child!: CrashableChild
+    const h = await harness({
+      proxyEnabled: false,
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+
+    crash(child)
+    await scheduler.runAll()
+
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.proxyEnabled).toBe(false)
+    expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+
+    await ctx.stopAll()
+  })
+
+  it('同一轮里第二次崩溃仍按最初的用户意愿接管代理', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    const children: CrashableChild[] = []
+    const h = await harness({
+      proxyEnabled: true,
+      spawn: () => {
+        const child = fakeChild()
+        children.push(child)
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+
+    // 第一次崩溃 → 自动重启成功，代理重新接管。
+    crash(children[0]!)
+    await scheduler.runAll()
+    await waitFor(async () => (await h.pp.getSystemProxy()).enabled === true)
+
+    // 第二次崩溃：崩溃处理先还原代理，ctx.proxyEnabled 变成 false；
+    // 但用户意愿仍是「开着」，重启成功后必须重新接管。
+    crash(children[1]!)
+    await waitFor(async () => (await h.pp.getSystemProxy()).enabled === false)
+    await scheduler.runAll()
+    await waitFor(
+      async () => (await h.pp.getSystemProxy()).enabled === true && ctx.proxyEnabled === true
+    )
+
+    expect(ctx.startupStatus).toBe('ready')
+    expect(ctx.proxyEnabled).toBe(true)
+
+    await ctx.stopAll()
+  })
+
+  it('重启途中新内核又崩：不留下 ready，状态回到重连并继续退避', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    const children: CrashableChild[] = []
+    // 第二颗内核的握手上加一道闸：让崩溃确定发生在重启收尾途中，而不是之前或之后。
+    let gate: { promise: Promise<void>; release: () => void } | null = null
+    const h = await harness({
+      spawn: () => {
+        const child = fakeChild()
+        children.push(child)
+        return child
+      }
+    })
+    h.opts.fetchFn = (async () => {
+      if (gate !== null) await gate.promise
+      return { ok: true, status: 200, json: async () => ({ version: 'test' }) } as Response
+    }) as unknown as typeof fetch
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+
+    crash(children[0]!)
+    // 手动推进这一轮到点：第二颗内核 spawn 出来后卡在握手上。
+    const kickOff = scheduler.pending.shift()!
+    let release!: () => void
+    gate = { promise: new Promise<void>((resolve) => { release = resolve }), release: () => {} }
+    kickOff.fn()
+    await waitFor(() => children.length === 2)
+
+    // 握手还没完成，新内核就崩了：崩溃处理接管状态并排下一轮退避。
+    crash(children[1]!)
+    await waitFor(() => scheduler.pending.length > 0)
+    // 放行卡住的握手：这一轮重启会「成功」返回，但绝不能把状态写回 ready。
+    gate = null
+    release()
+
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(ctx.startupStatus).toBe('reconnecting')
+    expect(ctx.coreInfo).toBeNull()
+    // 崩溃事件自己排了下一轮：只多一次，不是两次。
+    expect(scheduler.pending).toHaveLength(1)
+    expect(scheduler.delays()).toEqual([2000])
+
+    await scheduler.runAll()
+    expect(ctx.startupStatus).toBe('ready')
+
+    await ctx.stopAll()
+  })
+
+  it('自动重启后会重建采样器（新内核的流量仍能上报）', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    const sockets: FakeStatsSocket[] = []
+    let child!: CrashableChild
+    const h = await harness({
+      spawn: () => {
+        child = fakeChild()
+        return child
+      },
+      statsConnect: () => {
+        const socket = new FakeStatsSocket()
+        sockets.push(socket)
+        return socket
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+    expect(ctx.stats).not.toBeNull()
+
+    crash(child)
+    expect(ctx.stats).toBeNull()
+    expect(sockets[0]?.closed).toBe(true)
+
+    await scheduler.runAll()
+
+    // 采集器是在内核确认起来后重建的；等它真正挂上（与 `ready` 同一次收尾）。
+    await waitFor(() => ctx.stats !== null)
+    expect(ctx.stats).not.toBeNull()
+    // 采集器实例按会话复用，缓冲保留：重启只是重新 start 同一条 WS。
+    expect(sockets).toHaveLength(2)
+    expect(sockets[1]?.closed).toBe(false)
+
+    await ctx.stopAll()
+  })
+
+  it('stopAll 取消退避定时器：用户退出后不再拉起内核', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    let child!: CrashableChild
+    const h = await harness({
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+    const spawnsAfterStart = h.spawnFn.mock.calls.length
+
+    crash(child)
+    expect(scheduler.pending).toHaveLength(1)
+
+    await ctx.stopAll()
+    const spawnsAfterStop = h.spawnFn.mock.calls.length
+
+    // 即使那个「已到点」的回调真的被触发，也不能再 spawn。
+    for (const entry of scheduler.pending) entry.fn()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(h.spawnFn.mock.calls.length).toBe(spawnsAfterStop)
+    expect(spawnsAfterStop).toBe(spawnsAfterStart)
+  })
+
+  it('定时器与退出同时发生（同一 tick）也不会 spawn', async () => {
+    // 真实 setTimeout 语义：回调排在 stopAll 的微任务之后执行。
+    let fire!: () => void
+    let child!: CrashableChild
+    const h = await harness({
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.restarter = {
+      schedule: (fn) => {
+        fire = fn
+      },
+      now: () => 0
+    }
+    const ctx = await bootstrap(h.opts)
+    const spawnsAfterStart = h.spawnFn.mock.calls.length
+
+    crash(child)
+    // 用户在同一 tick 退出：stopAll 同步置位并取消，然后我们才触发那个定时器。
+    const stopping = ctx.stopAll()
+    fire()
+    await stopping
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(h.spawnFn.mock.calls.length).toBe(spawnsAfterStart)
+  })
+
+  it('旧 supervisor 的迟到退出事件不会重新调度', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    let child!: CrashableChild
+    const h = await harness({
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+    const first = child
+
+    crash(first)
+    await scheduler.runAll()
+    expect(ctx.startupStatus).toBe('ready')
+    expect(scheduler.pending).toHaveLength(0)
+
+    // 第一个内核的退出事件可能延迟送达（Node 在主进程繁忙时并不保证顺序）。
+    // 它来自已被替换的 supervisor，不能再一次触发退避。
+    first.lateExit()
+    expect(ctx.startupStatus).toBe('ready')
+    expect(scheduler.pending).toHaveLength(0)
+
+    await ctx.stopAll()
+  })
+
+  it('重启尝试自身失败时只算一次崩溃，按退避重试而不是双倍计数', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    const children: CrashableChild[] = []
+    let allowValidate = true
+    const h = await harness({
+      spawn: () => {
+        const child = fakeChild()
+        children.push(child)
+        return child
+      },
+      validateFn: async () => (allowValidate ? { ok: true, output: 'ok' } : { ok: false, output: 'bad' })
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+
+    // 崩溃之后配置校验失败：启动失败一次，但只消耗一次退避名额。
+    allowValidate = false
+    crash(children[0]!)
+    await scheduler.runAll()
+    expect(ctx.startupStatus).toBe('reconnecting')
+    expect(scheduler.delays()).toEqual([2000])
+
+    // 下一次尝试又失败：仍是单次计数，延迟走到 4s。
+    await scheduler.runAll()
+    expect(scheduler.delays()).toEqual([4000])
+
+    // 第 4 次尝试失败（第 4 次记数）：退避用尽，转 core-error。
+    await scheduler.runAll()
+    expect(scheduler.pending).toHaveLength(0)
+    expect(ctx.startupStatus).toBe('core-error')
+
+    await ctx.stopAll()
+  })
+
+  it('自动重启不把代理偏好落盘为关闭（仍会继续重试）', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    const h = await harness({ proxyEnabled: true })
+    const ctx = await bootstrap(h.opts)
+
+    h.opts.validateFn = async () => ({ ok: false, output: 'bad' })
+    const children: CrashableChild[] = []
+    void children
+    // 触发一次崩溃：用第一次 spawn 出来的 child。
+    const child = h.spawnFn.mock.results[0]!.value as CrashableChild
+    crash(child)
+    await scheduler.runAll()
+
+    // 手动重启会把 proxyEnabled 落盘为 false；自动重启不能，否则一次失败就把
+    // 用户的偏好永久改掉，后续重试即使成功也不会再接管代理。
+    expect(JSON.parse(await readFile(path.join(h.dir, 'settings.json'), 'utf8'))).toEqual({
+      proxyEnabled: true
+    })
+
+    await ctx.stopAll()
+  })
+
+  it('用户手动重启会取消在途的自动重启', async () => {
+    const scheduler = manualSchedule(() => ctx.startupStatus)
+    let child!: CrashableChild
+    const h = await harness({
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    h.opts.restarter = { schedule: scheduler.schedule, now: () => 0 }
+    const ctx = await bootstrap(h.opts)
+
+    crash(child)
+    expect(scheduler.pending).toHaveLength(1)
+
+    // core-error 之外的用户操作（IPC「重启内核」）会让用户重新掌控：
+    // 后台定时器必须被取消，否则会再拉起一个内核。
+    await ctx.restartCore()
+    expect(ctx.startupStatus).toBe('ready')
+    const spawns = h.spawnFn.mock.calls.length
+
+    for (const entry of scheduler.pending) entry.fn()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(h.spawnFn.mock.calls.length).toBe(spawns)
 
     await ctx.stopAll()
   })

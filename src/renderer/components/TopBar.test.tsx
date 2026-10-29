@@ -11,6 +11,21 @@ describe('TopBar', () => {
     expect(screen.getByText(copy.status.coreError)).toBeInTheDocument()
   })
 
+  it('reconnecting 时显示内核重连中，而不是内核异常', () => {
+    render(<TopBar status={{ ...readyStatus, status: 'reconnecting' }} />)
+    expect(screen.getByText(copy.status.reconnecting)).toBeInTheDocument()
+    expect(screen.queryByText(copy.status.coreError)).toBeNull()
+    // 重连中不是已连接：不能借 ready 的绿点说健康。
+    expect(screen.queryByText(copy.status.connected)).toBeNull()
+  })
+
+  it('reconnecting 时模式切换与代理开关仍然禁用', () => {
+    render(<TopBar status={{ ...readyStatus, status: 'reconnecting', proxyEnabled: true }} />)
+
+    expect(screen.getByRole('button', { name: copy.mode.rule })).toBeDisabled()
+    expect(screen.getByRole('button', { name: copy.proxy.off })).toBeDisabled()
+  })
+
   it('ready 时显示已连接', () => {
     render(<TopBar status={readyStatus} />)
     expect(screen.getByText(copy.status.connected)).toBeInTheDocument()

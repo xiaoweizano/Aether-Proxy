@@ -71,7 +71,9 @@ export const copy = {
   status: {
     connected: '已连接',
     disconnected: '未连接',
-    coreError: '内核异常'
+    coreError: '内核异常',
+    /** 内核意外退出、正在自动重启：是事实陈述，不承诺马上就好。 */
+    reconnecting: '内核重连中'
   },
   state: {
     noConfig: {
@@ -90,6 +92,14 @@ export const copy = {
       title: '内核异常',
       detail: '代理内核没有正常运行。先尝试重启；仍然失败时请查看日志或导入新的配置。',
       restartAction: '重启内核'
+    },
+    /**
+     * 自动重启进行中：说明「正在自动恢复」，不给主操作。
+     * 手动重启会和后台定时器抢着拉起内核，所以这里不提供。
+     */
+    reconnecting: {
+      title: '内核重连中',
+      detail: '内核意外退出，正在自动重启。恢复后状态会自行更新。'
     },
     inUse: {
       title: '另一个实例正在运行',

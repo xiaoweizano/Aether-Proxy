@@ -6,6 +6,7 @@ import YAML from 'yaml'
 import { allocatePort } from './core/ports'
 import { newSecret } from './core/secret'
 import { CoreSupervisor } from './core/supervisor'
+import { CoreRestarter, type RestarterOptions } from './core/restarter'
 import { resolveMihomoBinary } from './core/binary'
 import { classifyOrphan } from './core/orphan'
 import { writeCoreState, inspectCoreState, clearCoreState } from './core/state'
@@ -73,9 +74,21 @@ export interface BootstrapOptions {
   onConnectionsSnapshot?: (snapshot: ConnectionsSnapshot) => void
   /** 拨号失败计数回调；只在有新失败到达时触发（到期没有通知，见 logs.ts）。 */
   onLogCounts?: (counts: DialFailureCounts) => void
+  /**
+   * 崩溃后退避重启的测试注入（定时器、时钟、策略）。缺省用真实定时器、
+   * 1s / 2s / 4s、10 分钟内 3 次。
+   */
+  restarter?: Pick<RestarterOptions, 'schedule' | 'now' | 'policy'>
 }
 
-export type AppStatus = 'no-config' | 'ready' | 'config-error' | 'core-error' | 'in-use'
+export type AppStatus =
+  | 'no-config'
+  | 'ready'
+  | 'config-error'
+  | 'core-error'
+  | 'in-use'
+  /** 内核意外退出、正在按退避自动重启；不是健康状态，也不给手动重启入口。 */
+  | 'reconnecting'
 export type RestoreStatus = 'none' | 'restored' | 'conflict' | 'in-use'
 
 export interface AppContext {
@@ -329,6 +342,17 @@ class ShutdownAbortError extends Error {
 }
 
 /**
+ * 重启收尾期间内核又崩了：崩溃处理已经接管状态、调度与系统代理。
+ * 这条路径必须立刻停手，不能再写 ready 或把代理指回一个刚死掉的端口。
+ */
+class CrashSupersededError extends Error {
+  constructor() {
+    super('内核在重启过程中再次退出')
+    this.name = 'CrashSupersededError'
+  }
+}
+
+/**
  * 让一个可能耗时（孤儿探测最多 1.5 秒）的 await 能被退出信号打断。
  * `work` 本身不会被取消（classifyOrphan 自带超时会自行收尾），只是不再等它。
  */
@@ -480,9 +504,159 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
   let activeContext: AppContext | null = null
 
   /**
-   * 内核在运行中被意外终止（崩溃、被外部杀掉）。只做「停止说谎」：
-   * 转 core-error、清空内核视图、停采集器、还原系统代理。
-   * 自动重启（1/2/4s 退避）留给下一个计划，这里不实现。
+   * 内核崩溃后的自动重启。规格：1s / 2s / 4s 退避，10 分钟内最多 3 次，
+   * 用尽后转 core-error 并把「重启内核」还给用户。
+   *
+   * 计数按崩溃次数而不是成功次数：一次崩溃 = 一次 notifyExit = 一次尝试，
+   * 重启成功也不清空（窗口内仍要受 3 次上限约束）。
+   */
+  const restarter = new CoreRestarter({
+    ...(opts.restarter?.now === undefined ? {} : { now: opts.restarter.now }),
+    ...(opts.restarter?.schedule === undefined ? {} : { schedule: opts.restarter.schedule }),
+    ...(opts.restarter?.policy === undefined ? {} : { policy: opts.restarter.policy }),
+    start: () => startAutoRestart()
+  })
+  /** 每次真正处理一次内核退出就自增；用来识别「本次尝试里已有崩溃事件接管了调度」。 */
+  let exitSeq = 0
+  /** 已调度、尚未触发的自动重启。同一次崩溃只应调度一次。 */
+  let restartPending = false
+  /**
+   * 每次取消自动重启就自增。定时器可能已经「到点」并排在重启锁后面，
+   * 光靠 cancel() 拦不住它；排到时比对这一代，过期就放弃。
+   */
+  let restartGeneration = 0
+  /** 当前这次调度所属的代号；与 `restartGeneration` 不等说明已被取消。 */
+  let scheduledGeneration = 0
+  /** 重启串行锁：手动与自动重启不得并发，否则会同时拉起两个内核。 */
+  let restartLock: Promise<unknown> = Promise.resolve()
+  /** 崩溃时的代理期望；崩溃处理会还原系统代理，自动重启成功后按它决定是否重新接管。 */
+  let crashWantProxy = false
+  /**
+   * 是否处在一轮崩溃里（第一次崩溃到下一次成功重启之间）。只在进档时取一次
+   * 代理意愿：一轮里后续的崩溃多半发生在重启途中，那时系统代理已经被还原，
+   * 再取一次会把「用户本来开着」读成「用户关着」。
+   */
+  let inCrashBurst = false
+  /** 崩溃处理里的代理还原；自动重启要等它落定再决定代理，避免和它抢时序。 */
+  let crashCleanup: Promise<void> | null = null
+  /** 自动重启的执行体；由 attachRestart 装配（in-use 上下文没有可崩溃的内核）。 */
+  let autoRestartRun: (() => Promise<CoreInfo>) | null = null
+
+  /**
+   * 停掉全部采集器并对上层暴露 null。实例本身保留：内核回来后 ensure* 复用它，
+   * 连同已有缓冲（流量图、已结束连接、失败计数窗口都要跨重启连续）。
+   */
+  const stopCollectors = (ctx: AppContext): void => {
+    for (const collector of [stats, connections, logs]) {
+      try {
+        collector?.stop()
+      } catch {
+        // stop 不抛错；这里只防御性处理，不让清理路径再失败一次。
+      }
+    }
+    ctx.stats = null
+    ctx.connections = null
+    ctx.logs = null
+  }
+
+  /**
+   * 登记在途重启。stopAll 先置退出标志、再 await 这些 promise：
+   * 重启会在下一个 await 边界看到标志并放弃，绝不会在清理完成后继续 spawn。
+   */
+  const trackRestart = <T>(running: Promise<T>): Promise<T> => {
+    const tracked = running.finally(() => {
+      inFlightRestarts.delete(tracked)
+    })
+    inFlightRestarts.add(tracked)
+    return tracked
+  }
+
+  /** 串行执行重启；前一次失败不影响后一次，只有先后顺序。 */
+  const withRestartLock = <T>(task: () => Promise<T>): Promise<T> => {
+    const result = restartLock.then(
+      () => task(),
+      () => task()
+    )
+    restartLock = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
+  /** 调度一次自动重启；false 表示退避已用尽（调用方负责转 core-error）。 */
+  const scheduleRestart = (): boolean => {
+    if (shuttingDown) return false
+    if (restartPending) return true
+    const plan = restarter.notifyExit()
+    if (!plan.scheduled) return false
+    restartPending = true
+    scheduledGeneration = restartGeneration
+    return true
+  }
+
+  /** 取消尚未触发的自动重启：stopAll 与用户手动重启都要求不再有后台定时器。 */
+  const cancelRestarts = (): void => {
+    restartPending = false
+    restartGeneration += 1
+    restarter.cancel()
+  }
+
+  /**
+   * 退避定时器触发：执行一次自动重启。
+   *
+   * 与退出赛跑：定时器可能和 stopAll 落在同一个 tick。shuttingDown 在 stopAll 的
+   * 第一个 await 之前同步置位；排队等锁的那一段再比对一次代号，两种情况下都不 spawn。
+   */
+  async function startAutoRestart(): Promise<void> {
+    restartPending = false
+    const gen = scheduledGeneration
+    const run = autoRestartRun
+    if (run === null) return
+    const seq = exitSeq
+    try {
+      const result = await trackRestart(
+        withRestartLock(async () => {
+          // 真正拿到锁时再判一次：这一代可能在排队期间被 cancel()（手动重启 / 退出）。
+          // 不抛错——那是取消，不是失败，不能被下面的 catch 再记一次尝试。
+          if (shuttingDown || gen !== restartGeneration) return null
+          return run()
+        })
+      )
+      if (result === null) return
+    } catch (err) {
+      if (shuttingDown || err instanceof ShutdownAbortError) return
+      // 本次尝试里的崩溃已经由 handleCoreExit 重新调度过（含重启收尾途中又崩）：
+      // 一次失败只算一次，否则「起不来的内核」会在每次尝试里被记两笔，
+      // 3 次上限会提前用尽。
+      if (err instanceof CrashSupersededError || exitSeq !== seq) return
+      if (scheduleRestart()) {
+        // 失败的具体原因（配置错误等）由重启路径写进了 ctx；只要还在退避重试，
+        // 界面对用户事实就是「重连中」，不能显示成终态并递出手动重启。
+        if (activeContext !== null) activeContext.startupStatus = 'reconnecting'
+        return
+      }
+      markCoreUnavailable()
+    }
+  }
+
+  /** 自动重启彻底放弃：用户重新拿到手动重启入口。 */
+  const markCoreUnavailable = (): void => {
+    const ctx = activeContext
+    if (ctx === null) return
+    ctx.startupStatus = 'core-error'
+  }
+
+  /**
+   * 内核在运行中被意外终止（崩溃、被外部杀掉）。三件事：
+   * 1. 停止说谎：清空内核视图、停采集器、还原系统代理（否则整机断网）；
+   * 2. 状态转 reconnecting，按 1s / 2s / 4s 退避调度自动重启；
+   * 3. 退避用尽（10 分钟内第 4 次）才转 core-error，把手动重启还给用户。
+   *
+   * 一次崩溃只调度一次：这里直接接触发路径，主进程里没有第二个 notifyExit 调用方；
+   * 重启尝试自身的失败由 startAutoRestart 的 catch 处理，且会先比对 exitSeq，
+   * 避免「新内核又崩了」被同时记成两次尝试。
+   *
    * 主动 stop() 不会走到这里：CoreSupervisor 先把状态置为 stopped。
    */
   const handleCoreExit = (supervisor: CoreSupervisor): void => {
@@ -490,31 +664,22 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     if (shuttingDown || activeSupervisor !== supervisor) return
     const ctx = activeContext
     if (ctx === null) return
-    ctx.startupStatus = 'core-error'
+    exitSeq += 1
     ctx.coreInfo = null
     ctx.link = null
     ctx.proxyServer = null
-    try {
-      ctx.stats?.stop()
-    } catch {
-      // stop 不抛错；这里只防御性地不让崩溃处理再失败一次。
-    }
-    ctx.stats = null
-    // 连接与日志采集器同样要停：内核没了，重连定时器不能留着拖住退出。
-    try {
-      ctx.connections?.stop()
-    } catch {
-      // 同上：清理路径不把二次异常升级成致命错误。
-    }
-    ctx.connections = null
-    try {
-      ctx.logs?.stop()
-    } catch {
-      // 同上。
-    }
-    ctx.logs = null
+    stopCollectors(ctx)
     ctx.supervisor = supervisor
-    void (async () => {
+    // 代理的「用户意愿」必须在还原之前取：还原会改写 ctx.proxyEnabled。
+    // 只在一轮崩溃的起点取一次，见 inCrashBurst。
+    if (!inCrashBurst) {
+      crashWantProxy = ctx.proxyEnabled
+      inCrashBurst = true
+    }
+    // 先给出「正在重连」，再尝试调度；退避已用尽时立刻回落成核心错误。
+    ctx.startupStatus = 'reconnecting'
+    if (!scheduleRestart()) markCoreUnavailable()
+    crashCleanup = (async () => {
       // 内核死了，系统代理还指向 mixed-port 会让整机断网：与 stopAll 一样先还原。
       try {
         await controller.disable()
@@ -789,130 +954,189 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       })
     }
 
-    const restart = async (): Promise<CoreInfo> => {
-      // 退出清理已开始时直接放弃：调用方（IPC）会把异常映射成 {ok:false}。
-      assertNotShuttingDown()
-      // 停内核期间系统代理仍指向 mixed-port，整机会短暂断网。先还原系统代理，
-      // 成功启动后再按用户此前的意愿重新接管；失败则保持关闭。
-      const wantProxy = ctx.proxyEnabled
-      if (wantProxy) ctx.proxyError = undefined
-      if (wantProxy) {
-        try {
-          await controller.disable()
-        } catch (err) {
-          ctx.proxyError = describeError(err)
-        }
-        assertNotShuttingDown()
-        try {
-          ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
-        } catch (err) {
-          ctx.proxyEnabled = false
-          ctx.proxyError ??= describeError(err)
-        }
-        assertNotShuttingDown()
-      }
-
-      await activeSupervisor.stop()
-      // spawn 之前的最后一个取消点；startCore 内部在 validate 之后、spawn 之前
-      // 还有一道同样的检查。
-      assertNotShuttingDown()
-      const restarted = await startCore()
-      if (!restarted.ok) {
-        const message =
-          restarted.status === 'no-config'
-            ? '还没有配置，无法启动内核'
-            : restarted.status === 'config-error'
-              ? '配置有误，无法启动内核'
-              : '内核启动失败'
-        ctx.startupStatus = restarted.status
-        ctx.profileDir = restarted.status === 'no-config' ? null : configDir
-        ctx.profile = restarted.profile
-        ctx.coreInfo = null
-        ctx.link = null
-        ctx.proxyServer = null
-        // 内核没起来就没有可采集的流量：停掉并对上层暴露 null。实例本身保留，
-        // 下次重启成功后 ensureStats 会复用它（连同已有缓冲）。
-        ctx.stats?.stop()
-        ctx.stats = null
-        // 连接与日志采集器同一处理：停掉 ws，避免对不存在的内核无限重连。
-        ctx.connections?.stop()
-        ctx.connections = null
-        ctx.logs?.stop()
-        ctx.logs = null
-        // prepare 失败时 supervisor 可能已被替换（配置有误）；同步给调用方与 stopAll。
-        ctx.supervisor = activeSupervisor
-
-        // 内核不在了，系统代理还指向 mixed-port 会让整机上不了网。再兜一次底
-        // （上面的 disable 可能已成功或已失败），并如实记录实际状态。
-        try {
-          await controller.disable()
-        } catch (err) {
-          ctx.proxyError ??= describeError(err)
-        }
-        try {
-          ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
-        } catch {
-          ctx.proxyEnabled = false
-        }
-
-        // 用户期望值也要落盘为关闭：否则下次启动照着 settings 重试，
-        // 又会把系统代理指向一个起不来的内核。
-        if (wantProxy) {
-          try {
-            await writeSettings(settingsFile, { proxyEnabled: false })
-          } catch (err) {
-            ctx.proxyError ??= `设置未能保存：${describeError(err)}`
-          }
-        }
-        throw new Error(message)
-      }
-
-      const { prepared, info } = restarted
-      ctx.startupStatus = 'ready'
-      ctx.profileDir = configDir
-      ctx.profile = prepared.profile
-      ctx.coreInfo = info
-      ctx.link = prepared.link
-      ctx.proxyServer = prepared.proxyServer
-      ctx.supervisor = prepared.supervisor
-      ctx.stats = ensureStats(prepared.controllerPort, prepared.secret)
-      ctx.connections = ensureConnections(prepared.controllerPort, prepared.secret)
-      ctx.logs = ensureLogs(prepared.controllerPort, prepared.secret)
-      await ctx.onCoreRestarted(info)
-
-      // 重启后内核按 runtime.yaml 的模式启动；把本会话里用户选过的模式补回去。
-      if (ctx.mode !== prepared.mode) await prepared.link.setMode(ctx.mode)
-
-      // mixed-port 在会话内不变，但代理所有权需要指向新内核；同时复核系统真实状态。
-      if (wantProxy) {
-        try {
-          await controller.enable(prepared.proxyServer)
-        } catch (err) {
-          ctx.proxyError = describeError(err)
-        }
-        try {
-          ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
-        } catch (err) {
-          ctx.proxyEnabled = false
-          ctx.proxyError ??= describeError(err)
-        }
-      }
-      return info
-    }
-
+  interface RestartOptions {
     /**
-     * 把在途重启登记下来。stopAll 先置退出标志、再 await 这些 promise：
-     * 重启会在下一个 await 边界看到标志并放弃，绝不会在清理完成后继续 spawn。
+     * 新内核起来后是否重新接管系统代理。手动重启取当前实际状态；
+     * 自动重启必须取崩溃前的用户意愿——崩溃处理已经把系统代理还原了。
      */
-    ctx.restartCore = (): Promise<CoreInfo> => {
-      const running = restart()
-      const tracked = running.finally(() => {
-        inFlightRestarts.delete(tracked)
-      })
-      inFlightRestarts.add(tracked)
-      return tracked
-    }
+    wantProxy: boolean
+    /**
+     * 失败时是否把「代理关闭」落盘。手动重启要保持原语义（否则下次启动又会
+     * 把代理指向一个起不来的内核）；自动重启不写：一次失败的尝试之后还会重试，
+     * 不能因为中间那一次失败就把用户的偏好永久改掉。
+     */
+    persistProxyOffOnFailure: boolean
+    /**
+     * 自动重启。失败时不能落成终态（config-error / core-error）——后台还会按退避
+     * 继续重试，界面要一直停在「重连中」，直到重试成功或退避用尽。
+     */
+    automatic?: boolean
+    /** 崩溃处理里的代理还原；自动重启先等它落定，避免两条还原路径互相踩。 */
+    afterCrashCleanup?: Promise<void> | null
   }
+
+  const restart = async ({
+    wantProxy,
+    persistProxyOffOnFailure,
+    automatic = false,
+    afterCrashCleanup
+  }: RestartOptions): Promise<CoreInfo> => {
+    // 退出清理已开始时直接放弃：调用方（IPC）会把异常映射成 {ok:false}。
+    assertNotShuttingDown()
+    /** 本次尝试开始时的崩溃序号；变化说明内核已在本次尝试中间退出。 */
+    const seq = exitSeq
+    if (afterCrashCleanup !== undefined && afterCrashCleanup !== null) {
+      // 崩溃处理正在还原系统代理；先等它落定，避免两条还原路径互相踩。
+      await afterCrashCleanup
+      assertNotShuttingDown()
+    }
+    // 停内核期间系统代理仍指向 mixed-port，整机会短暂断网。先还原系统代理，
+    // 成功启动后再按用户此前的意愿重新接管；失败则保持关闭。
+    if (wantProxy) ctx.proxyError = undefined
+    if (wantProxy) {
+      try {
+        await controller.disable()
+      } catch (err) {
+        ctx.proxyError = describeError(err)
+      }
+      assertNotShuttingDown()
+      try {
+        ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
+      } catch (err) {
+        ctx.proxyEnabled = false
+        ctx.proxyError ??= describeError(err)
+      }
+      assertNotShuttingDown()
+    }
+
+    await activeSupervisor.stop()
+    // spawn 之前的最后一个取消点；startCore 内部在 validate 之后、spawn 之前
+    // 还有一道同样的检查。
+    assertNotShuttingDown()
+    const restarted = await startCore()
+    // 本次尝试期间新内核又崩过一次：崩溃处理已经接管了状态、退避调度与系统代理。
+    // 继续往下会把状态改回 ready，甚至把系统代理指向一个刚死掉的端口。
+    if (exitSeq !== seq) {
+      // startCore 可能刚刚重新 start 过采集器（复用同一实例）；那条 WS 已经没有
+      // 内核可连，停掉它，否则重连定时器会一直拖住退出。
+      stopCollectors(ctx)
+      throw new CrashSupersededError()
+    }
+    if (!restarted.ok) {
+      const message =
+        restarted.status === 'no-config'
+          ? '还没有配置，无法启动内核'
+          : restarted.status === 'config-error'
+            ? '配置有误，无法启动内核'
+            : '内核启动失败'
+      ctx.startupStatus = restarted.status
+      // 自动重启失败只是这一轮失败：后台还会按退避重试，界面必须一直停在
+      // 「重连中」，否则会给用户递出手动重启按钮，和定时器抢着 spawn。
+      if (automatic) ctx.startupStatus = 'reconnecting'
+      ctx.profileDir = restarted.status === 'no-config' ? null : configDir
+      ctx.profile = restarted.profile
+      ctx.coreInfo = null
+      ctx.link = null
+      ctx.proxyServer = null
+      // 内核没起来就没有可采集的流量：停掉并对上层暴露 null。实例本身保留，
+      // 下次重启成功后 ensureStats 会复用它（连同已有缓冲）。
+      stopCollectors(ctx)
+      // prepare 失败时 supervisor 可能已被替换（配置有误）；同步给调用方与 stopAll。
+      ctx.supervisor = activeSupervisor
+
+      // 内核不在了，系统代理还指向 mixed-port 会让整机上不了网。再兜一次底
+      // （上面的 disable 可能已成功或已失败），并如实记录实际状态。
+      try {
+        await controller.disable()
+      } catch (err) {
+        ctx.proxyError ??= describeError(err)
+      }
+      try {
+        ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
+      } catch {
+        ctx.proxyEnabled = false
+      }
+
+      // 用户期望值也要落盘为关闭：否则下次启动照着 settings 重试，
+      // 又会把系统代理指向一个起不来的内核。自动重启不写（见 RestartOptions）。
+      if (wantProxy && persistProxyOffOnFailure) {
+        try {
+          await writeSettings(settingsFile, { proxyEnabled: false })
+        } catch (err) {
+          ctx.proxyError ??= `设置未能保存：${describeError(err)}`
+        }
+      }
+      throw new Error(message)
+    }
+
+    const { prepared, info } = restarted
+    ctx.startupStatus = 'ready'
+    ctx.profileDir = configDir
+    ctx.profile = prepared.profile
+    ctx.coreInfo = info
+    ctx.link = prepared.link
+    ctx.proxyServer = prepared.proxyServer
+    ctx.supervisor = prepared.supervisor
+    ctx.stats = ensureStats(prepared.controllerPort, prepared.secret)
+    ctx.connections = ensureConnections(prepared.controllerPort, prepared.secret)
+    ctx.logs = ensureLogs(prepared.controllerPort, prepared.secret)
+    await ctx.onCoreRestarted(info)
+
+    // 重启后内核按 runtime.yaml 的模式启动；把本会话里用户选过的模式补回去。
+    if (ctx.mode !== prepared.mode) await prepared.link.setMode(ctx.mode)
+
+    // 等代理真正写回后再复核一次：写的过程中新内核又崩了，就不能留下「已接管」的假象。
+    // mixed-port 在会话内不变，但代理所有权需要指向新内核。
+    if (wantProxy) {
+      try {
+        await controller.enable(prepared.proxyServer)
+      } catch (err) {
+        ctx.proxyError = describeError(err)
+      }
+      try {
+        ctx.proxyEnabled = (await pp.getSystemProxy()).enabled === true
+      } catch (err) {
+        ctx.proxyEnabled = false
+        ctx.proxyError ??= describeError(err)
+      }
+    }
+    if (exitSeq !== seq) throw new CrashSupersededError()
+    // 一轮崩溃到此结束：下一次崩溃重新按当时实际状态取代理意愿。
+    inCrashBurst = false
+    return info
+  }
+
+  /**
+   * 手动重启（IPC「重启内核」、状态页）。会取消尚未触发的自动重启：
+   * 用户已经接手，后台定时器再拉起一次就会变成两个内核。
+   * 与自动重启串行，绝不同时进行。
+   */
+  ctx.restartCore = (): Promise<CoreInfo> => {
+    cancelRestarts()
+    // 崩溃一轮里用户手动接手：代理意愿仍是崩溃前的那个，此时 ctx.proxyEnabled
+    // 已经被崩溃处理还原成 false，直接取它会静默把用户的代理关掉。
+    const wantProxy = inCrashBurst ? crashWantProxy : ctx.proxyEnabled
+    return trackRestart(
+      withRestartLock(() => restart({ wantProxy, persistProxyOffOnFailure: true }))
+    )
+  }
+
+  /**
+   * 自动重启：与手动重启同一套「停 → 重新读配置 → 校验 → 启动 → 重写状态」，
+   * 但代理意愿取崩溃前的值（崩溃处理已经还原），失败也不落盘代理偏好。
+   *
+   * 复用同一条执行体而不是再写一份：重启的核心不变量是「必须重新生成
+   * runtime.yaml」，任何绕过它的捷径都会让导入的新配置在崩溃恢复后不生效；
+   * 采样器、日志采集器、模式回写、core-state 重写也都在那条路径上。
+   */
+  autoRestartRun = (): Promise<CoreInfo> =>
+    restart({
+      wantProxy: crashWantProxy,
+      persistProxyOffOnFailure: false,
+      automatic: true,
+      afterCrashCleanup: crashCleanup
+    })
+}
 
   /** 所有返回分支共用同一套字段，避免漏掉新增字段时类型上侥幸通过。 */
   const makeContext = (over: ContextOverrides): AppContext => {
@@ -946,6 +1170,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       stopAll: async () => {
         // in-use：内核与状态文件属于另一个存活实例，退出时一个都不能动。
         if (ctx.startupStatus === 'in-use') return
+        // 退避定时器必须是第一件被取消的事，而且必须在任何 await 之前：
+        // 否则一个恰好在同一 tick 到期的定时器会在清理过程中把内核重新拉起。
+        cancelRestarts()
         // 同步置位必须发生在第一个 await 之前：这样在途重启在下一个边界就会放弃。
         shuttingDown = true
         // 等在途重启真正结束再做清理，而不是和它赛跑。重启已被取消，通常会很快拒绝。
@@ -967,21 +1194,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
         }
         // 采集器必须在退出路径上停下：否则 ws 的重连定时器会拖住事件循环，
         // 进程无法随 app.quit() 一起结束。
-        try {
-          ctx.stats?.stop()
-        } catch {
-          // stop 不抛错；这里只防御性地不把清理失败算进致命错误。
-        }
-        try {
-          ctx.connections?.stop()
-        } catch {
-          // 同上。
-        }
-        try {
-          ctx.logs?.stop()
-        } catch {
-          // 同上。
-        }
+        stopCollectors(ctx)
         try {
           await clearCoreStateIfOwned()
         } catch (err) {

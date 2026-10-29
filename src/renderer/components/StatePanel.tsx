@@ -13,7 +13,7 @@ export interface StatePanelProps {
   restartCore?(): Promise<SimpleResult>
 }
 
-type PanelStatus = 'no-config' | 'config-error' | 'core-error' | 'in-use'
+type PanelStatus = 'no-config' | 'config-error' | 'core-error' | 'in-use' | 'reconnecting'
 
 function describe(error: unknown, fallback: string): string {
   return error instanceof Error && error.message !== '' ? error.message : fallback
@@ -27,6 +27,8 @@ function copyFor(status: PanelStatus): { title: string; detail: string } {
       return copy.state.configError
     case 'core-error':
       return copy.state.coreError
+    case 'reconnecting':
+      return copy.state.reconnecting
     case 'in-use':
       return copy.state.inUse
   }
@@ -120,6 +122,12 @@ export function StatePanel({
 
   function actions() {
     if (panelStatus === 'in-use') return null
+
+    /**
+     * 正在自动重连：只说明，不提供主操作。后台已有退避定时器在拉内核，
+     * 再给一个「重启内核」会让用户的手动操作和自动重启互相抢，拉起两个进程。
+     */
+    if (panelStatus === 'reconnecting') return null
 
     if (imported) {
       return (

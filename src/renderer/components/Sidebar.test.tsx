@@ -36,6 +36,14 @@ describe('Sidebar', () => {
     }
   )
 
+  it('reconnecting 时版本点用 pending 档：既不是绿也不是红', () => {
+    const { container } = renderSidebar({ ...readyStatus, status: 'reconnecting' })
+    expect(dotClass(container)).toContain('pending')
+    expect(dotClass(container)).not.toContain('ready')
+    expect(dotClass(container)).not.toContain('error')
+    expect(dotClass(container)).not.toContain('idle')
+  })
+
   it('状态尚未加载时也是灰点', () => {
     const { container } = renderSidebar(null)
     expect(dotClass(container)).toContain('idle')

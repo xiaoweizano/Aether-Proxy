@@ -2,7 +2,11 @@ import type { Mode } from './types'
 
 /** 渲染层拿到的状态：白名单字段，绝不含 secret、上游原文或本地路径。 */
 export interface AppStatusView {
-  status: 'no-config' | 'ready' | 'config-error' | 'core-error' | 'in-use'
+  /**
+   * `reconnecting` 表示内核意外退出、正在按退避自动重启：既不是健康状态，
+   * 也不该递出「重启内核」——那会让用户和后台定时器抢着拉起内核。
+   */
+  status: 'no-config' | 'ready' | 'config-error' | 'core-error' | 'in-use' | 'reconnecting'
   restore: 'none' | 'restored' | 'conflict' | 'in-use'
   mode: Mode
   proxyEnabled: boolean

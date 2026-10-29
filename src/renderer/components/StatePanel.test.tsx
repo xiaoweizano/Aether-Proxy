@@ -42,6 +42,18 @@ describe('StatePanel', () => {
     expect(screen.getByText(copy.state.logsPlaceholder)).toBeInTheDocument()
   })
 
+  it('reconnecting：说明正在自动重连，且没有「重启内核」主操作', () => {
+    render(<StatePanel status="reconnecting" />)
+
+    expect(screen.getByText(copy.state.reconnecting.title)).toBeInTheDocument()
+    expect(screen.getByText(copy.state.reconnecting.detail)).toBeInTheDocument()
+    // 自动重启已经在跑：任何手动重启按钮都会和它抢着拉起内核。
+    expect(screen.queryByRole('button', { name: copy.state.coreError.restartAction })).toBeNull()
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    // 也不能说成「内核异常」：那是退避用尽后的终态。
+    expect(screen.queryByText(copy.state.coreError.title)).toBeNull()
+  })
+
   it('in-use：只有说明，没有任何操作，尤其没有重启内核', () => {
     render(<StatePanel status="in-use" />)
 
