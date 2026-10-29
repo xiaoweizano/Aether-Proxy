@@ -44,6 +44,7 @@ interface Api {
   getLogCounts(): Promise<unknown>
   switchNode(input: { group: string; node: string }): Promise<unknown>
   openConfigDir(): Promise<unknown>
+  windowControl(action: 'minimize' | 'maximize' | 'close'): Promise<unknown>
   onStats(cb: (sample: unknown) => void): () => void
   onConnections(cb: (snapshot: unknown) => void): () => void
   onLogCounts(cb: (counts: unknown) => void): () => void
@@ -76,8 +77,16 @@ describe('preload', () => {
       'openConfigDir',
       'restartCore',
       'setMode',
-      'switchNode'
+      'switchNode',
+      'windowControl'
     ])
+  })
+
+  it('windowControl 只转发动作名，不转发任何路径或坐标', async () => {
+    const a = api() as unknown as { windowControl(...args: unknown[]): Promise<unknown> }
+    await a.windowControl('minimize', 'C:/Windows/System32', { x: 0, y: 0 })
+
+    expect(invoke.mock.calls).toEqual([[IPC.windowControl, 'minimize']])
   })
 
   it('每个方法转发到对应通道', async () => {

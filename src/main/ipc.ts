@@ -17,6 +17,7 @@ import type { ProxiesResponse } from './core/link'
 import type { AppContext } from './bootstrap'
 import { importFromFile } from './config/import'
 import { writeSettings } from './settings'
+import { isWindowAction, runWindowAction, type WindowControls } from './shell/window'
 
 /** 只依赖 Electron IpcMain 的 handle 形状，避免测试环境加载 electron 模块。 */
 export interface IpcMainLike {
@@ -36,6 +37,11 @@ export interface IpcDeps {
    * 成功返回空串，失败返回错误说明。目标路径由主进程给出，渲染层无法指定。
    */
   openPath?: (target: string) => Promise<string>
+  /**
+   * 窗控窗口。生产环境是 `WindowManager`；装配失败时缺省，通道仍注册但一律 `{ok:false}`，
+   * 渲染层不会因为「No handler registered」把标题栏按钮变成抛错。
+   */
+  windowControls?: WindowControls
 }
 
 const MODES: readonly Mode[] = ['rule', 'global', 'direct']
@@ -172,6 +178,8 @@ export function registerUnavailableHandlers(ipcMain: IpcMainLike): void {
   // 渲染层误调用时得到 undefined 而不是 "No handler registered"。
   ipcMain.handle(IPC.connectionsPush, () => {})
   ipcMain.handle(IPC.logsCountsPush, () => {})
+  // 装配失败时没有窗口管理器：按钮仍然可点，只是什么也不会发生。
+  ipcMain.handle(IPC.windowControl, (): SimpleResult => ({ ok: false, message }))
 }
 
 type ImportOutcome =
@@ -317,6 +325,16 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
     } catch {
       return { ok: false, message: '无法打开配置目录' }
     }
+  })
+
+  /**
+   * 窗控。只认三个动作名，动作之外的多余参数一律忽略——通道不转发任何
+   * 渲染层提供的路径、坐标或对象。`close` 只销毁窗口，不退出应用。
+   */
+  ipcMain.handle(IPC.windowControl, async (_event, action: unknown): Promise<SimpleResult> => {
+    if (!isWindowAction(action)) return { ok: false }
+    if (deps.windowControls === undefined) return { ok: false, message: '窗口不可用' }
+    return runWindowAction(deps.windowControls, action)
   })
 
   // 推送通道由主进程单向发送；注册空 handler 让通道集合与不可用变体保持一致。

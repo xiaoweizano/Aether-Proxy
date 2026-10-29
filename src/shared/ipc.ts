@@ -137,6 +137,9 @@ export interface StatsSample extends TrafficView {
   history?: StatsHistorySample[]
 }
 
+/** 主进程可以执行的窗口动作。`close` 是销毁窗口，不是退出应用。 */
+export type WindowAction = 'minimize' | 'maximize' | 'close'
+
 export const IPC = {
   statusGet: 'app:status',
   proxiesGet: 'core:proxies',
@@ -152,7 +155,12 @@ export const IPC = {
   logsCountsGet: 'logs:counts',
   logsCountsPush: 'logs:counts-push',
   nodeSwitch: 'proxies:switch',
-  configOpenDir: 'config:open-dir'
+  configOpenDir: 'config:open-dir',
+  /**
+   * 窗控：只接受 `minimize` / `maximize` / `close` 三个动作名，不接受任何路径或坐标。
+   * `close` 销毁主窗口，代理与内核继续运行（常驻代理）。
+   */
+  windowControl: 'window:control'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
@@ -190,4 +198,9 @@ export interface AetherApi {
   switchNode(input: NodeSwitchInput): Promise<NodeSwitchResult>
   /** 打开主进程自己的配置目录；不接受路径参数。 */
   openConfigDir(): Promise<SimpleResult>
+  /**
+   * 窗口按钮。只传动作名，不传任何几何或路径；`close` 销毁窗口而不是退出应用，
+   * 代理与内核继续在托盘里运行。
+   */
+  windowControl(action: WindowAction): Promise<SimpleResult>
 }

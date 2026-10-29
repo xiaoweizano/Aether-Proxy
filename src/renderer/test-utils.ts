@@ -25,6 +25,7 @@ export function makeAether(overrides: Partial<AetherApi> = {}): AetherApi {
     onLogCounts: vi.fn(() => () => {}),
     switchNode: vi.fn(async () => ({ ok: true, status: 204 })),
     openConfigDir: vi.fn(async () => ({ ok: true })),
+    windowControl: vi.fn(async () => ({ ok: true })),
     ...overrides
   }
 }

@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { bootstrap, type AppContext } from './bootstrap'
 import { registerIpcHandlers, registerUnavailableHandlers } from './ipc'
+import { readSettings, writeWindowBounds } from './settings'
 import {
   createTray,
   createTrayActions,
@@ -12,6 +13,14 @@ import {
   type TrayController,
   type TrayHost
 } from './shell/tray'
+import {
+  MIN_WINDOW_SIZE,
+  TITLE_BAR_HEIGHT,
+  createWindowManager,
+  destroyOnClose,
+  type ManagedWindow,
+  type WindowRect
+} from './shell/window'
 import type { TrafficSnapshot } from './stats'
 import { IPC } from '../shared/ipc'
 import type { ConnectionsSnapshot, DialFailureCounts } from '../shared/ipc'
@@ -39,7 +48,6 @@ let context: AppContext | null = null
 const startAbort = new AbortController()
 /** bootstrap 是否已经有结果（成功或失败）；退出清理要等这个，而不是死等 context。 */
 let startSettled = false
-let mainWindow: BrowserWindow | null = null
 let quitting = false
 /** 清理真正结束、允许放行的那一次 quit；此前所有 quit 都必须被挡住。 */
 let cleanupDone = false
@@ -48,12 +56,24 @@ let trayController: TrayController | null = null
 let trayTimer: NodeJS.Timeout | null = null
 
 /**
- * 采样回调只认「当前窗口」：窗口销毁即丢弃，重建窗口后由 createWindow 重新注册。
+ * 主窗口。销毁后为 null；托盘「打开主窗口」会按保存的位置重建。
+ * 窗口的所有控制动作都经它转发，`mainWindow` 只在推送回调里用来取当前窗口。
+ */
+type ShellWindow = ManagedWindow & BrowserWindow
+let windowManager: ReturnType<typeof createWindowManager<ShellWindow>> | null = null
+
+function mainWindow(): ShellWindow | null {
+  return windowManager?.current() ?? null
+}
+
+/**
+ * 采样回调只认「当前窗口」：窗口销毁即丢弃，重建窗口后由 attachCollectors 重新注册。
  * 只下发结构化快照，secret 与 controller 地址不出主进程。
  */
 function pushStats(sample: TrafficSnapshot): void {
-  if (mainWindow === null || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send(IPC.statsPush, sample)
+  const win = mainWindow()
+  if (win === null) return
+  win.webContents.send(IPC.statsPush, sample)
 }
 
 /**
@@ -61,8 +81,9 @@ function pushStats(sample: TrafficSnapshot): void {
  * 注意采集器本身不随窗口停止（连接缓冲要跨窗口重建存活），区别只在这里。
  */
 function pushConnections(snapshot: ConnectionsSnapshot): void {
-  if (mainWindow === null || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send(IPC.connectionsPush, snapshot)
+  const win = mainWindow()
+  if (win === null) return
+  win.webContents.send(IPC.connectionsPush, snapshot)
 }
 
 /**
@@ -71,23 +92,26 @@ function pushConnections(snapshot: ConnectionsSnapshot): void {
  * 处理到期归零，否则仪表盘会一直显示过期的非零计数。
  */
 function pushLogCounts(counts: DialFailureCounts): void {
-  if (mainWindow === null || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send(IPC.logsCountsPush, counts)
+  const win = mainWindow()
+  if (win === null) return
+  win.webContents.send(IPC.logsCountsPush, counts)
 }
 
 /**
- * 托盘的「打开主窗口」。
+ * 托盘的「打开主窗口」，也是托盘图标的左键动作。
  *
- * Task 3 只做聚焦：窗口还在，就把它从最小化/后台拉回来。Task 4 会把窗口改成
- * 「关闭即 destroy」，届时这里要变成「已销毁则重建」——重建必须走 createWindow，
- * 并带上当时的 startupStatus（渲染层用它决定首屏状态）。**不要**在这里提前写重建，
- * 否则 Task 4 改窗口语义时会两套生命周期同时存在。
+ * 窗口还在就把它从最小化/后台拉回来；已经销毁（用户点了 ✕，或上次是从托盘关的）
+ * 就按 `settings.json` 里的 `windowBounds` 重建。重建走同一个窗口管理器，
+ * 并发双击托盘也只会建出一个窗口——闸门在 `WindowManager.show()` 里。
+ *
+ * 重建后首屏数据是自动回来的：采集器从未停止，渲染层挂载时 `useStats` 靠推送里
+ * 自带的 history、`useConnections` / `useLogCounts` 靠各自的 `*Get` 补拉。
  */
 function showMainWindow(): void {
-  if (mainWindow === null || mainWindow.isDestroyed()) return
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  if (!mainWindow.isVisible()) mainWindow.show()
-  mainWindow.focus()
+  if (windowManager === null) return
+  void windowManager.show().catch((err: unknown) => {
+    console.error('[aether] 打开主窗口失败', err)
+  })
 }
 
 /** 托盘图标的落点：打包态在 process.resourcesPath，开发态在仓库 resources/。 */
@@ -299,12 +323,29 @@ async function failShot(message: string, error?: unknown): Promise<void> {
   }
 }
 
-function createWindow(startupStatus: AppContext['startupStatus']): void {
+/**
+ * 为窗口挂上采集器回调。stats 的 `start` 是幂等的（已连接只替换回调），
+ * 连接与日志采集器同样：窗口销毁期间它们继续跑，重建窗口时重新挂上推送目标，
+ * 60 秒环形缓冲因此不会丢（账本 Ruling）。
+ */
+function attachCollectors(): void {
+  context?.stats?.start(pushStats)
+  context?.connections?.start(pushConnections)
+  context?.logs?.start(pushLogCounts)
+}
+
+function createBrowserWindow(requested: WindowRect): ShellWindow {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 1024,
-    minHeight: 640,
+    // 位置与尺寸由 WindowManager 校验后给出：越界记录已经回落成居中默认。
+    x: requested.x,
+    y: requested.y,
+    width: requested.width,
+    height: requested.height,
+    // 重开窗口同样受最小尺寸约束，旧记录不能把窗口缩成一条缝。
+    minWidth: MIN_WINDOW_SIZE.width,
+    minHeight: MIN_WINDOW_SIZE.height,
+    // 无边框：标题栏（拖动区 + 三个窗口按钮）由渲染层绘制，见 TitleBar.tsx。
+    frame: false,
     backgroundColor: '#0A0B0D',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.cjs'),
@@ -313,27 +354,46 @@ function createWindow(startupStatus: AppContext['startupStatus']): void {
       nodeIntegration: false
     }
   })
-  mainWindow = win
+
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event) => event.preventDefault())
 
-  // 采集器可能在内核起来时就已 start（bootstrap 侧），这里再 start 只替换回调。
-  // 连接与日志采集器即使窗口销毁也继续跑（见下面的 closed 处理），重建窗口时
-  // 同样只替换回调，缓冲因此不会丢。
-  context?.stats?.start(pushStats)
-  context?.connections?.start(pushConnections)
-  context?.logs?.start(pushLogCounts)
+  /**
+   * 关闭即销毁。真正的退出（`before-quit` 已置位 `quitting`）必须放行，
+   * 否则 Electron 会卡在关闭窗口这一步，进程永远退不出去。
+   */
+  win.on('close', (event) => {
+    if (!destroyOnClose(quitting)) return
+    event.preventDefault()
+    // 关窗前把位置存下来：下一次从托盘打开要用它重建窗口。
+    void windowManager?.persistCurrent()
+    win.destroy()
+  })
+
+  // 用户拖动/缩放窗口后记下新位置。只在创建完成之后才写得进来（manager 非空），
+  // 而且写的是 getNormalBounds——最大化状态下 getBounds 是屏幕尺寸，会把窗口位置存坏。
+  const rememberBounds = (): void => {
+    void windowManager?.persistCurrent()
+  }
+  win.on('resized', rememberBounds)
+  win.on('moved', rememberBounds)
 
   win.once('closed', () => {
-    if (mainWindow === win) mainWindow = null
+    if (windowManager !== null) windowManager.forget(win)
     // 没有窗口就没有消费者，继续每 2 秒重连只会拖住事件循环。
-    // 退出路径由 stopAll 兜底，这里覆盖「窗口没了但进程还在」。
+    // 退出路径由 stopAll 兜底，这里覆盖「窗口关了但进程还在」。
     context?.stats?.stop()
     // connections / logs 刻意不在这里停：已结束连接要保留 60 秒，
     // 窗口重建后 connectionsGet 必须拿到完整首屏（账本 Ruling）。
   })
 
+  win.webContents.once('did-finish-load', () => {
+    // 首帧画出来后窗口才显示，避免用户看到背景色的空窗闪一下。
+    if (!win.isDestroyed() && !win.isVisible()) win.show()
+  })
   const devUrl = process.env['ELECTRON_RENDERER_URL']
+  // startupStatus 用创建那一刻的值：重建发生在应用运行期间，状态不会因为窗口消失而改变。
+  const startupStatus = context?.startupStatus ?? 'core-error'
 
   if (shotMode) {
     // 加载完成后留一点时间让 React 首次渲染并完成布局，再截图。
@@ -358,6 +418,8 @@ function createWindow(startupStatus: AppContext['startupStatus']): void {
       query: { startupStatus }
     })
   }
+
+  return win
 }
 
 /**
@@ -369,16 +431,36 @@ async function pickImportFile(): Promise<string | null> {
     properties: ['openFile'],
     filters: [{ name: 'Clash YAML', extensions: ['yaml', 'yml'] }]
   }
-  const result =
-    mainWindow === null || mainWindow.isDestroyed()
-      ? await dialog.showOpenDialog(options)
-      : await dialog.showOpenDialog(mainWindow, options)
+  const win = mainWindow()
+  const result = win === null ? await dialog.showOpenDialog(options) : await dialog.showOpenDialog(win, options)
   if (result.canceled) return null
   return result.filePaths[0] ?? null
 }
 
 async function start(): Promise<void> {
   const userDataDir = app.getPath('userData')
+  const settingsFile = path.join(userDataDir, 'settings.json')
+
+  /**
+   * 窗口管理器要在 `bootstrap` 之前就绪：bootstrap 可能要跑几秒（校验/spawn 内核），
+   * 窗口不该等它；而窗口的 close/closed 处理器必须拿得到管理器，否则第一次关窗
+   * 就没有地方 `forget()`。两个分支（正常 / 装配失败）共用同一个管理器，
+   * 只是 IPC 与托盘是否注册不同。
+   */
+  windowManager = createWindowManager<ShellWindow>({
+    create: (bounds) => {
+      const win = createBrowserWindow(bounds)
+      attachCollectors()
+      return win
+    },
+    loadBounds: async () => (await readSettings(settingsFile)).windowBounds ?? null,
+    saveBounds: (bounds) => writeWindowBounds(settingsFile, bounds),
+    displays: () => screen.getAllDisplays(),
+    onError: (err) => {
+      console.warn('[aether] 窗口位置读取/保存失败', err instanceof Error ? err.message : err)
+    }
+  })
+
   try {
     context = await bootstrap({
       userDataDir,
@@ -399,30 +481,41 @@ async function start(): Promise<void> {
       return
     }
     registerIpcHandlers(ipcMain, context, {
-      settingsFile: path.join(userDataDir, 'settings.json'),
+      settingsFile,
       pickImportFile,
       // 目标目录由 IPC 层用 ctx.configDir 给出，渲染层无法指定路径。
-      openPath: (target) => shell.openPath(target)
+      openPath: (target) => shell.openPath(target),
+      // 窗控只认动作名；close 销毁窗口，不退出应用。
+      windowControls: windowManager
     })
     // 托盘必须在窗口之前建：窗口没起来时它就是唯一能打开主窗口的入口。
     // 图标/原生托盘失败不得阻断启动：窗口仍要出现，用户至少能看状态。
     try {
-      startTray(context, path.join(userDataDir, 'settings.json'))
+      startTray(context, settingsFile)
     } catch (trayError) {
       console.error('[aether] 托盘初始化失败', trayError)
       stopTray()
     }
-    createWindow(context.startupStatus)
   } catch (err) {
     // 装配层意外失败时仍要开窗，让用户能看到状态而不是应用无声退出。
     console.error('[aether] bootstrap 失败', err)
     // 通道也要注册：否则渲染层的 getStatus 直接 reject，状态页无法显示。
     registerUnavailableHandlers(ipcMain)
-    createWindow('core-error')
   } finally {
     // 取消信号与清理都靠这个标志判断「启动流程已经不会再 spawn 内核了」。
     startSettled = true
   }
+
+  // 无论 bootstrap 成败都要开窗。窗口在应用整个生命周期里可被关闭/重建，
+  // 所以它不挂在 `start()` 的 try 里，而是交给管理器统一负责。
+  // 已经取消启动（退出途中）就不要开窗了：否则会在退出时凭空冒出一个窗口。
+  if (startAbort.signal.aborted) {
+    app.quit()
+    return
+  }
+  await windowManager.show().catch((err: unknown) => {
+    console.error('[aether] 创建主窗口失败', err)
+  })
 }
 
 app.whenReady().then(() => { void start() })
@@ -440,6 +533,9 @@ app.on('before-quit', (event) => {
   stopTray()
   startAbort.abort()
   const cleanup = async (): Promise<void> => {
+    // 退出前把窗口位置落盘。此时窗口还活着（关闭会被 destroyOnClose 放行），
+    // 上一次 'moved'/'resized' 之后用户可能又挪过。
+    await windowManager?.persistCurrent().catch(() => {})
     // 在途 bootstrap 会看到取消信号并在下一个 await 边界放弃；等它返回再清理，
     // 这样即使它已经 spawn 过内核，也能通过 stopAll 收掉。
     while (context === null && !startSettled) {
@@ -453,4 +549,14 @@ app.on('before-quit', (event) => {
   })
 })
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+/**
+ * 关掉所有窗口**不**退出应用：这是常驻代理的前提。窗口只是一个视图，
+ * 代理、内核与连接/日志采集器都在后台继续运行，从托盘「打开主窗口」重新建窗口。
+ * 真正的退出只有托盘「退出」（→ `app.quit()` → 上面的 `before-quit`）。
+ *
+ * 这条规则在三个平台一致：即便 macOS 的通行做法是留在 Dock，这里也不需要——
+ * 托盘图标就是常驻入口，窗口关掉后仍然可见。
+ */
+app.on('window-all-closed', () => {
+  // 刻意留空。不要加 `app.quit()`：那会让「关窗 = 退出」，把常驻代理变回前台应用。
+})

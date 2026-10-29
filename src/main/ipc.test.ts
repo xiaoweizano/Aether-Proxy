@@ -120,6 +120,7 @@ async function harness(options: {
   connections?: ConnectionsCollector | null
   logs?: LogsCollector | null
   openPath?: (target: string) => Promise<string>
+  windowControls?: { minimize(): void; toggleMaximize(): void; close(): void }
 } = {}): Promise<Harness> {
   const dir = await mkdtemp(path.join(tmpdir(), 'aether-ipc-'))
   const controller = {
@@ -180,7 +181,8 @@ async function harness(options: {
   const deps = {
     settingsFile: path.join(dir, 'settings.json'),
     ...(options.pickImportFile === undefined ? {} : { pickImportFile: options.pickImportFile }),
-    ...(options.openPath === undefined ? {} : { openPath: options.openPath })
+    ...(options.openPath === undefined ? {} : { openPath: options.openPath }),
+    ...(options.windowControls === undefined ? {} : { windowControls: options.windowControls })
   }
   registerIpcHandlers(ipc, ctx, deps)
   return { dir, ctx, ipc, deps, controller, supervisor, stopAll }
@@ -685,7 +687,8 @@ describe('registerUnavailableHandlers', () => {
       IPC.logsCountsGet,
       IPC.logsCountsPush,
       IPC.nodeSwitch,
-      IPC.configOpenDir
+      IPC.configOpenDir,
+      IPC.windowControl
     ]
     expect([...ipc.handlers.keys()].sort()).toEqual([...expected].sort())
 
@@ -705,7 +708,8 @@ describe('registerUnavailableHandlers', () => {
       IPC.coreRestart,
       IPC.configImport,
       IPC.configPickImport,
-      IPC.configOpenDir
+      IPC.configOpenDir,
+      IPC.windowControl
     ]) {
       const result = (await invoke(ipc, channel, { sourcePath: 'x' })) as {
         ok: boolean
@@ -845,5 +849,62 @@ describe('configPickImport', () => {
     const result = (await invoke(h.ipc, IPC.configPickImport)) as { ok: boolean; message: string }
     expect(result.ok).toBe(false)
     expect(result.message).toBe('无法打开文件选择框')
+  })
+})
+
+describe('windowControl', () => {
+  function controls() {
+    return { minimize: vi.fn(), toggleMaximize: vi.fn(), close: vi.fn() }
+  }
+
+  it('三个动作分别转发到对应控制，且都回 ok:true', async () => {
+    const wc = controls()
+    const h = await harness({ windowControls: wc })
+
+    expect(await invoke(h.ipc, IPC.windowControl, 'minimize')).toEqual({ ok: true })
+    expect(await invoke(h.ipc, IPC.windowControl, 'maximize')).toEqual({ ok: true })
+    expect(await invoke(h.ipc, IPC.windowControl, 'close')).toEqual({ ok: true })
+    expect(wc.minimize).toHaveBeenCalledTimes(1)
+    expect(wc.toggleMaximize).toHaveBeenCalledTimes(1)
+    // close 只关窗口；通道层没有任何「退出应用」的能力，退出只走托盘/before-quit。
+    expect(wc.close).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['未知动作', 'quit'],
+    ['路径', 'C:/Windows/System32'],
+    ['对象', { action: 'close' }],
+    ['空串', ''],
+    ['数字', 1],
+    ['null', null]
+  ])('拒绝未知输入（%s），不触碰窗口', async (_label, value) => {
+    const wc = controls()
+    const h = await harness({ windowControls: wc })
+
+    expect(await invoke(h.ipc, IPC.windowControl, value)).toEqual({ ok: false })
+    expect(wc.minimize).not.toHaveBeenCalled()
+    expect(wc.toggleMaximize).not.toHaveBeenCalled()
+    expect(wc.close).not.toHaveBeenCalled()
+  })
+
+  it('渲染层多传的参数不会到达窗口控制', async () => {
+    const wc = controls()
+    const h = await harness({ windowControls: wc })
+
+    await invoke(h.ipc, IPC.windowControl, 'close', 'C:/Windows/System32', { x: 0, y: 0 })
+
+    // 窗口控制的接口只有零参方法：多余参数无处可去。
+    expect(wc.close).toHaveBeenCalledTimes(1)
+    expect(wc.close.mock.calls[0]).toEqual([])
+  })
+
+  it('没有窗口管理器时返回 ok:false，而不是抛错', async () => {
+    const h = await harness()
+    const result = (await invoke(h.ipc, IPC.windowControl, 'close')) as {
+      ok: boolean
+      message: string
+    }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBeTruthy()
   })
 })

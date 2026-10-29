@@ -11,7 +11,8 @@ import type {
   PickImportResult,
   ProxyGroupView,
   SimpleResult,
-  StatsSample
+  StatsSample,
+  WindowAction
 } from '../shared/ipc'
 import type { Mode } from '../shared/types'
 
@@ -57,7 +58,10 @@ const api: AetherApi = {
   switchNode: (input: NodeSwitchInput) =>
     ipcRenderer.invoke(IPC.nodeSwitch, nodeSwitchInput(input)) as Promise<NodeSwitchResult>,
   // 不传任何参数：主进程只打开自己的配置目录，渲染层没有指定路径的能力。
-  openConfigDir: () => ipcRenderer.invoke(IPC.configOpenDir) as Promise<SimpleResult>
+  openConfigDir: () => ipcRenderer.invoke(IPC.configOpenDir) as Promise<SimpleResult>,
+  // 只转发动作名。调用方多传的参数不会进入主进程，主进程也只认白名单里的三个动作。
+  windowControl: (action: WindowAction) =>
+    ipcRenderer.invoke(IPC.windowControl, action) as Promise<SimpleResult>
 }
 
 contextBridge.exposeInMainWorld('aether', api)
