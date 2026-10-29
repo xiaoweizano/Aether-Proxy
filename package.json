@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:tokens": "node scripts/check-tokens.mjs",
-    "measure:memory": "node scripts/measure-memory.mjs"
+    "measure:memory": "node scripts/measure-memory.mjs",
+    "e2e": "tsx scripts/e2e.mjs",
+    "soak": "node scripts/soak.mjs"
   },
   "dependencies": {
     "koffi": "^3.3.4",
