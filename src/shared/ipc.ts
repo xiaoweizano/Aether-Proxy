@@ -140,6 +140,11 @@ export interface StatsSample extends TrafficView {
 /** 主进程可以执行的窗口动作。`close` 是销毁窗口，不是退出应用。 */
 export type WindowAction = 'minimize' | 'maximize' | 'close'
 
+/** 窗口状态推送。标题栏据此在「最大化」与「还原」之间切换按钮语义。 */
+export interface WindowStateView {
+  maximized: boolean
+}
+
 export const IPC = {
   statusGet: 'app:status',
   proxiesGet: 'core:proxies',
@@ -160,7 +165,11 @@ export const IPC = {
    * 窗控：只接受 `minimize` / `maximize` / `close` 三个动作名，不接受任何路径或坐标。
    * `close` 销毁主窗口，代理与内核继续运行（常驻代理）。
    */
-  windowControl: 'window:control'
+  windowControl: 'window:control',
+  /** 窗口状态：最大化/还原。主进程单向推送，窗口重建后也会补一份。 */
+  windowStatePush: 'window:state-push',
+  /** 首屏补拉当前窗口状态（防止推送早于订阅）。 */
+  windowStateGet: 'window:state'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
@@ -203,4 +212,8 @@ export interface AetherApi {
    * 代理与内核继续在托盘里运行。
    */
   windowControl(action: WindowAction): Promise<SimpleResult>
+  /** 当前是否最大化；按钮文字与图标据此切换。 */
+  getWindowState(): Promise<WindowStateView>
+  /** 订阅最大化状态变化；返回取消订阅函数。 */
+  onWindowState(cb: (state: WindowStateView) => void): () => void
 }

@@ -45,6 +45,8 @@ interface Api {
   switchNode(input: { group: string; node: string }): Promise<unknown>
   openConfigDir(): Promise<unknown>
   windowControl(action: 'minimize' | 'maximize' | 'close'): Promise<unknown>
+  getWindowState(): Promise<unknown>
+  onWindowState(cb: (state: { maximized: boolean }) => void): () => void
   onStats(cb: (sample: unknown) => void): () => void
   onConnections(cb: (snapshot: unknown) => void): () => void
   onLogCounts(cb: (counts: unknown) => void): () => void
@@ -70,10 +72,12 @@ describe('preload', () => {
       'getLogCounts',
       'getProxies',
       'getStatus',
+      'getWindowState',
       'importConfig',
       'onConnections',
       'onLogCounts',
       'onStats',
+      'onWindowState',
       'openConfigDir',
       'restartCore',
       'setMode',
@@ -87,6 +91,22 @@ describe('preload', () => {
     await a.windowControl('minimize', 'C:/Windows/System32', { x: 0, y: 0 })
 
     expect(invoke.mock.calls).toEqual([[IPC.windowControl, 'minimize']])
+  })
+
+  it('窗口状态可以首屏补拉，也能订阅推送', () => {
+    const a = api()
+    void a.getWindowState()
+    expect(invoke.mock.calls).toEqual([[IPC.windowStateGet]])
+
+    const seen: unknown[] = []
+    const off = a.onWindowState((state) => seen.push(state))
+    const handlers = listeners.get(IPC.windowStatePush) ?? []
+    expect(handlers).toHaveLength(1)
+    handlers[0]?.({}, { maximized: true })
+    expect(seen).toEqual([{ maximized: true }])
+
+    off()
+    expect(listeners.get(IPC.windowStatePush)).toHaveLength(0)
   })
 
   it('每个方法转发到对应通道', async () => {

@@ -43,7 +43,8 @@ body {
 /* ── 外壳：40px 标题栏 + 232px 侧栏 ───────────────────── */
 .app {
   display: grid;
-  grid-template-rows: 40px 1fr;
+  /* 行高来自 token，标题栏可见高度与主进程的 TITLE_BAR_HEIGHT 保持一致。 */
+  grid-template-rows: var(--titlebar-height) 1fr;
   height: 100vh;
 }
 
@@ -53,21 +54,39 @@ body {
   min-height: 0;
 }
 
-/* ── 标题栏（装饰性，无窗控逻辑） ─────────────────────── */
+/*
+ * ── 标题栏：拖动区 + 三个系统窗口按钮 ─────────────────
+ *
+ * 窗口是 frame: false（见 src/main/index.ts 的 createBrowserWindow），标题栏
+ * 由这一层绘制，因此这里同时是**唯一**的窗口拖动入口。
+ *
+ * 两条规则缺一不可：
+ *   - 整条标题栏 `-webkit-app-region: drag`，否则无边框窗口拖不动；
+ *   - 按钮容器 `-webkit-app-region: no-drag`，否则拖动区会把点击吞掉，
+ *     三个按钮全部失效。
+ * 这两条无法在 jsdom 里验证（没有真实命中测试），改动时必须人工确认。
+ *
+ * 双击拖动区最大化/还原由 Windows + Electron 原生处理，不需要（也不应该）
+ * 在渲染层再挂 dblclick：实测原生已经切换，渲染层收不到该事件。
+ */
 .titlebar {
   display: flex;
   align-items: center;
+  height: var(--titlebar-height);
   background: var(--sidebar);
   border-bottom: 1px solid var(--border);
-  padding-left: 18px;
+  padding-left: var(--titlebar-inset);
   user-select: none;
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
 .titlebar-mark {
-  width: 18px;
-  height: 18px;
-  margin-right: 9px;
-  border-radius: 5px;
+  width: var(--titlebar-mark-size);
+  height: var(--titlebar-mark-size);
+  flex: none;
+  margin-right: var(--titlebar-mark-gap);
+  border-radius: var(--titlebar-mark-radius);
   background: var(--card-2);
   border: 1px solid var(--border-2);
 }
@@ -77,6 +96,52 @@ body {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-dim);
+}
+
+/* 标题栏中间留白也属于拖动区；它在 flex 里吃掉剩余宽度。 */
+.titlebar-drag {
+  flex: 1;
+  align-self: stretch;
+}
+
+/* 按钮组必须退出拖动区，否则点击会被窗口拖动吞掉。 */
+.titlebar-buttons {
+  display: flex;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.titlebar-btn {
+  display: grid;
+  place-items: center;
+  width: var(--titlebar-btn-width);
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: default;
+}
+
+.titlebar-btn:hover {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+/* 关闭按钮悬停回到 Windows 的系统红；这是整份样式里唯一使用红色的非错误位。 */
+.titlebar-btn-close:hover {
+  background: var(--danger);
+  color: var(--on-accent);
+}
+
+.titlebar-icon {
+  width: var(--titlebar-icon-size);
+  height: var(--titlebar-icon-size);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
 }
 
 /* ── 侧栏 ─────────────────────────────────────────────── */

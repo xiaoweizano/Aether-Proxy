@@ -11,7 +11,8 @@ import type {
   NodeSwitchResult,
   PickImportResult,
   ProxyGroupView,
-  SimpleResult
+  SimpleResult,
+  WindowStateView
 } from '../shared/ipc'
 import type { ProxiesResponse } from './core/link'
 import type { AppContext } from './bootstrap'
@@ -42,6 +43,8 @@ export interface IpcDeps {
    * 渲染层不会因为「No handler registered」把标题栏按钮变成抛错。
    */
   windowControls?: WindowControls
+  /** 当前窗口的最大化状态；装配失败时缺省，首屏补拉会回「未最大化」。 */
+  windowState?: () => WindowStateView
 }
 
 const MODES: readonly Mode[] = ['rule', 'global', 'direct']
@@ -180,6 +183,8 @@ export function registerUnavailableHandlers(ipcMain: IpcMainLike): void {
   ipcMain.handle(IPC.logsCountsPush, () => {})
   // 装配失败时没有窗口管理器：按钮仍然可点，只是什么也不会发生。
   ipcMain.handle(IPC.windowControl, (): SimpleResult => ({ ok: false, message }))
+  ipcMain.handle(IPC.windowStateGet, (): WindowStateView => ({ maximized: false }))
+  ipcMain.handle(IPC.windowStatePush, () => {})
 }
 
 type ImportOutcome =
@@ -336,6 +341,13 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
     if (deps.windowControls === undefined) return { ok: false, message: '窗口不可用' }
     return runWindowAction(deps.windowControls, action)
   })
+
+  ipcMain.handle(
+    IPC.windowStateGet,
+    (): WindowStateView => deps.windowState?.() ?? { maximized: false }
+  )
+  // 推送通道由主进程单向发送；注册空 handler 让通道集合完整。
+  ipcMain.handle(IPC.windowStatePush, () => {})
 
   // 推送通道由主进程单向发送；注册空 handler 让通道集合与不可用变体保持一致。
   ipcMain.handle(IPC.connectionsPush, () => {})

@@ -10,6 +10,7 @@ import { useLogCounts } from './hooks/useLogCounts'
 import { useProxies } from './hooks/useProxies'
 import { useStats } from './hooks/useStats'
 import { useStatus } from './hooks/useStatus'
+import { useWindowMaximized } from './hooks/useWindowMaximized'
 import { ConnectionsPage } from './pages/ConnectionsPage'
 import { NodesPage } from './pages/NodesPage'
 import { Placeholder } from './pages/Placeholder'
@@ -25,6 +26,8 @@ export function App() {
   const dialFailures = useLogCounts()
   // 连接快照同理只订阅一次：仪表盘的活跃连接数在离开连接页后仍要更新。
   const connections = useConnections()
+  // 标题栏的中间按钮需要知道当前是否最大化：按钮文字是「下一步动作」。
+  const maximized = useWindowMaximized()
   const connectionSummary = useMemo(
     () => summarizeConnections(connections),
     [connections]
@@ -65,7 +68,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar />
+      <TitleBar maximized={maximized} />
       <div className="shell">
         <Sidebar status={status} page={page} onNavigate={setPage} />
         <main className="main">

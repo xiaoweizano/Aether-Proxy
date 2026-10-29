@@ -1,4 +1,4 @@
-import type { SimpleResult, WindowAction } from '../../shared/ipc'
+import type { SimpleResult, WindowAction, WindowStateView } from '../../shared/ipc'
 
 /**
  * 主窗口的生命周期模型。
@@ -227,13 +227,18 @@ export interface WindowManager<W extends ManagedWindow> extends WindowControls {
   /** 窗口销毁时调用，清掉引用；只清被销毁的那一个。 */
   forget(win: W): void
   isMaximized(): boolean
+  /** 当前窗口状态视图；没有窗口时视为未最大化。 */
+  state(): WindowStateView
+  /** 订阅最大化状态变化（创建的窗口会挂 `maximize`/`unmaximize`，由 index.ts 转发）。 */
+  onStateChange(listener: (state: WindowStateView) => void): () => void
+  /** 主进程侧通知：窗口进入了新的最大化状态。 */
+  notifyState(): void
   /**
    * 把当前几何写回 `settings.json`。窗口被移动/缩放时与关窗前各调一次。
    *
-   * 用户没有动过窗口时保存的是**当初申请**的矩形，而不是 Electron 回报的矩形：
-   * 无边框窗口每重建一次，回报的 bounds 会比申请的宽/高多出几像素（实测 1.25 倍
-   * DPI 下每次 +1~6px，来源是隐藏的调整边框）。照回报值存会让窗口每次启动都长大一点，
-   * 几十次之后就没法用了。
+   * 无边框窗口每重建一次，Electron 回报的 bounds 会比申请的宽/高多出几像素
+   * （实测 1.25 倍 DPI 下每次 +1~6px，来源是隐藏的调整边框）。存盘时减掉这份
+   * 常量差值，等于永远存回「申请的」矩形，因此不会逐次膨胀。
    */
   persistCurrent(): Promise<void>
 }
@@ -275,6 +280,10 @@ export function createWindowManager<W extends ManagedWindow>(
    * 矩形，用户拖动/缩放后再叠加真实位移，因此不会累积。
    */
   let frameInset: WindowRect | null = null
+  /** 最大化状态的订阅者；标题栏靠它切换「最大化 / 还原」。 */
+  const stateListeners = new Set<(state: WindowStateView) => void>()
+  /** 上一份发出去的窗口状态；没有窗口时是 null，避免只凭 false 猜「刚创建」。 */
+  let lastState: WindowStateView | null = null
 
   function alive(win: W | null): win is W {
     return win !== null && !win.isDestroyed()
@@ -334,6 +343,33 @@ export function createWindowManager<W extends ManagedWindow>(
     if (current !== win) return
     current = null
     frameInset = null
+    // 窗口没了：下一次创建时状态是「未最大化」，必须重新广播一次。
+    lastState = null
+  }
+
+  function state(): WindowStateView {
+    return { maximized: isMaximized() }
+  }
+
+  /** 状态真的变化才通知；重复的 maximize 事件不应让渲染层白刷。 */
+  function notifyState(): void {
+    const next = state()
+    if (lastState !== null && lastState.maximized === next.maximized) return
+    lastState = next
+    for (const listener of stateListeners) {
+      try {
+        listener(next)
+      } catch (error) {
+        deps.onError?.(error)
+      }
+    }
+  }
+
+  function onStateChange(listener: (state: WindowStateView) => void): () => void {
+    stateListeners.add(listener)
+    return () => {
+      stateListeners.delete(listener)
+    }
   }
 
   function minimize(): void {
@@ -381,6 +417,9 @@ export function createWindowManager<W extends ManagedWindow>(
     toggleMaximize,
     close,
     isMaximized,
+    state,
+    onStateChange,
+    notifyState,
     persistCurrent
   }
 }

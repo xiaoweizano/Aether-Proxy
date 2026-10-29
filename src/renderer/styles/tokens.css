@@ -55,6 +55,15 @@
   --chart-line: 2px;
   --chart-baseline: 1.2px;
 
+  /* 标题栏：40px 带子 + 三个 46px 系统按钮（DESIGN.md「Title bar」）。 */
+  --titlebar-height: 40px;
+  --titlebar-btn-width: 46px;
+  --titlebar-mark-size: 18px;
+  --titlebar-mark-radius: 5px;
+  --titlebar-mark-gap: 9px;
+  --titlebar-inset: 18px;
+  --titlebar-icon-size: 10px;
+
   /* 连接表：行高与列宽来自设计文档「行解剖」；域名列自适应，无固定宽度。 */
   --conn-row-height: 28px;
   --conn-col-time: 72px;

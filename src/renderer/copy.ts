@@ -4,6 +4,16 @@ export const copy = {
     name: 'Aether',
     logo: 'A'
   },
+  /**
+   * 标题栏窗口按钮的无障碍名。三个按钮都是纯图标，没有可见文字，
+   * 所以 `aria-label` / `title` 是它们唯一的可读名字。
+   */
+  window: {
+    minimize: '最小化',
+    maximize: '最大化',
+    restore: '还原',
+    close: '关闭'
+  },
   nav: {
     labelPrimary: '主导航',
     labelSecondary: '辅助导航',

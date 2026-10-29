@@ -12,7 +12,8 @@ import type {
   ProxyGroupView,
   SimpleResult,
   StatsSample,
-  WindowAction
+  WindowAction,
+  WindowStateView
 } from '../shared/ipc'
 import type { Mode } from '../shared/types'
 
@@ -61,7 +62,15 @@ const api: AetherApi = {
   openConfigDir: () => ipcRenderer.invoke(IPC.configOpenDir) as Promise<SimpleResult>,
   // 只转发动作名。调用方多传的参数不会进入主进程，主进程也只认白名单里的三个动作。
   windowControl: (action: WindowAction) =>
-    ipcRenderer.invoke(IPC.windowControl, action) as Promise<SimpleResult>
+    ipcRenderer.invoke(IPC.windowControl, action) as Promise<SimpleResult>,
+  getWindowState: () => ipcRenderer.invoke(IPC.windowStateGet) as Promise<WindowStateView>,
+  onWindowState: (cb) => {
+    const listener = (_event: unknown, state: WindowStateView): void => cb(state)
+    ipcRenderer.on(IPC.windowStatePush, listener)
+    return () => {
+      ipcRenderer.removeListener(IPC.windowStatePush, listener)
+    }
+  }
 }
 
 contextBridge.exposeInMainWorld('aether', api)

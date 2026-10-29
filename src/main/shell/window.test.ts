@@ -500,3 +500,65 @@ describe('index.ts 的窗口接线', () => {
     expect(source).not.toMatch(/\bcreateWindow\(/)
   })
 })
+
+describe('窗口状态通知', () => {
+  it('notifyState 只在实际状态变化时通知订阅者', async () => {
+    const { manager, created } = harness()
+    await manager.show()
+    const seen: boolean[] = []
+    manager.onStateChange((state) => seen.push(state.maximized))
+
+    // 首份状态可能显式发一次：调用方 notifyState 时才推送。
+    manager.notifyState()
+    expect(seen).toEqual([false])
+
+    created[0]!.maximize()
+    manager.notifyState()
+    expect(seen).toEqual([false, true])
+
+    // 重复的 maximize 事件不应让标题栏白刷。
+    manager.notifyState()
+    expect(seen).toEqual([false, true])
+  })
+
+  it('state() 反映当前最大化状态；没有窗口时为未最大化', async () => {
+    const { manager, created } = harness()
+    expect(manager.state()).toEqual({ maximized: false })
+
+    await manager.show()
+    created[0]!.maximize()
+    expect(manager.state()).toEqual({ maximized: true })
+
+    created[0]!.destroy()
+    manager.forget(created[0]!)
+    expect(manager.state()).toEqual({ maximized: false })
+  })
+
+  it('退订后不再收到通知', async () => {
+    const { manager, created } = harness()
+    await manager.show()
+    const seen: boolean[] = []
+    const off = manager.onStateChange((state) => seen.push(state.maximized))
+    off()
+
+    created[0]!.maximize()
+    manager.notifyState()
+    expect(seen).toEqual([])
+  })
+
+  it('窗口重建后状态重新广播一次（新窗口是未最大化）', async () => {
+    const { manager, created } = harness()
+    await manager.show()
+    const seen: boolean[] = []
+    manager.onStateChange((state) => seen.push(state.maximized))
+
+    created[0]!.maximize()
+    manager.notifyState()
+    created[0]!.destroy()
+    manager.forget(created[0]!)
+
+    await manager.show()
+    manager.notifyState()
+    expect(seen).toEqual([true, false])
+  })
+})

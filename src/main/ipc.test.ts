@@ -121,6 +121,7 @@ async function harness(options: {
   logs?: LogsCollector | null
   openPath?: (target: string) => Promise<string>
   windowControls?: { minimize(): void; toggleMaximize(): void; close(): void }
+  windowState?: () => { maximized: boolean }
 } = {}): Promise<Harness> {
   const dir = await mkdtemp(path.join(tmpdir(), 'aether-ipc-'))
   const controller = {
@@ -182,7 +183,8 @@ async function harness(options: {
     settingsFile: path.join(dir, 'settings.json'),
     ...(options.pickImportFile === undefined ? {} : { pickImportFile: options.pickImportFile }),
     ...(options.openPath === undefined ? {} : { openPath: options.openPath }),
-    ...(options.windowControls === undefined ? {} : { windowControls: options.windowControls })
+    ...(options.windowControls === undefined ? {} : { windowControls: options.windowControls }),
+    ...(options.windowState === undefined ? {} : { windowState: options.windowState })
   }
   registerIpcHandlers(ipc, ctx, deps)
   return { dir, ctx, ipc, deps, controller, supervisor, stopAll }
@@ -688,7 +690,9 @@ describe('registerUnavailableHandlers', () => {
       IPC.logsCountsPush,
       IPC.nodeSwitch,
       IPC.configOpenDir,
-      IPC.windowControl
+      IPC.windowControl,
+      IPC.windowStateGet,
+      IPC.windowStatePush
     ]
     expect([...ipc.handlers.keys()].sort()).toEqual([...expected].sort())
 
@@ -906,5 +910,22 @@ describe('windowControl', () => {
     }
     expect(result.ok).toBe(false)
     expect(result.message).toBeTruthy()
+  })
+})
+
+describe('windowState', () => {
+  it('首屏补拉返回当前最大化状态', async () => {
+    const h = await harness({ windowState: () => ({ maximized: true }) })
+    expect(await invoke(h.ipc, IPC.windowStateGet)).toEqual({ maximized: true })
+  })
+
+  it('没有窗口管理器时回「未最大化」，不抛错', async () => {
+    const h = await harness()
+    expect(await invoke(h.ipc, IPC.windowStateGet)).toEqual({ maximized: false })
+  })
+
+  it('状态推送通道存在（渲染层误调用不会得到 No handler）', async () => {
+    const h = await harness()
+    expect(await invoke(h.ipc, IPC.windowStatePush, { maximized: true })).toBeUndefined()
   })
 })

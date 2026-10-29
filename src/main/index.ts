@@ -378,6 +378,13 @@ function createBrowserWindow(requested: WindowRect): ShellWindow {
   win.on('resized', rememberBounds)
   win.on('moved', rememberBounds)
 
+  win.on('maximize', () => {
+    windowManager?.notifyState()
+  })
+  win.on('unmaximize', () => {
+    windowManager?.notifyState()
+  })
+
   win.once('closed', () => {
     if (windowManager !== null) windowManager.forget(win)
     // 没有窗口就没有消费者，继续每 2 秒重连只会拖住事件循环。
@@ -461,6 +468,13 @@ async function start(): Promise<void> {
     }
   })
 
+  // 窗口状态变化推给渲染层：标题栏据此在「最大化」与「还原」之间切换按钮语义。
+  windowManager.onStateChange((state) => {
+    const win = mainWindow()
+    if (win === null) return
+    win.webContents.send(IPC.windowStatePush, state)
+  })
+
   try {
     context = await bootstrap({
       userDataDir,
@@ -486,7 +500,8 @@ async function start(): Promise<void> {
       // 目标目录由 IPC 层用 ctx.configDir 给出，渲染层无法指定路径。
       openPath: (target) => shell.openPath(target),
       // 窗控只认动作名；close 销毁窗口，不退出应用。
-      windowControls: windowManager
+      windowControls: windowManager,
+      windowState: () => windowManager?.state() ?? { maximized: false }
     })
     // 托盘必须在窗口之前建：窗口没起来时它就是唯一能打开主窗口的入口。
     // 图标/原生托盘失败不得阻断启动：窗口仍要出现，用户至少能看状态。
