@@ -619,9 +619,11 @@ function handleShutdown(): void {
   // context 还没建好就没有代理可还原，也没有内核要停：直接放行普通退出。
   if (ctx === null) return
   shutdownHandled = true
-  // 关机路径不得再走 before-quit 的清理：那会等内核 3 秒宽限期。
-  cleanupDone = true
   stopTray()
+  // 注意：**不要**在这里置 `cleanupDone`。关机可能被取消（Windows 允许别的应用
+  // 拦下关机，用户也可能撤销），此后应用还活着；`cleanupDone` 一旦置真，
+  // 之后任何 before-quit 都会直接放行、跳过 stopAll，代理不还原、内核不终止。
+  // 关机与正常退出是两条独立路径，各自的幂等由 `shutdownHandled` 与 `quitting` 保证。
   void createShutdownHandler(ctx.createShutdownActions())()
 }
 
