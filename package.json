@@ -11,7 +11,8 @@
     "pretest": "npm run check:tokens",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:tokens": "node scripts/check-tokens.mjs"
+    "check:tokens": "node scripts/check-tokens.mjs",
+    "measure:memory": "node scripts/measure-memory.mjs"
   },
   "dependencies": {
     "koffi": "^3.3.4",
