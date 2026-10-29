@@ -15,8 +15,9 @@ export interface TopBarProps {
 function statusLine(status: AppStatusView | null): { label: string; tone: StatusTone } {
   const tone = statusTone(status)
   if (tone === 'ready') return { label: copy.status.connected, tone }
-  if (tone === 'pending') return { label: copy.status.reconnecting, tone }
   if (tone === 'error') return { label: copy.status.coreError, tone }
+  // 重连中沿用灰色档，但文案必须说清正在恢复，不能笼统写「未连接」。
+  if (status?.status === 'reconnecting') return { label: copy.status.reconnecting, tone }
   return { label: copy.status.disconnected, tone }
 }
 

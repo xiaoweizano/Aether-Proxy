@@ -187,11 +187,6 @@ body {
   background: var(--danger);
 }
 
-/* 自动重连中：既不是健康的绿，也不是终态的红。 */
-.sidebar-meta-dot.pending {
-  background: var(--accent);
-}
-
 /* ── 主内容 ───────────────────────────────────────────── */
 .main {
   display: flex;
@@ -249,15 +244,6 @@ body {
 .topbar-status.error .status-dot {
   background: var(--danger);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
-}
-
-/* 自动重连中：用强调色表示「在恢复」，区别于红（失败）与灰（未连接）。 */
-.topbar-status.pending {
-  color: var(--accent);
-}
-
-.topbar-status.pending .status-dot {
-  background: var(--accent);
 }
 
 .topbar-right {
