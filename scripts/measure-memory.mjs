@@ -2,6 +2,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
+  exitCodeFor,
   formatReport,
   parseProcessOutput,
   resolveAppRoot,
@@ -22,6 +23,10 @@ import {
  *      把工具失败与「超标」分开，CI 里才不会把一次坏掉的测量当成侥幸。
  *
  * 这里刻意不做任何「估算」：拿不到进程列表就报错退出，而不是打印一个 0 MB。
+ *
+ * **只测打包版**：开发态的 `npm run dev` 跑的是 `node_modules/electron/dist/electron.exe`，
+ * 进程名不是 `Aether.exe`，而且没有 ASAR 打包、没有 V8 代码缓存，数字与发布版不可比。
+ * 要判断 150 MB 预算，必须用打包产物（electron-builder 的 portable / 安装版）运行。
  */
 
 const execFileAsync = promisify(execFile)
@@ -112,7 +117,7 @@ async function main() {
   if (options.once) {
     const summary = summarise(await enumerate())
     print(summary)
-    return summary.overBudget ? 1 : 0
+    return exitCodeFor(summary)
   }
 
   const deadline = Date.now() + options.minutes * 60_000
@@ -126,7 +131,7 @@ async function main() {
   }
   console.log(`\n最终一次采样（${options.minutes} 分钟内每 ${SAMPLE_INTERVAL_MS / 1000} 秒一次）：`)
   print(last)
-  return last.overBudget ? 1 : 0
+  return exitCodeFor(last)
 }
 
 main().then(

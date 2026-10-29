@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MEMORY_BUDGET_MB,
   PROCESS_FAMILIES,
+  exitCodeFor,
   formatMb,
   formatReport,
   normaliseProcessName,
@@ -266,5 +267,58 @@ describe('输出格式', () => {
       )
     )
     expect(formatReport(summary).join('\n')).toContain('超出预算')
+  })
+
+  it('什么都没在跑时不写「在预算内」：那是没测到，不是达标', () => {
+    const text = formatReport(summariseMemory([])).join('\n')
+    expect(text).toContain('未测量')
+    expect(text).not.toContain('在预算内')
+  })
+
+  it('只有内核、没有 Aether.exe 时结论是未判定', () => {
+    const summary = summariseMemory(
+      parseProcessOutput(
+        JSON.stringify([{ ProcessName: 'mihomo', Id: 5, WorkingSet64: 5 * MB }])
+      )
+    )
+    const text = formatReport(summary).join('\n')
+    expect(text).toContain('未判定')
+    expect(text).not.toContain('在预算内')
+  })
+})
+
+describe('exitCodeFor', () => {
+  const summarise = (bytes) =>
+    summariseMemory(
+      parseProcessOutput(
+        JSON.stringify([{ ProcessName: 'Aether', Id: 1, WorkingSet64: bytes }])
+      )
+    )
+
+  it('在预算内 0，超出 1', () => {
+    expect(exitCodeFor(summarise(100 * MB))).toBe(0)
+    expect(exitCodeFor(summarise(200 * MB))).toBe(1)
+  })
+
+  it('缺少 Aether.exe 时是 2（没测到），不是 0（通过）', () => {
+    const summary = summariseMemory(
+      parseProcessOutput(JSON.stringify([{ ProcessName: 'mihomo', Id: 5, WorkingSet64: MB }]))
+    )
+    expect(exitCodeFor(summary)).toBe(2)
+  })
+
+  it('外部内核虽大但已排除时仍按真实总量判定', () => {
+    const records = parseProcessOutput(
+      JSON.stringify([
+        { ProcessName: 'Aether', Id: 1, WorkingSet64: 100 * MB, ExecutablePath: 'C:\A\Aether.exe' },
+        {
+          ProcessName: 'mihomo',
+          Id: 2,
+          WorkingSet64: 400 * MB,
+          ExecutablePath: 'D:\Other\mihomo.exe'
+        }
+      ])
+    )
+    expect(exitCodeFor(summariseMemory(records, { appRoot: 'C:\A' }))).toBe(0)
   })
 })

@@ -212,6 +212,18 @@ export function resolveAppRoot(records) {
 }
 
 /**
+ * 汇总结果 → 退出码。
+ * 0 在预算内 / 1 超出预算 / 2 没测到（缺少 Aether.exe）。2 单独一个码，
+ * 是为了让 CI 区分「真的超标」与「根本没测到应用」：后者绝不能被当成通过。
+ * @param {{ overBudget: boolean, missingFamilies: string[] }} summary
+ * @returns {0 | 1 | 2}
+ */
+export function exitCodeFor(summary) {
+  if (summary.missingFamilies.includes('Aether.exe')) return summary.overBudget ? 1 : 2
+  return summary.overBudget ? 1 : 0
+}
+
+/**
  * @param {string | null} target
  * @param {string} root
  * @returns {boolean}
@@ -273,9 +285,18 @@ export function formatReport(summary) {
     )
   }
 
-  const verdict = summary.overBudget ? '超出预算' : '在预算内'
-  lines.push(
-    `  合计 ${formatMb(summary.totalBytes)} MB / ${summary.budgetMb} MB — ${verdict}`
-  )
+  /**
+   * 没有 Aether.exe 时不能给出「在预算内」：那不是「达标」，是「没测到」。
+   * 退出码仍按 overBudget 走（缺席的进程系列是有效测量），但结论行必须如实。
+   */
+  const verdict =
+    summary.entries.length === 0
+      ? '未测量（没有受测进程在运行）'
+      : summary.missingFamilies.includes('Aether.exe')
+        ? '未判定（缺少 Aether.exe）'
+        : summary.overBudget
+          ? '超出预算'
+          : '在预算内'
+  lines.push(`  合计 ${formatMb(summary.totalBytes)} MB / ${summary.budgetMb} MB — ${verdict}`)
   return lines
 }
