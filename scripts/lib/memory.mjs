@@ -12,6 +12,9 @@
  * 由 `missingFamilies` 如实标出。
  */
 
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+
 /** 两个受测进程系列。`Aether.exe` 覆盖 Electron 的主进程、GPU、渲染与工具进程。 */
 export const PROCESS_FAMILIES = Object.freeze(['Aether.exe', 'mihomo.exe'])
 
@@ -234,6 +237,55 @@ function isUnder(target, root) {
   const child = normalise(target)
   const parent = normalise(root)
   return child === parent || child.startsWith(`${parent}\\`)
+}
+
+/**
+ * 进程枚举。一次 PowerShell 调用同时覆盖两个系列：
+ * - `Get-Process` 给 `WorkingSet64`（私有与共享页都在内，就是任务管理器的那一列）；
+ * - `Get-CimInstance Win32_Process` 补 `ExecutablePath`，用于区分同名的别家内核。
+ * 先按名字粗筛，路径在 JS 侧再核对，避免 PowerShell 的字符串匹配规则参与判定。
+ *
+ * 放在 lib 里而不是 `measure-memory.mjs` 里，是为了让长稳采样脚本
+ * （`scripts/soak.mjs`）复用同一份枚举与解析，而不是各抄一份、日后只修一处。
+ */
+export const ENUMERATE_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+# Node 按 UTF-8 读 stdout；不设这一行，中文路径会被 PowerShell 按系统代码页输出成乱码。
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$kernels = @(Get-Process -Name mihomo -ErrorAction SilentlyContinue)
+$apps = @(Get-Process -Name Aether -ErrorAction SilentlyContinue)
+$all = @($apps) + @($kernels)
+if ($all.Count -eq 0) { Write-Output 'null'; exit 0 }
+$paths = @{}
+foreach ($p in Get-CimInstance Win32_Process -Filter "Name = 'Aether.exe' OR Name = 'mihomo.exe'") {
+  $paths[[int]$p.ProcessId] = $p.ExecutablePath
+}
+$rows = foreach ($p in $all) {
+  [pscustomobject]@{
+    ProcessName   = $p.ProcessName
+    Id            = $p.Id
+    WorkingSet64  = $p.WorkingSet64
+    ExecutablePath = $paths[[int]$p.Id]
+  }
+}
+ConvertTo-Json -InputObject @($rows) -Depth 3 -Compress
+`
+
+const execFileAsync = promisify(execFile)
+
+/**
+ * 跑一次枚举并解析。测量工具坏掉时抛错（调用方据此退出 2），
+ * 绝不返回一个看起来「通过」的空结果。
+ * @returns {Promise<{ name: string, pid: number, bytes: number, path: string | null }[]>}
+ */
+export async function enumerateProcesses() {
+  const { stdout } = await execFileAsync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ENUMERATE_SCRIPT],
+    { maxBuffer: 4 * 1024 * 1024, windowsHide: true }
+  )
+  return parseProcessOutput(stdout)
 }
 
 /**
