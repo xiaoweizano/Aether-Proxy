@@ -132,7 +132,7 @@ body {
 
 /* 关闭按钮悬停回到 Windows 的系统红；这是整份样式里唯一使用红色的非错误位。 */
 .titlebar-btn-close:hover {
-  background: var(--danger);
+  background: var(--close-hover);
   color: var(--on-accent);
 }
 

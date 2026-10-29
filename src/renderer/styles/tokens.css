@@ -17,6 +17,12 @@
   --danger: #F87171;
   /* 图表专用：网格线只在流量图里出现，按 DESIGN.md 属于局部值。 */
   --chart-grid: #1E2126;
+  /*
+   * 窗口关闭按钮的悬停底色：Windows 的系统关闭红（同 a-cards.html 的 #C42B1C）。
+   * 它不是失败红 `--danger`（后者按 The One Red Card Rule 只做描边与文字，
+   * 从不成块填充），两者不可互换。
+   */
+  --close-hover: #C42B1C;
 
   /* 圆角 */
   --radius-card: 14px;
