@@ -12,8 +12,23 @@ export interface WindowBounds {
   height: number
 }
 
+/**
+ * 开机自启的默认值：**启用**。
+ *
+ * 系统代理是持久设置：用户开着代理关机，重启后若 Aether 没有自启，注册表仍指向
+ * 一个没人监听的端口，所有遵守系统代理的应用都会断网。自启在这里是安全网，
+ * 不是便利功能（产品设计 D31 / 规格 app-lifecycle「开机自启」）。
+ */
+export const DEFAULT_AUTOSTART = true
+
 export interface Settings {
   proxyEnabled: boolean
+  /**
+   * 开机自启的持久化意向。**缺省表示从未显式设置过**，调用方按 `DEFAULT_AUTOSTART`
+   * 理解；这样旧版本写下的 `{ proxyEnabled: false }` 读出来是「默认启用」而不是
+   * 「用户关掉了」。`writeAutostart` 一旦写过，这个键就固定下来。
+   */
+  autostart?: boolean
   /** 主窗口上次的位置与尺寸；没有记录时缺省。 */
   windowBounds?: WindowBounds
 }
@@ -34,12 +49,20 @@ export async function readSettings(file: string): Promise<Settings> {
   try {
     const parsed = JSON.parse(await readFile(file, 'utf8')) as Partial<Settings>
     const settings: Settings = { proxyEnabled: parsed.proxyEnabled === true }
+    // 只有明确的布尔值才算「用户设置过」；缺键、`null`、字符串一律按默认启用，
+    // 由调用方用 `resolveAutostart` 统一解释。写回时也只认布尔值，避免把畸形值固化。
+    if (typeof parsed.autostart === 'boolean') settings.autostart = parsed.autostart
     const windowBounds = parseWindowBounds(parsed.windowBounds)
     if (windowBounds !== null) settings.windowBounds = windowBounds
     return settings
   } catch {
     return { ...DEFAULTS }
   }
+}
+
+/** 持久化意向 → 生效值。缺键（从未设置过）按 `DEFAULT_AUTOSTART`。 */
+export function resolveAutostart(settings: Pick<Settings, 'autostart'>): boolean {
+  return settings.autostart ?? DEFAULT_AUTOSTART
 }
 
 /**
@@ -54,6 +77,8 @@ export async function writeSettings(file: string, settings: Settings): Promise<v
   const previous = await readSettings(file)
   const merged: Settings = {
     proxyEnabled: settings.proxyEnabled,
+    ...(previous.autostart !== undefined ? { autostart: previous.autostart } : {}),
+    ...(settings.autostart !== undefined ? { autostart: settings.autostart } : {}),
     ...(previous.windowBounds !== undefined ? { windowBounds: previous.windowBounds } : {}),
     ...(settings.windowBounds !== undefined ? { windowBounds: settings.windowBounds } : {})
   }
@@ -72,5 +97,16 @@ export async function writeWindowBounds(file: string, windowBounds: WindowBounds
     file,
     JSON.stringify({ ...previous, windowBounds } satisfies Settings, null, 2)
   )
+}
+
+/**
+ * 只更新开机自启，不动 `proxyEnabled` / `windowBounds`。
+ *
+ * 与 `writeWindowBounds` 同一个理由：自启开关是第三条独立写入路径（设置页），
+ * 给出一条只写自己字段的窄接口，就不必先猜 `proxyEnabled` 再整份覆盖。
+ */
+export async function writeAutostart(file: string, autostart: boolean): Promise<void> {
+  const previous = await readSettings(file)
+  await writeFileAtomic(file, JSON.stringify({ ...previous, autostart } satisfies Settings, null, 2))
 }
 

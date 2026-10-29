@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { readSettings, writeSettings, writeWindowBounds } from './settings'
+import {
+  DEFAULT_AUTOSTART,
+  readSettings,
+  resolveAutostart,
+  writeAutostart,
+  writeSettings,
+  writeWindowBounds
+} from './settings'
 
 let file: string
 
@@ -25,6 +32,47 @@ describe('settings', () => {
   it('JSON 损坏时返回默认关闭', async () => {
     await writeFile(file, '{ not json', 'utf8')
     expect(await readSettings(file)).toEqual({ proxyEnabled: false })
+  })
+})
+
+describe('autostart', () => {
+  it('缺键时按默认启用（旧文件不视为用户关闭）', async () => {
+    await writeFile(file, JSON.stringify({ proxyEnabled: false }), 'utf8')
+    expect(resolveAutostart(await readSettings(file))).toBe(DEFAULT_AUTOSTART)
+    expect(DEFAULT_AUTOSTART).toBe(true)
+  })
+
+  it('缺键 + 文件不存在时也是默认启用', async () => {
+    expect(resolveAutostart(await readSettings(file))).toBe(true)
+  })
+
+  it('显式关闭后往返读回 false', async () => {
+    await writeAutostart(file, false)
+    expect(await readSettings(file)).toEqual({ proxyEnabled: false, autostart: false })
+    expect(resolveAutostart(await readSettings(file))).toBe(false)
+  })
+
+  it('再次开启后往返读回 true，且保留其它字段', async () => {
+    await writeAutostart(file, false)
+    await writeSettings(file, { proxyEnabled: true })
+    await writeAutostart(file, true)
+
+    expect(await readSettings(file)).toEqual({ proxyEnabled: true, autostart: true })
+  })
+
+  it('写窗口位置与代理开关都不会把自启意图改掉', async () => {
+    await writeAutostart(file, false)
+    await writeWindowBounds(file, { x: 0, y: 0, width: 1280, height: 800 })
+    await writeSettings(file, { proxyEnabled: true })
+
+    expect((await readSettings(file)).autostart).toBe(false)
+  })
+
+  it('非布尔值不被当作设置过，读出来仍是默认启用', async () => {
+    for (const value of ['false', 1, null, {}]) {
+      await writeFile(file, JSON.stringify({ proxyEnabled: false, autostart: value }), 'utf8')
+      expect(await readSettings(file)).toEqual({ proxyEnabled: false })
+    }
   })
 })
 

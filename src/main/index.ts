@@ -6,6 +6,10 @@ import { bootstrap, type AppContext } from './bootstrap'
 import { registerIpcHandlers, registerUnavailableHandlers } from './ipc'
 import { readSettings, writeWindowBounds } from './settings'
 import {
+  ensureAutostartAtStartup,
+  type AutostartHost
+} from './shell/autostart'
+import {
   createTray,
   createTrayActions,
   readTraySnapshot,
@@ -212,6 +216,29 @@ function stopTray(): void {
   }
   trayController?.dispose()
   trayController = null
+}
+
+/**
+ * Electron 侧的开机自启适配器：`shell/autostart.ts` 里唯一未覆盖的一段。
+ *
+ * `path` 显式给 `process.execPath`：Windows 的启动项指向这个可执行文件，
+ * 不给时 Electron 会按当前进程推导，开发态下就是 node_modules 里的 electron.exe。
+ * 应用了 `args: ['--hidden']` 吗？没有——M1 的窗口本就要出现，且托盘才是常驻入口；
+ * 加参数会改变「重启后用户看到什么」，不在本任务范围内。
+ *
+ * 开发态由模型层直接跳过 `setLoginItem`，这个适配器不会主动判断 `isPackaged`，
+ * 判断只有一处（`AutostartHost.isPackaged`），避免两处逻辑不一致。
+ */
+function createAutostartHost(): AutostartHost {
+  return {
+    isPackaged: app.isPackaged,
+    setLoginItem(openAtLogin) {
+      app.setLoginItemSettings({ openAtLogin, path: process.execPath })
+    },
+    getLoginItem() {
+      return app.getLoginItemSettings().openAtLogin === true
+    }
+  }
 }
 
 const SHOT_SETTLE_MS = 500
@@ -462,6 +489,21 @@ async function pickImportFile(): Promise<string | null> {
 async function start(): Promise<void> {
   const userDataDir = app.getPath('userData')
   const settingsFile = path.join(userDataDir, 'settings.json')
+  const autostartHost = createAutostartHost()
+
+  /**
+   * 首次运行按默认启用注册启动项（**仅当设置文件里从未写过 `autostart`**）。
+   * 失败不阻断启动：设置页会读到「系统未开启」并如实显示，用户仍可手动打开。
+   * --shot 用的是临时 profile，跳过以免往冒烟机器上留启动项。
+   */
+  if (!shotMode) {
+    const outcome = await ensureAutostartAtStartup(autostartHost, settingsFile).catch(
+      (): 'failed' => 'failed'
+    )
+    if (outcome === 'failed') {
+      console.warn('[aether] 首次运行注册开机自启失败，设置页会显示系统未开启')
+    }
+  }
 
   /**
    * 窗口管理器要在 `bootstrap` 之前就绪：bootstrap 可能要跑几秒（校验/spawn 内核），
@@ -516,7 +558,8 @@ async function start(): Promise<void> {
       openPath: (target) => shell.openPath(target),
       // 窗控只认动作名；close 销毁窗口，不退出应用。
       windowControls: windowManager,
-      windowState: () => windowManager?.state() ?? { maximized: false }
+      windowState: () => windowManager?.state() ?? { maximized: false },
+      autostart: autostartHost
     })
     // 托盘必须在窗口之前建：窗口没起来时它就是唯一能打开主窗口的入口。
     // 图标/原生托盘失败不得阻断启动：窗口仍要出现，用户至少能看状态。
@@ -533,7 +576,8 @@ async function start(): Promise<void> {
     // 窗口仍然是无边框的——这里必须交出真实管理器，否则错误页上的三个按钮全是死键。
     registerUnavailableHandlers(ipcMain, {
       windowControls: windowManager ?? undefined,
-      windowState: () => windowManager?.state() ?? { maximized: false }
+      windowState: () => windowManager?.state() ?? { maximized: false },
+      autostart: autostartHost
     })
   } finally {
     // 取消信号与清理都靠这个标志判断「启动流程已经不会再 spawn 内核了」。

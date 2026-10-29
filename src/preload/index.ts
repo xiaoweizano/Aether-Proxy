@@ -3,6 +3,8 @@ import { IPC } from '../shared/ipc'
 import type {
   AetherApi,
   AppStatusView,
+  AutostartSetResult,
+  AutostartStateView,
   ConnectionsSnapshot,
   DialFailureCounts,
   ModeSetResult,
@@ -71,7 +73,11 @@ const api: AetherApi = {
     return () => {
       ipcRenderer.removeListener(IPC.windowStatePush, listener)
     }
-  }
+  },
+  getAutostart: () => ipcRenderer.invoke(IPC.autostartGet) as Promise<AutostartStateView>,
+  // 只转发布尔值：调用方塞进来的对象/字符串在主进程侧也会被拒绝，这里再收窄一次。
+  setAutostart: (enabled) =>
+    ipcRenderer.invoke(IPC.autostartSet, enabled === true) as Promise<AutostartSetResult>
 }
 
 contextBridge.exposeInMainWorld('aether', api)

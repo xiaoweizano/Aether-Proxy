@@ -29,6 +29,16 @@ export function makeAether(overrides: Partial<AetherApi> = {}): AetherApi {
     windowControl: vi.fn(async () => ({ ok: true })),
     getWindowState: vi.fn(async () => ({ maximized: false })),
     onWindowState: vi.fn(() => () => {}),
+    getAutostart: vi.fn(async () => ({
+      enabled: true,
+      persisted: true,
+      appliesToSystem: true,
+      systemDiffers: false
+    })),
+    setAutostart: vi.fn(async () => ({
+      ok: true,
+      state: { enabled: true, persisted: true, appliesToSystem: true, systemDiffers: false }
+    })),
     ...overrides
   }
 }

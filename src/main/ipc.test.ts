@@ -13,6 +13,7 @@ import { CoreLink as RealCoreLink } from './core/link'
 import type { WebSocketLike } from './ws'
 import { ConnectionsCollector } from './connections'
 import { LogsCollector } from './logs'
+import type { AutostartHost } from './shell/autostart'
 import { IPC } from '../shared/ipc'
 import type { ConnectionsSnapshot, DialFailureCounts } from '../shared/ipc'
 import {
@@ -122,6 +123,7 @@ async function harness(options: {
   openPath?: (target: string) => Promise<string>
   windowControls?: { minimize(): void; toggleMaximize(): void; close(): void }
   windowState?: () => { maximized: boolean }
+  autostart?: AutostartHost
 } = {}): Promise<Harness> {
   const dir = await mkdtemp(path.join(tmpdir(), 'aether-ipc-'))
   const controller = {
@@ -184,7 +186,8 @@ async function harness(options: {
     ...(options.pickImportFile === undefined ? {} : { pickImportFile: options.pickImportFile }),
     ...(options.openPath === undefined ? {} : { openPath: options.openPath }),
     ...(options.windowControls === undefined ? {} : { windowControls: options.windowControls }),
-    ...(options.windowState === undefined ? {} : { windowState: options.windowState })
+    ...(options.windowState === undefined ? {} : { windowState: options.windowState }),
+    ...(options.autostart === undefined ? {} : { autostart: options.autostart })
   }
   registerIpcHandlers(ipc, ctx, deps)
   return { dir, ctx, ipc, deps, controller, supervisor, stopAll }
@@ -693,7 +696,9 @@ describe('registerUnavailableHandlers', () => {
       IPC.statsGet,
       IPC.windowControl,
       IPC.windowStateGet,
-      IPC.windowStatePush
+      IPC.windowStatePush,
+      IPC.autostartGet,
+      IPC.autostartSet
     ]
     expect([...ipc.handlers.keys()].sort()).toEqual([...expected].sort())
 
@@ -931,8 +936,104 @@ describe('windowState', () => {
   })
 })
 
-describe('registerUnavailableHandlers 的窗控', () => {
-  it('装配失败时窗口按钮仍然可用（无边框窗口必须能关）', async () => {
+/** 假的系统启动项：`setLoginItem` 改它，`getLoginItem` 读它。 */
+function fakeAutostart(options: { packaged?: boolean; openAtLogin?: boolean } = {}): {
+  host: AutostartHost
+  registry: { openAtLogin: boolean }
+  setLoginItem: ReturnType<typeof vi.fn>
+} {
+  const registry = { openAtLogin: options.openAtLogin ?? false }
+  const setLoginItem = vi.fn((openAtLogin: boolean) => {
+    registry.openAtLogin = openAtLogin
+  })
+  return {
+    host: {
+      isPackaged: options.packaged ?? true,
+      setLoginItem,
+      getLoginItem: () => registry.openAtLogin
+    },
+    registry,
+    setLoginItem
+  }
+}
+
+describe('autostart', () => {
+  it('打包态读取系统实际值', async () => {
+    const h = await harness({ autostart: fakeAutostart({ openAtLogin: true }).host })
+    expect(await invoke(h.ipc, IPC.autostartGet)).toEqual({
+      enabled: true,
+      persisted: true,
+      appliesToSystem: true,
+      systemDiffers: false
+    })
+  })
+
+  it('开发态回持久化意向并标注不作用于系统', async () => {
+    const fake = fakeAutostart({ packaged: false })
+    const h = await harness({ autostart: fake.host })
+
+    expect(await invoke(h.ipc, IPC.autostartGet)).toMatchObject({
+      appliesToSystem: false,
+      enabled: true
+    })
+    expect(fake.setLoginItem).not.toHaveBeenCalled()
+  })
+
+  it('设置关闭后落盘，并回真实状态', async () => {
+    const fake = fakeAutostart({ openAtLogin: true })
+    const h = await harness({ autostart: fake.host })
+
+    const result = (await invoke(h.ipc, IPC.autostartSet, false)) as {
+      ok: boolean
+      state: { enabled: boolean }
+    }
+    expect(result.ok).toBe(true)
+    expect(result.state.enabled).toBe(false)
+    expect(JSON.parse(await readFile(h.deps.settingsFile, 'utf8'))).toMatchObject({
+      autostart: false
+    })
+  })
+
+  it('系统拒绝改动时 ok:false，状态是系统的真实值', async () => {
+    const fake = fakeAutostart({ openAtLogin: true })
+    fake.setLoginItem.mockImplementation(() => {})
+    const h = await harness({ autostart: fake.host })
+
+    const result = (await invoke(h.ipc, IPC.autostartSet, false)) as {
+      ok: boolean
+      state: { enabled: boolean; error?: string }
+    }
+    expect(result.ok).toBe(false)
+    expect(result.state.enabled).toBe(true)
+    expect(result.state.error).toBeTruthy()
+  })
+
+  it('只接受布尔值：字符串与数字不会被当成开关写进系统', async () => {
+    const fake = fakeAutostart({ openAtLogin: true })
+    const h = await harness({ autostart: fake.host })
+
+    for (const value of ['false', 0, 1, null, {}]) {
+      const result = (await invoke(h.ipc, IPC.autostartSet, value)) as { ok: boolean }
+      expect(result.ok).toBe(false)
+    }
+    expect(fake.setLoginItem).not.toHaveBeenCalled()
+  })
+
+  it('没有适配器时读取回「不可用」，设置回 ok:false 而不是抛错', async () => {
+    const h = await harness()
+    const state = (await invoke(h.ipc, IPC.autostartGet)) as {
+      appliesToSystem: boolean
+      error?: string
+    }
+    expect(state.appliesToSystem).toBe(false)
+    expect(state.error).toBeTruthy()
+
+    const result = (await invoke(h.ipc, IPC.autostartSet, true)) as { ok: boolean }
+    expect(result.ok).toBe(false)
+  })
+})
+
+describe('registerUnavailableHandlers 的窗控', () => {  it('装配失败时窗口按钮仍然可用（无边框窗口必须能关）', async () => {
     const ipc = fakeIpc()
     const wc = { minimize: vi.fn(), toggleMaximize: vi.fn(), close: vi.fn() }
     registerUnavailableHandlers(ipc, {

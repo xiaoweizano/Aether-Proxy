@@ -145,6 +145,28 @@ export interface WindowStateView {
   maximized: boolean
 }
 
+/**
+ * 开机自启的当前状态。全部字段都是事实，渲染层只负责显示：
+ * - `enabled` 是开关唯一允许显示的位置（打包态 = Windows 的实际启动项）；
+ * - `appliesToSystem` 为 false 时（开发态）开关只是意向，界面必须写「仅打包版生效」；
+ * - `systemDiffers` 为 true 时系统实际值与持久化意向不一致，界面以系统为准并提示；
+ * - `error` 是主进程给出的短句（读取/写入失败），缺省表示没有异常。
+ */
+export interface AutostartStateView {
+  enabled: boolean
+  persisted: boolean
+  appliesToSystem: boolean
+  systemDiffers: boolean
+  error?: string
+}
+
+export interface AutostartSetResult {
+  ok: boolean
+  /** 动作之后重新读到的真实状态；失败时开关按它回位。 */
+  state: AutostartStateView
+}
+
+
 export const IPC = {
   statusGet: 'app:status',
   proxiesGet: 'core:proxies',
@@ -171,7 +193,13 @@ export const IPC = {
   /** 窗口状态：最大化/还原。主进程单向推送，窗口重建后也会补一份。 */
   windowStatePush: 'window:state-push',
   /** 首屏补拉当前窗口状态（防止推送早于订阅）。 */
-  windowStateGet: 'window:state'
+  windowStateGet: 'window:state',
+  /**
+   * 开机自启：读取实际状态 / 设置。读取在打包态回 `getLoginItemSettings().openAtLogin`，
+   * 开发态回持久化意向并标注 `appliesToSystem: false`（不写注册表，见账本 Ruling）。
+   */
+  autostartGet: 'startup:get',
+  autostartSet: 'startup:set'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
@@ -223,4 +251,11 @@ export interface AetherApi {
   getWindowState(): Promise<WindowStateView>
   /** 订阅最大化状态变化；返回取消订阅函数。 */
   onWindowState(cb: (state: WindowStateView) => void): () => void
+  /** 开机自启的实际状态；开发态回持久化意向并带 `appliesToSystem: false`。 */
+  getAutostart(): Promise<AutostartStateView>
+  /**
+   * 设置开机自启。返回动作之后重新读到的状态：失败时 `ok: false` 且 `state`
+   * 是真实状态，渲染层据此把开关拨回去，不保留一个假的「已开启」。
+   */
+  setAutostart(enabled: boolean): Promise<AutostartSetResult>
 }

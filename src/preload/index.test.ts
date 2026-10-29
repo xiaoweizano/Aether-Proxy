@@ -47,6 +47,8 @@ interface Api {
   windowControl(action: 'minimize' | 'maximize' | 'close'): Promise<unknown>
   getStats(): Promise<unknown>
   getWindowState(): Promise<unknown>
+  getAutostart(): Promise<unknown>
+  setAutostart(enabled: boolean): Promise<unknown>
   onWindowState(cb: (state: { maximized: boolean }) => void): () => void
   onStats(cb: (sample: unknown) => void): () => void
   onConnections(cb: (snapshot: unknown) => void): () => void
@@ -69,6 +71,7 @@ describe('preload', () => {
     expect(Object.keys(api()).sort()).toEqual([
       'disableProxy',
       'enableProxy',
+      'getAutostart',
       'getConnections',
       'getLogCounts',
       'getProxies',
@@ -82,6 +85,7 @@ describe('preload', () => {
       'onWindowState',
       'openConfigDir',
       'restartCore',
+      'setAutostart',
       'setMode',
       'switchNode',
       'windowControl'
@@ -95,8 +99,26 @@ describe('preload', () => {
     expect(invoke.mock.calls).toEqual([[IPC.windowControl, 'minimize']])
   })
 
-  it('窗口状态可以首屏补拉，也能订阅推送', () => {
-    const a = api()
+  it('自启状态可读，设置只转发布尔值', async () => {
+    const a = api() as unknown as {
+      getAutostart(): Promise<unknown>
+      setAutostart(...args: unknown[]): Promise<unknown>
+    }
+    await a.getAutostart()
+    await a.setAutostart(true)
+    await a.setAutostart(false)
+    // 非布尔值被收窄成 false，不会把任意真值当「开启」送进主进程。
+    await a.setAutostart('yes')
+
+    expect(invoke.mock.calls).toEqual([
+      [IPC.autostartGet],
+      [IPC.autostartSet, true],
+      [IPC.autostartSet, false],
+      [IPC.autostartSet, false]
+    ])
+  })
+
+  it('窗口状态可以首屏补拉，也能订阅推送', () => {    const a = api()
     void a.getWindowState()
     expect(invoke.mock.calls).toEqual([[IPC.windowStateGet]])
 

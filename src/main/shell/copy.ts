@@ -44,3 +44,22 @@ export const trayCopy = {
     return MODE_TEXT[mode]
   }
 }
+
+/**
+ * 开机自启的失败说明（主进程侧）。
+ *
+ * 只放**失败原因**这一句；开关标签、警告与「仅打包版生效」属于界面文案，
+ * 在渲染层的 `src/renderer/copy.ts`——那几句必须和开关同屏可读，不能藏进提示。
+ */
+export const autostartCopy = {
+  /** `getLoginItemSettings` 抛错：现在显示的是上次保存的设置，不是 Windows 的实际状态。 */
+  readFailed: '无法读取系统的开机启动项，当前显示的是上次保存的设置',
+  /** `setLoginItemSettings` 抛错：注册表写入被拒绝。 */
+  systemFailed: '无法写入开机启动项，开关已恢复原状',
+  /** 回读 `getLoginItemSettings` 抛错：无法确认改动是否生效。 */
+  verifyFailed: '无法确认开机启动项是否生效，开关已恢复原状',
+  /** 回读值与目标值不一致（组策略、杀软或权限拦下了写入）。 */
+  notApplied: '系统没有接受开机自启的改动，开关已恢复原状',
+  /** 意向落盘失败：系统已变，但下次启动记不住。 */
+  saveFailed: '设置未能保存，重启应用后会丢失这次改动'
+}

@@ -3,6 +3,8 @@ import type { Mode } from '../shared/types'
 import { IPC } from '../shared/ipc'
 import type {
   AppStatusView,
+  AutostartSetResult,
+  AutostartStateView,
   ConnectionsSnapshot,
   DialFailureCounts,
   ImportResult,
@@ -19,6 +21,7 @@ import type { ProxiesResponse } from './core/link'
 import type { AppContext } from './bootstrap'
 import { importFromFile } from './config/import'
 import { writeSettings } from './settings'
+import { readAutostart, setAutostart, type AutostartHost } from './shell/autostart'
 import { isWindowAction, runWindowAction, type WindowControls } from './shell/window'
 
 /** 只依赖 Electron IpcMain 的 handle 形状，避免测试环境加载 electron 模块。 */
@@ -46,6 +49,11 @@ export interface IpcDeps {
   windowControls?: WindowControls
   /** 当前窗口的最大化状态；装配失败时缺省，首屏补拉会回「未最大化」。 */
   windowState?: () => WindowStateView
+  /**
+   * 开机自启的 Electron 适配器。缺省（装配失败、测试未注入）时通道仍注册，
+   * 但读取回「不可用」，设置直接 `{ok:false}`——渲染层不会收到 "No handler"。
+   */
+  autostart?: AutostartHost
 }
 
 const MODES: readonly Mode[] = ['rule', 'global', 'direct']
@@ -161,7 +169,11 @@ export function toProxyGroups(res: ProxiesResponse): ProxyGroupView[] {
  */
 export function registerUnavailableHandlers(
   ipcMain: IpcMainLike,
-  windowDeps: { windowControls?: WindowControls; windowState?: () => WindowStateView } = {}
+  windowDeps: {
+    windowControls?: WindowControls
+    windowState?: () => WindowStateView
+    autostart?: AutostartHost
+  } = {}
 ): void {
   const message = '应用初始化失败，请查看日志后重启'
   ipcMain.handle(IPC.statusGet, (): AppStatusView => ({
@@ -204,6 +216,28 @@ export function registerUnavailableHandlers(
     (): WindowStateView => windowDeps.windowState?.() ?? { maximized: false }
   )
   ipcMain.handle(IPC.windowStatePush, () => {})
+
+  // 装配失败时自启仍可读（设置页不该变成死页），但从这里读不碰系统注册表：
+  // 失败装配下应用状态本身不可信，宁可回「不可用」也不冒险改启动项。
+  ipcMain.handle(IPC.autostartGet, (): AutostartStateView => unavailableAutostart())
+  ipcMain.handle(IPC.autostartSet, (): AutostartSetResult => ({
+    ok: false,
+    state: unavailableAutostart()
+  }))
+}
+
+/**
+ * 自启适配器缺席时的状态。`appliesToSystem: false` 是事实——没有适配器就无法注册；
+ * `error` 说明原因，界面不会画出一个看起来能用、点了却什么都没有的开关。
+ */
+function unavailableAutostart(): AutostartStateView {
+  return {
+    enabled: false,
+    persisted: false,
+    appliesToSystem: false,
+    systemDiffers: false,
+    error: '应用初始化失败，无法读取开机自启设置'
+  }
 }
 
 type ImportOutcome =
@@ -383,6 +417,27 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
   )
   // 推送通道由主进程单向发送；注册空 handler 让通道集合完整。
   ipcMain.handle(IPC.windowStatePush, () => {})
+
+  /**
+   * 自启读取。入参一律忽略——`getLoginItemSettings` 不接受任何来自渲染层的输入。
+   * 适配器缺席时回「不可用」，而不是抛错让设置页整页失败。
+   */
+  ipcMain.handle(IPC.autostartGet, async (): Promise<AutostartStateView> => {
+    if (deps.autostart === undefined) return unavailableAutostart()
+    return readAutostart(deps.autostart, deps.settingsFile)
+  })
+
+  /**
+   * 自启设置。只接受布尔值：字符串 "false"、0、对象一律拒绝，避免 `Boolean(x)`
+   * 把任何真值当「开启」写进系统启动项。
+   */
+  ipcMain.handle(IPC.autostartSet, async (_event, enabled: unknown): Promise<AutostartSetResult> => {
+    if (deps.autostart === undefined) return { ok: false, state: unavailableAutostart() }
+    if (typeof enabled !== 'boolean') {
+      return { ok: false, state: await readAutostart(deps.autostart, deps.settingsFile) }
+    }
+    return setAutostart(deps.autostart, deps.settingsFile, enabled)
+  })
 
   // 推送通道由主进程单向发送；注册空 handler 让通道集合与不可用变体保持一致。
   ipcMain.handle(IPC.connectionsPush, () => {})
