@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aether — 仪表盘</title>
+<style>
+  :root {
+    --bg:        #0A0B0D;
+    --sidebar:   #0C0D10;
+    --card:      #141619;
+    --card-2:    #181B1F;
+    --border:    #23262B;
+    --border-2:  #2C3037;
+    --text:      #E8E9EB;
+    --dim:       #9AA0A6;
+    --faint:     #7E858C;
+    --accent:    #4A8CFF;
+    --accent-bg: rgba(74,140,255,.12);
+    --success:   #34D399;
+    --danger:    #F87171;
+    --radius:    14px;
+    --radius-sm: 8px;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+            "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    --num: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: var(--font); font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { display: grid; grid-template-rows: 40px 1fr; height: 100vh; }
+
+  ::selection { background: rgba(74,140,255,.28); color: #fff; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 6px; border: 2px solid var(--bg); }
+
+  /* ── Windows title bar ─────────────────────────────────── */
+  .titlebar {
+    display: flex; align-items: center;
+    background: var(--sidebar);
+    border-bottom: 1px solid var(--border);
+    padding-left: 18px;
+    user-select: none;
+  }
+  .titlebar .mark {
+    width: 18px; height: 18px; border-radius: 5px;
+    background: linear-gradient(145deg, #2B2F36, #111316);
+    border: 1px solid var(--border-2);
+    margin-right: 9px;
+  }
+  .titlebar .name {
+    font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--dim);
+  }
+  .titlebar .spacer { flex: 1; height: 100%; }
+  .winbtns { display: flex; height: 100%; }
+  .winbtns span {
+    width: 46px; display: grid; place-items: center;
+    color: var(--dim); font-size: 11px;
+  }
+  .winbtns span:hover { background: var(--card-2); color: var(--text); }
+  .winbtns .close:hover { background: #C42B1C; color: #fff; }
+
+  /* ── shell ─────────────────────────────────────────────── */
+  .shell { display: grid; grid-template-columns: 232px 1fr; min-height: 0; }
+
+  /* ── sidebar ───────────────────────────────────────────── */
+  .side {
+    background: var(--sidebar);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    padding: 18px 12px 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 22px; }
+  .brand .logo {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: #0E0F12;
+    border: 1px solid var(--border-2);
+    display: grid; place-items: center;
+    color: var(--text); font-size: 15px; font-weight: 600;
+  }
+  .brand .word { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+
+  nav { display: flex; flex-direction: column; gap: 2px; }
+  .navitem {
+    display: flex; align-items: center; gap: 11px;
+    height: 38px; padding: 0 11px;
+    border-radius: var(--radius-sm);
+    color: var(--dim); text-decoration: none;
+    font-size: 13px;
+  }
+  .navitem:hover { background: var(--card); color: var(--text); }
+  .navitem.active { background: var(--accent-bg); color: var(--accent); }
+  .navitem svg { width: 17px; height: 17px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; }
+  .side .grow { flex: 1; }
+  .side .meta {
+    padding: 12px 11px 2px;
+    border-top: 1px solid var(--border);
+    color: var(--faint); font-size: 11px;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .side .meta .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+
+  /* ── main ──────────────────────────────────────────────── */
+  .main { padding: 20px 24px; overflow-y: auto; min-height: 0; }
+
+  .header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .header h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -.02em; }
+  .status { display: flex; align-items: center; gap: 7px; color: var(--success); font-size: 13px; }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(52,211,153,.12); }
+  .header .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .seg { display: inline-flex; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button {
+    font: inherit; font-size: 12px; height: 26px; padding: 0 13px;
+    border: 0; border-radius: 7px; background: transparent;
+    color: var(--dim); cursor: default;
+  }
+  .seg button.on { background: var(--card-2); color: var(--text); }
+  .pillbtn {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 34px; padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(52,211,153,.35);
+    background: rgba(52,211,153,.10);
+    color: var(--success); font-size: 13px;
+  }
+  .pillbtn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+
+  /* ── cards ─────────────────────────────────────────────── */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    min-width: 0;
+  }
+  .card .label { font-size: 12px; color: var(--dim); }
+  .card .label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .card .iconbtn {
+    width: 24px; height: 24px; border-radius: 7px;
+    display: grid; place-items: center;
+    color: var(--faint); border: 1px solid transparent;
+  }
+  .card .iconbtn:hover { border-color: var(--border-2); color: var(--text); }
+
+  .hero { grid-column: span 2; }
+  .hero .node {
+    display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px;
+  }
+  .hero .node b { font-size: 30px; font-weight: 650; letter-spacing: -.02em; }
+  .chip {
+    display: inline-flex; align-items: center; height: 22px; padding: 0 8px;
+    border-radius: 6px; border: 1px solid var(--border-2);
+    font-size: 11px; color: var(--dim);
+  }
+  .hero .sub { font-size: 12px; color: var(--faint); margin-bottom: 16px; }
+  .hero .sub em { font-style: normal; color: var(--dim); }
+
+  .healthline { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); margin-bottom: 8px; }
+  .healthline .pct { margin-left: auto; color: var(--success); font-family: var(--num); }
+
+  .ticks { display: flex; gap: 2px; height: 22px; align-items: flex-end; margin-bottom: 18px; }
+  .ticks i { flex: 1; height: 100%; border-radius: 1px; background: var(--success); opacity: .85; }
+  .ticks i.miss { height: 55%; background: var(--border-2); opacity: 1; }
+
+  .stats3 { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); padding-top: 14px; }
+  .stats3 .k { font-size: 11px; color: var(--faint); margin-bottom: 5px; }
+  .stats3 .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .core .big { font-size: 26px; font-weight: 650; letter-spacing: -.01em; margin: 14px 0 10px; font-variant-numeric: tabular-nums; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip.solid { border-color: transparent; background: var(--card-2); color: var(--dim); }
+  .core .rows { margin-top: 16px; display: grid; gap: 8px; }
+  .core .rows div { display: flex; justify-content: space-between; font-size: 12px; color: var(--faint); }
+  .core .rows b { color: var(--dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  .stat { display: flex; flex-direction: column; }
+  .stat .head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); margin-bottom: 10px; }
+  .stat .badge {
+    width: 22px; height: 22px; border-radius: 6px;
+    display: grid; place-items: center; font-size: 11px;
+  }
+  .stat .badge.down { background: rgba(74,140,255,.14); color: var(--accent); }
+  .stat .badge.up { background: rgba(52,211,153,.14); color: var(--success); }
+  .stat .badge.conn { background: rgba(251,191,36,.14); color: #FBBF24; }
+  .stat .big { font-size: 28px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .stat .big span { font-size: 14px; font-weight: 500; color: var(--dim); margin-left: 4px; }
+  .stat .foot { margin-top: auto; padding-top: 10px; font-size: 11px; color: var(--faint); }
+
+  .chart { grid-column: 1 / -1; }
+  .chart .head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .chart .head .label { font-size: 13px; color: var(--text); font-weight: 500; }
+  .chart .legend { margin-left: auto; display: flex; gap: 16px; font-size: 11px; color: var(--faint); }
+  .chart .legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .chart .legend .d i { background: var(--accent); }
+  .chart .legend .u i { background: var(--success); }
+  .chart svg { display: block; width: 100%; height: 150px; }
+</style>
+</head>
+<body>
+<!--
+THESIS: 一眼看清"在不在代理、走哪个节点、跑多少流量"，其余的都在下一层。
+OWN-WORLD: 近黑分层、圆角卡片、蓝色单强调、成功态用绿；数字大、标签小、留白撑开。
+STORY: 打开就知道状态；需要排查时去「连接」页。
+FIRST VIEWPORT: 40px 窗控条；232px 侧栏；主区四块：当前节点、内核状态、三张速率卡、流量历史。
+FORM: 卡片式仪表盘（参考 Aircan 的 Windows 适配），seed 未重掷——用户直接钉死参考图。
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance.
+-->
+<div class="titlebar">
+  <div class="mark"></div>
+  <div class="name">Aether</div>
+  <div class="spacer"></div>
+  <div class="winbtns">
+    <span>—</span><span>▢</span><span class="close">✕</span>
+  </div>
+</div>
+
+<div class="shell">
+
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">A</div>
+      <div class="word">Aether</div>
+    </div>
+
+    <nav>
+      <a class="navitem active" href="#">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        仪表盘
+      </a>
+      <a class="navitem" href="#">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>
+        节点
+      </a>
+      <a class="navitem" href="#">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/><circle cx="18" cy="12" r="2"/><circle cx="20" cy="17" r="2"/></svg>
+        连接
+      </a>
+    </nav>
+
+    <div class="grow"></div>
+
+    <nav>
+      <a class="navitem" href="#">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 3.1V3a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 20.9 9H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 2z"/></svg>
+        设置
+      </a>
+      <a class="navitem" href="#">
+        <svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M8 13h8M8 17h5"/></svg>
+        日志
+      </a>
+    </nav>
+
+    <div class="meta"><span class="dot"></span>Version 0.1.0</div>
+  </aside>
+
+  <main class="main">
+
+    <div class="header">
+      <h1>仪表盘</h1>
+      <div class="status"><span class="dot"></span>已连接</div>
+      <div class="right">
+        <div class="seg" role="group" aria-label="代理模式">
+          <button class="on">规则</button><button>全局</button><button>直连</button>
+        </div>
+        <div class="pillbtn"><span class="dot"></span>系统代理 已开启</div>
+      </div>
+    </div>
+
+    <div class="grid">
+
+      <section class="card hero">
+        <div class="label-row"><span class="label">当前节点</span></div>
+
+        <div class="node">
+          <b>HK-01</b>
+          <span class="chip">Proxy</span>
+        </div>
+        <div class="sub">规则模式 · <em>TCP</em> · 443</div>
+
+        <div class="healthline">
+          最近 60 分钟 0 次失败 · 最近 38ms
+          <span class="pct">100%</span>
+        </div>
+        <div class="ticks" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i class="miss"></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+
+        <div class="stats3">
+          <div><div class="k">会话时长</div><div class="v">01:10:54</div></div>
+          <div><div class="k">已用流量</div><div class="v">2.7 MB</div></div>
+          <div><div class="k">工作模式</div><div class="v">规则</div></div>
+        </div>
+      </section>
+
+      <section class="card core">
+        <div class="label-row">
+          <span class="label">内核状态</span>
+          <span class="iconbtn">⟳</span>
+        </div>
+        <div class="big">mihomo · v1.19.32</div>
+        <div class="chips">
+          <span class="chip solid">运行中</span>
+          <span class="chip solid">端口 5566</span>
+          <span class="chip solid">3 个策略组</span>
+        </div>
+        <div class="rows">
+          <div><span>启动于</span><b>13:31:13</b></div>
+          <div><span>内存占用</span><b>68 MB</b></div>
+          <div><span>进程守护</span><b>正常</b></div>
+        </div>
+      </section>
+
+      <section class="card stat">
+        <div class="head"><span class="badge down">↓</span>下载速度</div>
+        <div class="big">0.00<span>MB/s</span></div>
+        <div class="foot">累计 2.0 MB</div>
+      </section>
+
+      <section class="card stat">
+        <div class="head"><span class="badge up">↑</span>上传速度</div>
+        <div class="big">0.00<span>MB/s</span></div>
+        <div class="foot">累计 739.7 KB</div>
+      </section>
+
+      <section class="card stat">
+        <div class="head"><span class="badge conn">◉</span>活跃连接</div>
+        <div class="big">2<span></span></div>
+        <div class="foot">当前 18 条 · 最近 60 秒</div>
+      </section>
+
+      <section class="card chart">
+        <div class="head">
+          <span class="label">流量历史</span>
+          <span class="chip solid">最高 0.54 MB/s</span>
+          <span class="chip solid">平均 0.07 MB/s</span>
+          <span class="legend">
+            <span class="d"><i></i>下载</span>
+            <span class="u"><i></i>上传</span>
+          </span>
+        </div>
+
+        <svg viewBox="0 0 1000 190" preserveAspectRatio="none" role="img" aria-label="最近 60 分钟流量曲线">
+          <g stroke="#1E2126" stroke-width="1">
+            <line x1="0" y1="20" x2="1000" y2="20"/>
+            <line x1="0" y1="65" x2="1000" y2="65"/>
+            <line x1="0" y1="110" x2="1000" y2="110"/>
+            <line x1="0" y1="155" x2="1000" y2="155"/>
+          </g>
+          <path d="M0,178 L60,176 L120,179 L180,172 L240,175 L300,168 L360,174 L420,160 L480,40 L520,86 L560,60 L600,150 L640,58 L680,152 L720,54 L760,154 L800,150 L840,52 L880,158 L920,166 L960,170 L1000,174 L1000,190 L0,190 Z"
+                fill="rgba(74,140,255,.10)"/>
+          <path d="M0,178 L60,176 L120,179 L180,172 L240,175 L300,168 L360,174 L420,160 L480,40 L520,86 L560,60 L600,150 L640,58 L680,152 L720,54 L760,154 L800,150 L840,52 L880,158 L920,166 L960,170 L1000,174"
+                fill="none" stroke="#4A8CFF" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          <path d="M0,184 L120,183 L240,184 L360,182 L480,166 L520,172 L560,168 L600,180 L640,170 L680,182 L720,168 L760,183 L800,180 L840,170 L880,184 L1000,183"
+                fill="none" stroke="#34D399" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        </svg>
+      </section>
+
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,1749 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 6px;
+  border: 2px solid var(--bg);
+}
+
+/* ── 外壳：40px 标题栏 + 232px 侧栏 ───────────────────── */
+.app {
+  display: grid;
+  /* 行高来自 token，标题栏可见高度与主进程的 TITLE_BAR_HEIGHT 保持一致。 */
+  grid-template-rows: var(--titlebar-height) 1fr;
+  height: 100vh;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 0;
+}
+
+/*
+ * ── 标题栏：拖动区 + 三个系统窗口按钮 ─────────────────
+ *
+ * 窗口是 frame: false（见 src/main/index.ts 的 createBrowserWindow），标题栏
+ * 由这一层绘制，因此这里同时是**唯一**的窗口拖动入口。
+ *
+ * 两条规则缺一不可：
+ *   - 整条标题栏 `-webkit-app-region: drag`，否则无边框窗口拖不动；
+ *   - 按钮容器 `-webkit-app-region: no-drag`，否则拖动区会把点击吞掉，
+ *     三个按钮全部失效。
+ * 这两条无法在 jsdom 里验证（没有真实命中测试），改动时必须人工确认。
+ *
+ * 双击拖动区最大化/还原由 Windows + Electron 原生处理，不需要（也不应该）
+ * 在渲染层再挂 dblclick：实测原生已经切换，渲染层收不到该事件。
+ */
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-height);
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--border);
+  padding-left: var(--titlebar-inset);
+  user-select: none;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.titlebar-mark {
+  width: var(--titlebar-mark-size);
+  height: var(--titlebar-mark-size);
+  flex: none;
+  margin-right: var(--titlebar-mark-gap);
+  border-radius: var(--titlebar-mark-radius);
+  background: var(--card-2);
+  border: 1px solid var(--border-2);
+}
+
+.titlebar-name {
+  font-size: var(--fs-label);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* 标题栏中间留白也属于拖动区；它在 flex 里吃掉剩余宽度。 */
+.titlebar-drag {
+  flex: 1;
+  align-self: stretch;
+}
+
+/* 按钮组必须退出拖动区，否则点击会被窗口拖动吞掉。 */
+.titlebar-buttons {
+  display: flex;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.titlebar-btn {
+  display: grid;
+  place-items: center;
+  width: var(--titlebar-btn-width);
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: default;
+}
+
+.titlebar-btn:hover {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+/* 关闭按钮悬停回到 Windows 的系统红；这是整份样式里唯一使用红色的非错误位。 */
+.titlebar-btn-close:hover {
+  background: var(--close-hover);
+  color: var(--on-accent);
+}
+
+.titlebar-icon {
+  width: var(--titlebar-icon-size);
+  height: var(--titlebar-icon-size);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+}
+
+/* ── 侧栏 ─────────────────────────────────────────────── */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 18px 12px 12px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 22px;
+}
+
+.brand-logo {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-control);
+  background: var(--card);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  font-size: calc(var(--fs-body) * 1.15);
+  font-weight: 600;
+}
+
+.brand-word {
+  font-size: calc(var(--fs-body) * 1.3);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 38px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: default;
+}
+
+.nav-item:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.nav-item.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.nav-icon {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+.sidebar-grow {
+  flex: 1;
+}
+
+.sidebar-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 11px 2px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/* 侧栏版本点重复顶栏状态，低一级：ready 绿、失败红、其余灰（无 ring）。 */
+.sidebar-meta-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.sidebar-meta-dot.ready {
+  background: var(--success);
+}
+
+.sidebar-meta-dot.error {
+  background: var(--danger);
+}
+
+/* ── 主内容 ───────────────────────────────────────────── */
+.main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-5) var(--space-6);
+  overflow-y: auto;
+}
+
+.page-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+/* ── 顶栏：标题 + 状态 + 模式/代理控制 ─────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.topbar-status.ready {
+  color: var(--success);
+}
+
+.topbar-status.ready .status-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.topbar-status.error {
+  color: var(--danger);
+}
+
+.topbar-status.error .status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mode-switch-shell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mode-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+/* 没有内核：整组降到 45% 透明度，且没有任何选中段（disabled，不隐藏）。 */
+.mode-switch.disabled {
+  opacity: 0.45;
+}
+
+.mode-switch-option {
+  height: 26px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+
+.mode-switch-option:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.mode-switch-option:disabled {
+  cursor: default;
+}
+
+.mode-switch-option[aria-pressed='true'] {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+.proxy-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+/* 与模式切换同一档：没有内核时禁用并降透明度，不显示「已开启」的绿。 */
+.proxy-pill:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.proxy-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.proxy-pill.on {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.proxy-pill.on .proxy-dot {
+  background: var(--success);
+}
+
+.inline-error {
+  color: var(--danger);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+}
+
+/* ── 仪表盘卡片场 ─────────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--card-gap);
+}
+
+.card {
+  min-width: 0;
+  padding: var(--card-pad-y) var(--card-pad-x);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.card-label {
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.muted {
+  color: var(--text-faint);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: var(--chip-height);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-chip);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+}
+
+.chip.solid {
+  background: var(--card-2);
+  border-color: transparent;
+}
+
+.chip.solid.muted {
+  color: var(--text-faint);
+}
+
+.chip.solid.on {
+  color: var(--success);
+}
+
+/* ── 当前节点（hero） ─────────────────────────────────── */
+.hero {
+  grid-column: span 2;
+}
+
+.node-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.node-name {
+  font-size: var(--fs-node);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.hero-sub {
+  margin-bottom: var(--space-4);
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+.healthline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+/* DESIGN.md 里等宽字体唯一获准出现的地方：健康百分比。 */
+.health-pct {
+  margin-left: auto;
+  color: var(--success);
+  font-family: var(--num);
+  font-size: var(--fs-label);
+}
+
+.health-pct.muted {
+  color: var(--text-faint);
+}
+
+/*
+ * 计数与延迟属于同一句健康陈述：内部只留 4px，外层仍用 8px 与右侧百分比拉开。
+ */
+.health-counts {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/*
+ * 失败计数是「去看日志」的入口：行内文字按钮，不带底色与边框，
+ * 只把句子本身变成可点的信号蓝（DESIGN.md 的 accent 可用作文字）。
+ */
+.health-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-label);
+  text-align: left;
+  cursor: pointer;
+}
+
+.health-action:hover {
+  text-decoration: underline;
+}
+
+.ticks {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--tick-gap);
+  height: var(--tick-height);
+  margin-bottom: var(--card-pad-x);
+}
+
+.tick {
+  flex: 1;
+  height: 100%;
+  border-radius: var(--radius-tick);
+  background: var(--success);
+  opacity: 0.85;
+}
+
+/* 无历史时整条变暗且高度减半：不能被误读成「全绿」。 */
+.ticks.dim .tick {
+  height: 40%;
+  background: var(--border-2);
+  opacity: 1;
+}
+
+.stats3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.stat-key {
+  margin-bottom: var(--space-1);
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.stat-value {
+  font-size: var(--fs-substat);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 内核状态 ─────────────────────────────────────────── */
+.core-version {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--fs-core);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.core-rows {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.core-rows div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+.core-rows b {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.core-rows b.muted {
+  color: var(--text-faint);
+}
+
+/* ── 三张速率卡 ───────────────────────────────────────── */
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+.badge {
+  display: grid;
+  place-items: center;
+  width: var(--chip-height);
+  height: var(--chip-height);
+  border-radius: var(--radius-chip);
+  font-size: var(--fs-micro);
+}
+
+.badge.down {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.badge.up {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+
+.badge.conn {
+  background: var(--card-2);
+  color: var(--text-faint);
+}
+
+.stat-figure {
+  color: var(--text);
+  font-size: var(--fs-stat);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-figure.muted {
+  color: var(--text-faint);
+}
+
+.stat-unit {
+  margin-left: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-unit);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.stat-foot {
+  margin-top: auto;
+  padding-top: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/* ── 流量历史 ─────────────────────────────────────────── */
+.chart {
+  grid-column: 1 / -1;
+}
+
+.chart-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--space-3);
+}
+
+.chart-title {
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.chart-legend {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-4);
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.chart-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.legend-down i {
+  background: var(--accent);
+}
+
+.legend-up i {
+  background: var(--success);
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: var(--chart-height);
+}
+
+.chart-grid line {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.chart.empty .chart-grid line {
+  opacity: 0.35;
+}
+
+.chart-down,
+.chart-up {
+  fill: none;
+  stroke-width: var(--chart-line);
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-down {
+  stroke: var(--accent);
+}
+
+.chart-up {
+  stroke: var(--success);
+}
+
+.chart-area {
+  fill: color-mix(in srgb, var(--accent) 10%, transparent);
+  stroke: none;
+}
+
+.chart-baseline {
+  stroke: var(--accent);
+  stroke-width: var(--chart-baseline);
+  opacity: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-note {
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+  text-align: center;
+}
+
+/* ── 节点页：策略组 + 节点行 ─────────────────────────── */
+/* 页面本身不设滚动容器：主区 `.main` 已经是滚动区域，组多了自然整体滚动。 */
+.nodes-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.nodes-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-label);
+}
+
+.nodes-empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--fs-body);
+}
+
+.node-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+}
+
+.node-group {
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+/* 组头是真正的 disclosure 控件：整行可点，展开时底色升一档。 */
+.node-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--node-head-height);
+  padding: 0 var(--card-pad-x);
+  border: 0;
+  background: var(--card-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.node-group-head:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
+.node-group-chevron {
+  width: var(--node-chevron-width);
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.node-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-group-count {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.node-group-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 折叠用 hidden 属性表达语义；display: flex 会盖掉 UA 的 display: none，必须显式还原。 */
+.node-group-body[hidden] {
+  display: none;
+}
+
+.node-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--node-row-height);
+  padding: 0 var(--card-pad-x);
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.node-row:first-child {
+  border-top: 0;
+}
+
+.node-row:hover {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+/* 选中节点：Wash Ladder 的 12% 强调色，与连接页选中行、侧栏当前项同一档。 */
+.node-row[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+/* 选中标记：占位始终存在（visibility 而不是 display），未选中时不可见。 */
+.node-row-mark {
+  width: var(--conn-status-size);
+  height: var(--conn-status-size);
+  flex: none;
+  border-radius: 50%;
+  visibility: hidden;
+}
+
+.node-row[aria-pressed='true'] .node-row-mark {
+  visibility: visible;
+  background: var(--accent);
+}
+
+.node-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-row[aria-pressed='true'] .node-row-name {
+  font-weight: 600;
+}
+
+/* 延迟是实时数值：UI 字体的等宽数字（Tabular, Not Mono Rule），右对齐固定宽度。
+   等宽面只允许出现在健康百分比一处。 */
+.node-row-delay {
+  width: var(--node-delay-width);
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── 非 ready 状态（无配置 / 配置错误 / 内核异常 / 被占用） ── */
+.state-panel {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+
+.state-card {
+  width: 100%;
+  max-width: 440px;
+  padding: var(--space-6);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.state-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-title);
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.state-detail {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+}
+
+.state-success,
+.state-error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-label);
+}
+
+.state-success {
+  color: var(--success);
+}
+
+.state-error {
+  color: var(--danger);
+}
+
+.state-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.state-action {
+  height: 34px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.state-action:hover:not(:disabled) {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+/* One Solid Blue Rule：屏幕上唯一的实心蓝主操作，用填充蓝 + 白字，不是线蓝。 */
+.state-action.primary {
+  border-color: transparent;
+  background: var(--accent-strong);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.state-action.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+  filter: brightness(1.12);
+}
+
+.state-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.state-logs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── 连接页：六列表格 + 虚拟滚动 ─────────────────────── */
+.connections-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.conn-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.conn-window {
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+
+.conn-count {
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.conn-search {
+  margin-left: auto;
+  width: var(--conn-search-width);
+  height: var(--conn-control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+}
+
+.conn-search::placeholder {
+  color: var(--text-faint);
+}
+
+.conn-toggle {
+  height: var(--conn-control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-label);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.conn-toggle:hover {
+  color: var(--text);
+}
+
+.conn-toggle[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+/* 表格本身就是滚动容器：表头与表体同宽，出现滚动条时列不会错位。 */
+.conn-table {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.conn-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 表格本身可获得焦点承载键盘操作；内缩描边，避免被滚动容器裁掉。 */
+.conn-table:focus-visible {
+  outline-offset: -2px;
+}
+
+/* 表头与表体共用同一个网格类，列宽和间距只有这一份定义。 */
+.conn-grid {
+  display: grid;
+  grid-template-columns:
+    var(--conn-col-time)
+    var(--conn-col-process)
+    minmax(0, 1fr)
+    var(--conn-col-outbound)
+    var(--conn-col-traffic)
+    var(--conn-col-duration);
+  column-gap: var(--space-3);
+  align-items: center;
+  height: var(--conn-row-height);
+  padding: 0 var(--space-3);
+}
+
+.conn-head-row {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.conn-head-cell {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.conn-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.conn-sort:hover {
+  color: var(--text);
+}
+
+.conn-sort-arrow {
+  color: var(--text-dim);
+}
+
+.conn-spacer {
+  position: relative;
+}
+
+.conn-window-rows {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.conn-row {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.conn-row:hover {
+  background: var(--card-2);
+}
+
+/* 选中行：Wash Ladder 的 12% 强调色，与节点页选中态一致。 */
+.conn-row[aria-selected='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* 展开行之后的详情行；高度与 --conn-detail-height 一致，由虚拟滚动补偿。 */
+.conn-detail-row {
+  height: var(--conn-detail-height);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.conn-detail-cell {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+
+.conn-detail {
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.conn-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: var(--space-4);
+  height: 100%;
+  margin: 0;
+}
+
+.conn-detail-group {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.conn-detail-label {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.conn-detail-values {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.conn-detail-value {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-label);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 进程路径是次要信息，降一档对比度；截断时靠 title 看全。 */
+.conn-detail-path {
+  color: var(--text-dim);
+}
+
+.conn-cell {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 只给屏幕阅读器的状态词：视觉上不占位，但仍进入无障碍树。 */
+.conn-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.conn-time {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+}
+
+.conn-time-text {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 状态点：默认占位但不可见；已结束为空心，被拒绝为红色。 */
+.conn-dot {
+  flex: none;
+  width: var(--conn-status-size);
+  height: var(--conn-status-size);
+  border-radius: 50%;
+  visibility: hidden;
+}
+
+.conn-dot.ended {
+  visibility: visible;
+  background: transparent;
+  border: 1px solid var(--text-faint);
+}
+
+.conn-dot.rejected {
+  visibility: visible;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.conn-dot.ended.rejected {
+  background: transparent;
+  border: 1px solid var(--danger);
+}
+
+.conn-row.rejected .conn-outbound {
+  color: var(--danger);
+}
+
+/* 已结束行降到 40%，但状态点保持原对比度，免得连「已结束」都看不清。 */
+.conn-row.ended > .conn-cell {
+  opacity: 0.4;
+}
+
+.conn-row.ended > .conn-time {
+  opacity: 1;
+}
+
+.conn-row.ended > .conn-time > .conn-time-text {
+  opacity: 0.4;
+}
+
+.conn-traffic,
+.conn-duration {
+  text-align: right;
+}
+
+.conn-duration {
+  color: var(--text-faint);
+}
+
+.conn-empty {
+  display: grid;
+  place-items: center;
+  min-height: calc(var(--conn-row-height) * 4);
+  padding: var(--space-6);
+}
+
+.conn-empty-text {
+  color: var(--text-faint);
+  font-size: var(--fs-body);
+}
+
+/* ── 命令面板（Ctrl+K） ──────────────────────────────── */
+/* 遮罩用背景色的半透明版本压暗下层，不引入新的颜色角色。 */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh var(--space-6) var(--space-6);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.palette {
+  display: flex;
+  width: 520px;
+  max-width: 100%;
+  max-height: 60vh;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-card);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.palette-input {
+  height: 46px;
+  flex: none;
+  padding: 0 var(--card-pad-x);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+  outline: none;
+}
+
+.palette-input::placeholder {
+  color: var(--text-faint);
+}
+
+.palette-list {
+  min-height: 0;
+  padding: var(--space-2);
+  overflow-y: auto;
+}
+
+.palette-group + .palette-group {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.palette-group-label {
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/* 高亮沿用 Wash Ladder 的 12% 强调色，与连接页选中行、节点页选中态同一档。 */
+.palette-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--node-row-height);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+  cursor: default;
+}
+
+.palette-option[aria-selected='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+.palette-option-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.palette-option-detail {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.palette-empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--fs-body);
+  text-align: center;
+}
+
+/* ── 设置页：开机自启 ─────────────────────────────────── */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  max-width: var(--settings-width);
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--card-pad-y) var(--card-pad-x);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.settings-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.settings-label {
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.settings-desc {
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+/* 开发态 / 系统值不一致的说明：与正文同屏、同字号，不进 tooltip。 */
+.settings-note {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/*
+ * 订阅导入：说明在上、输入行在下。窗口最窄 1024px 时这一行仍放得下，
+ * 但 `flex-wrap` 保证再窄时按钮换行而不是把地址输入框压扁。
+ */
+.settings-row-column {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.settings-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-import .state-action {
+  flex: none;
+}
+
+.settings-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--conn-control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: var(--card-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+  outline: none;
+}
+
+.settings-input::placeholder {
+  color: var(--text-faint);
+}
+
+.settings-input:focus-visible {
+  border-color: var(--accent);
+}
+
+.settings-input:disabled {
+  color: var(--text-faint);
+}
+
+/*
+ * 开关。DESIGN.md 的 Dots Are Circles Rule 只允许 6–8px 状态点做正圆；
+ * 这是一个控件，因此走圆角矩形（--radius-control），滑块用 chip 圆角。
+ */
+.settings-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  height: var(--switch-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+
+.settings-switch:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings-switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-switch-track {
+  position: relative;
+  width: var(--switch-track-width);
+  height: var(--switch-track-height);
+  flex: none;
+  border-radius: var(--radius-chip);
+  background: var(--card-2);
+  border: 1px solid var(--border-2);
+}
+
+.settings-switch-thumb {
+  position: absolute;
+  top: var(--switch-thumb-inset);
+  left: var(--switch-thumb-inset);
+  width: var(--switch-thumb-size);
+  height: var(--switch-thumb-size);
+  border-radius: var(--radius-chip);
+  background: var(--text-faint);
+}
+
+/* 开启用健康绿：Green Is Health Rule 里「代理开着 / 这分钟是健康的」同一族事实。 */
+.settings-switch[data-state='on'] {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.settings-switch[data-state='on'] .settings-switch-track {
+  background: color-mix(in srgb, var(--success) 28%, transparent);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+}
+
+.settings-switch[data-state='on'] .settings-switch-thumb {
+  left: auto;
+  right: var(--switch-thumb-inset);
+  background: var(--success);
+}
+
+/*
+ * 关闭自启的警告：同屏、可读、不折叠。
+ * 用失败红做文字与 1px 描边（One Red Card Rule 禁止红色成块填充），
+ * 这条警告描述的是一旦重启就会发生的事实，不是装饰。
+ */
+.settings-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+  border-radius: var(--radius-control);
+  color: var(--danger);
+  font-size: var(--fs-label);
+  line-height: 1.6;
+}
+
+.settings-warning-title {
+  font-weight: 600;
+}
+
+.settings-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-label);
+}
+
+/*
+ * 日志页。列表是唯一可滚动的区域：工具栏与断开提示固定在顶部，
+ * 读者往上翻历史时不会被新条目推走（滚动策略见 LogsPage）。
+ */
+.logs-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-label);
+}
+
+.logs-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-dim);
+}
+
+/* 6px 状态点：Dots Are Circles Rule 允许的正圆尺寸，绿色只表示「正在工作」。 */
+.logs-dot {
+  width: var(--conn-status-size);
+  height: var(--conn-status-size);
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.logs-status[data-live='true'] .logs-dot {
+  background: var(--success);
+}
+
+.logs-count {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.logs-error {
+  color: var(--danger);
+}
+
+.logs-note {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.logs-list {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-2) 0;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-1) var(--card-pad-x);
+}
+
+.log-row:hover {
+  background: var(--card-2);
+}
+
+.log-time {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 级别用最小号 chip：它是分类而不是结论，不给颜色。 */
+.log-level {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-chip);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
+/* 内核原文不截断：长 payload 折行而不是撑破卡片。 */
+.log-text {
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+.logs-empty {
+  margin: 0;
+  padding: var(--space-4) var(--card-pad-x);
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}

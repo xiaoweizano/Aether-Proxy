@@ -1,0 +1,168 @@
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { copy } from '../copy'
+import { readyStatus } from '../test-utils'
+import { Dashboard } from './Dashboard'
+
+const STATUS = {
+  ...readyStatus,
+  core: { version: 'v1.19.32', proxyPort: 5566, startedAt: new Date(2026, 0, 2, 13, 31, 13).getTime() },
+  profile: { nodeCount: 12, groupCount: 3 }
+}
+
+const HOUR = 60 * 60_000
+
+/** 没有采集器：活跃数、缓冲条数、内存与窗口都是未知。 */
+const NO_CONNECTIONS = { active: null, total: null, memory: null, retainMs: null } as const
+
+describe('Dashboard', () => {
+  it('四块卡片齐全，无数据时不出现 NaN', () => {
+    const { container } = render(
+      <Dashboard
+        status={null}
+        active={null}
+        current={null}
+        history={[]}
+        connections={NO_CONNECTIONS}
+        dialFailures={null}
+      />
+    )
+
+    expect(screen.getByText(copy.dashboard.node.label)).toBeInTheDocument()
+    expect(screen.getByText(copy.dashboard.core.label)).toBeInTheDocument()
+    expect(screen.getByText(copy.dashboard.stats.down)).toBeInTheDocument()
+    expect(screen.getByText(copy.dashboard.stats.up)).toBeInTheDocument()
+    expect(screen.getByText(copy.dashboard.stats.connections)).toBeInTheDocument()
+    expect(screen.getByText(copy.dashboard.chart.title)).toBeInTheDocument()
+    expect(container.textContent).not.toContain('NaN')
+  })
+
+  it('有数据时把节点、内核、速率与连接摘要一起渲染出来', () => {
+    render(
+      <Dashboard
+        status={STATUS}
+        active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
+        current={{ up: 0, down: 0, upTotal: 2048, downTotal: 4096 }}
+        history={[{ up: 0, down: 0 }]}
+        connections={{ active: 2, total: 5, memory: 24_944_640, retainMs: 60_000 }}
+        dialFailures={null}
+      />
+    )
+
+    expect(screen.getByText('HK-01')).toBeInTheDocument()
+    expect(screen.getByText('mihomo · v1.19.32')).toBeInTheDocument()
+    expect(screen.getByText('端口 5566')).toBeInTheDocument()
+    // 内存来自连接快照，字节数直接格式化。
+    expect(screen.getByText('23.8 MB')).toBeInTheDocument()
+    // 活跃连接数只数未结束行；页脚条数含已结束行。
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(
+      screen.getByText(copy.dashboard.stats.connectionsFoot(5, '1 分钟'))
+    ).toBeInTheDocument()
+    // 两个速率 + 累计流量，均已按格式规则输出
+    expect(screen.getAllByText('0.00')).toHaveLength(2)
+    expect(screen.getByText('累计 4.0 KB')).toBeInTheDocument()
+    expect(screen.getByText('累计 2.0 KB')).toBeInTheDocument()
+    // hero 的「已用流量」是上下行之和
+    expect(screen.getByText('6.0 KB')).toBeInTheDocument()
+  })
+
+  it('reconnecting 时速率显示破折号、不沿用崩溃前的旧样本，也不声称健康', () => {
+    const { container } = render(
+      <Dashboard
+        status={{ ...readyStatus, status: 'reconnecting' }}
+        active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
+        // 崩溃前最后一次推送还在内存里：它不是当前事实。
+        current={{ up: 1024, down: 2 * 1024 * 1024, upTotal: 4096, downTotal: 8192 }}
+        history={[{ up: 1024, down: 2 * 1024 * 1024 }]}
+        connections={{ active: 2, total: 5, memory: 24_944_640, retainMs: 60_000 }}
+        dialFailures={{ recent: 3, windowMs: HOUR }}
+      />
+    )
+
+    // 速率必须是未知（破折号），不能显示 0.00 或崩溃前的 2.00 MB/s。
+    expect(screen.queryByText('2.00')).toBeNull()
+    expect(screen.queryByText('0.00')).toBeNull()
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
+    // 节点健康行退回未知：旧节点与旧失败计数都不能当成本次会话的事实。
+    expect(screen.getByText(copy.dashboard.node.noSession)).toBeInTheDocument()
+    expect(screen.queryByText('次拨号失败', { exact: false })).toBeNull()
+    // 当前节点也退回破折号：内核不在，无法说清现在走的是哪个节点。
+    expect(screen.queryByText('HK-01')).toBeNull()
+    expect(container.textContent).not.toContain('NaN')
+  })
+
+  it('hero 占两列、流量图跨满三列', () => {
+    const { container } = render(
+      <Dashboard
+        status={STATUS}
+        active={null}
+        current={null}
+        history={[]}
+        connections={NO_CONNECTIONS}
+        dialFailures={null}
+      />
+    )
+
+    expect(container.querySelector('.card.hero')).not.toBeNull()
+    expect(container.querySelector('.card.chart')).not.toBeNull()
+    expect(container.querySelectorAll('.card.stat')).toHaveLength(3)
+  })
+
+  it('没有计数来源时健康行仍是未知，不出现 0 次失败', () => {
+    const { container } = render(
+      <Dashboard
+        status={STATUS}
+        active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
+        current={null}
+        history={[]}
+        connections={NO_CONNECTIONS}
+        dialFailures={null}
+      />
+    )
+
+    expect(screen.getByText(copy.dashboard.node.healthUnknown)).toBeInTheDocument()
+    expect(container.textContent).not.toContain('次拨号失败')
+  })
+
+  it('有失败计数时把 N 与由 windowMs 推导的窗口渲染到 hero 上', () => {
+    render(
+      <Dashboard
+        status={STATUS}
+        active={{ group: 'Proxy', node: 'HK-01', delay: 38 }}
+        current={null}
+        history={[]}
+        connections={NO_CONNECTIONS}
+        dialFailures={{ recent: 3, windowMs: HOUR }}
+      />
+    )
+
+    expect(screen.getByText(copy.dashboard.node.healthFailures('60 分钟', 3))).toBeInTheDocument()
+  })
+
+  it('点击失败计数调用 onViewLogs', async () => {
+    const onViewLogs = vi.fn()
+    render(
+      <Dashboard
+        status={STATUS}
+        active={{ group: 'Proxy', node: 'HK-01' }}
+        current={null}
+        history={[]}
+        connections={NO_CONNECTIONS}
+        dialFailures={{ recent: 1, windowMs: HOUR }}
+        onViewLogs={onViewLogs}
+      />
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', {
+        name: copy.dashboard.node.healthFailuresAction(
+          copy.dashboard.node.healthFailures('60 分钟', 1)
+        )
+      })
+    )
+
+    expect(onViewLogs).toHaveBeenCalledTimes(1)
+  })
+})

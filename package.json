@@ -1,0 +1,48 @@
+{
+  "name": "aether-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aether — 跨平台代理客户端（mihomo 内核，桌面端 Electron + React）",
+  "author": "Aether Proxy contributors",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "dist": "npm run icon && electron-vite build && electron-builder --win",
+    "dist:dir": "npm run icon && electron-vite build && electron-builder --win dir",
+    "icon": "node scripts/make-app-icon.mjs",
+    "shot": "electron-vite build && node scripts/app-shot.mjs",
+    "pretest": "npm run check:tokens",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:tokens": "node scripts/check-tokens.mjs",
+    "measure:memory": "node scripts/measure-memory.mjs",
+    "e2e": "tsx scripts/e2e.mjs",
+    "soak": "node scripts/soak.mjs"
+  },
+  "dependencies": {
+    "koffi": "^3.3.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "ws": "^8.22.0",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.2",
+    "electron": "45.0.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^4.0.0",
+    "jsdom": "^29.1.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.6.0",
+    "vite": "^7.0.0",
+    "vitest": "^3.0.0"
+  }
+}

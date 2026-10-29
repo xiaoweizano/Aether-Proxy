@@ -1,0 +1,104 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/2026-10-23-m1-console.html"
+        ],
+        "createdAt": "2026-10-23T08:27:29.608Z",
+        "reason": "user confirmed: design doc D28 fixes 28px rows / 13px main type for a dense desktop console; hierarchy is carried by case, tracking and colour, and a 1.25 size ladder would break the confirmed row model"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "20px",
+        "createdAt": "2026-10-23T08:48:50.044Z",
+        "reason": "documenter decision: the empty-state heading is an explicit variant one-off, not a fifth ramp step; recorded as such in DESIGN.md so no future surface inherits a display size"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/b-compact.html"
+        ],
+        "createdAt": "2026-10-23T09:31:54.465Z",
+        "reason": "rejected alternative retained as a design record, not a shipped surface; see docs/design/2026-10-23-ui-pivot-dashboard.md"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/c-split.html"
+        ],
+        "createdAt": "2026-10-23T09:31:54.603Z",
+        "reason": "rejected alternative retained as a design record, not a shipped surface; see docs/design/2026-10-23-ui-pivot-dashboard.md"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/index.html"
+        ],
+        "createdAt": "2026-10-23T09:31:54.745Z",
+        "reason": "comparison index page for design selection, not a product surface"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/b-compact.html"
+        ],
+        "createdAt": "2026-10-23T09:32:49.470Z",
+        "reason": "rejected alternative or comparison page retained as a design record, not a shipped surface; see docs/design/2026-10-23-ui-pivot-dashboard.md"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/b-compact.html"
+        ],
+        "createdAt": "2026-10-23T09:32:49.612Z",
+        "reason": "rejected alternative or comparison page retained as a design record, not a shipped surface; see docs/design/2026-10-23-ui-pivot-dashboard.md"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/c-split.html"
+        ],
+        "createdAt": "2026-10-23T09:32:49.755Z",
+        "reason": "rejected alternative or comparison page retained as a design record, not a shipped surface; see docs/design/2026-10-23-ui-pivot-dashboard.md"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/c-split.html"
+        ],
+        "createdAt": "2026-10-23T09:32:49.895Z",
+        "reason": "rejected alternative or comparison page retained as a design record, not a shipped surface; see docs/design/2026-10-23-ui-pivot-dashboard.md"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/index.html"
+        ],
+        "createdAt": "2026-10-23T09:32:50.040Z",
+        "reason": "rejected alternative or comparison page retained as a design record, not a shipped surface; see docs/design/2026-10-23-ui-pivot-dashboard.md"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "*",
+        "files": [
+          "docs/design/mockups/variants/index.html"
+        ],
+        "createdAt": "2026-10-23T09:32:50.180Z",
+        "reason": "rejected alternative or comparison page retained as a design record, not a shipped surface; see docs/design/2026-10-23-ui-pivot-dashboard.md"
+      }
+    ]
+  }
+}

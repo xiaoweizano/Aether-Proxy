@@ -1,0 +1,80 @@
+# electron-builder 配置：Windows x64 便携目录 + NSIS 安装包。
+#
+# 目标路径不是猜的，全部来自现有解析器：
+# - 内核：src/main/core/binary.ts 打包态 → <resourcesPath>/mihomo/mihomo.exe
+# - geodata：src/main/bootstrap.ts 打包态 → <resourcesPath>/geodata（含 SHA256SUMS）
+# - 托盘：src/main/index.ts trayIconDir() → <resourcesPath>/resources/tray*.png
+#
+# 签名与自动更新是 v1 明确不做的（见 CLAUDE.md），这里显式关掉，避免以后有人以为
+# 「没配就是漏了」。
+appId: dev.aether.proxy
+productName: Aether
+copyright: Aether Proxy contributors
+
+# 自动更新不做（CLAUDE.md 已锁定）：electron-builder 默认会给 NSIS 生成
+# latest.yml 发布元数据，这里显式关掉，免得发布目录里出现一个没人消费的更新清单。
+publish: null
+
+# exe 文件属性里的「公司」字段来自 Electron 的存根（GitHub, Inc.）。这是自用/开源
+# 项目，不冒用别人的公司名；写入本项目自己的作者名。
+extraMetadata:
+  author:
+    name: Aether Proxy contributors
+  companyName: Aether Proxy contributors
+
+directories:
+  output: dist
+  buildResources: build
+
+# 只打包 electron-vite 的产物。node_modules 里的生产依赖（koffi）由
+# electron-builder 自动收集；不列入 files 的东西不会进包。
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+# 应用代码进 asar（体积小、启动快）；原生 .node 不能从归档里 dlopen，
+# 单独解出来。mihomo.exe 走 extraResources，本来就在 asar 之外。
+asar: true
+asarUnpack:
+  - node_modules/@koromix/**/*
+  - node_modules/koffi/**/*
+
+# koffi 自带预编译二进制，不需要也没有可重建的构建脚本；关掉 rebuild 免得
+# electron-builder 去跑它的 cnoke 安装脚本。
+npmRebuild: false
+
+extraResources:
+  # 子进程只能从真实文件系统 spawn，绝不能进 asar。
+  - from: vendor/mihomo.exe
+    to: mihomo/mihomo.exe
+  # bootstrap 的 geodataDir 指向 <resourcesPath>/geodata，ensureGeodata 还要读
+  # SHA256SUMS 校验，三个文件缺一不可。.gitattributes 把它们标记为 binary，
+  # electron-builder 只是复制文件，不会再做换行转换。
+  - from: vendor/geodata
+    to: geodata
+  # 托盘图标：trayIconDir() 拼的是 <resourcesPath>/resources。
+  - from: resources
+    to: resources
+    filter:
+      - tray*.png
+
+win:
+  target:
+    - target: dir
+      arch: [x64]
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  # 无代码签名：v1 不发证书、不做公证。
+  forceCodeSigning: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  # 卸载不删用户数据（配置、profile、settings 都在 %APPDATA%\aether-proxy）。
+  deleteAppDataOnUninstall: false
+  artifactName: ${productName}-${version}-setup.${ext}

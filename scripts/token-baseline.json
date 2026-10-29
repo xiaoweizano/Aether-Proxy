@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "note": "历史裸 px / 裸圆角基线：允许清单内的旧值继续存在，新增即失败。用 npm run check:tokens -- --write-baseline 收紧。",
+  "files": {
+    "src/renderer/styles/app.css": {
+      "-2px": 1,
+      "10px": 3,
+      "11px": 3,
+      "12px": 3,
+      "13px": 1,
+      "14px": 1,
+      "17px": 2,
+      "18px": 2,
+      "22px": 1,
+      "232px": 1,
+      "26px": 1,
+      "2px": 6,
+      "34px": 4,
+      "38px": 1,
+      "3px": 3,
+      "440px": 1,
+      "46px": 1,
+      "48px": 1,
+      "520px": 1,
+      "6px": 4,
+      "7px": 7,
+      "8px": 3
+    }
+  }
+}

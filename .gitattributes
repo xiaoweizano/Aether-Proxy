@@ -1,0 +1,12 @@
+# 源文件一律 LF，不随检出机器的 core.autocrlf 变化。
+#
+# 这不只是风格问题：CRLF 检出会让 esbuild 在带 shebang 的 .mjs 上解析失败
+# （`Invalid or unexpected token`），CI 的 windows-latest 默认就是这么检出的。
+# 行尾必须由仓库决定，而不是由每台机器的全局配置决定。
+* text=auto eol=lf
+
+vendor/geodata/** binary
+vendor/*.zip binary
+*.exe binary
+# 安装包图标是手写二进制容器：别让 Git 在 Windows 上做换行归一化，否则 rcedit 会拒收。
+build/*.ico binary

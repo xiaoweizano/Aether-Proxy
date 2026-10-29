@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aether — 视觉方案对比</title>
+<style>
+  :root {
+    --bg: #0A0B0D; --card: #141619; --line: #23262B;
+    --text: #E8E9EB; --dim: #9AA0A6; --faint: #6E747B; --accent: #4A8CFF;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; -webkit-font-smoothing: antialiased; }
+  header { padding: 34px 40px 10px; }
+  h1 { margin: 0 0 8px; font-size: 24px; font-weight: 650; letter-spacing: -.02em; }
+  header p { margin: 0; color: var(--dim); font-size: 13px; max-width: 70ch; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; padding: 26px 40px 48px; }
+  a.card { display: block; text-decoration: none; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  a.card:hover { border-color: var(--accent); }
+  .shot { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-bottom: 1px solid var(--line); background: #0B0C0E; }
+  .meta { padding: 14px 16px 16px; }
+  .meta h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+  .meta p { margin: 0 0 10px; color: var(--dim); font-size: 12px; line-height: 1.55; }
+  .meta .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: 10px; color: var(--faint); border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px; }
+  .open { margin-top: 12px; font-size: 12px; color: var(--accent); }
+  footer { padding: 0 40px 40px; color: var(--faint); font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aether — 视觉方案对比</h1>
+  <p>四版都是 1280×800 的静态稿，自包含 HTML，数据为演示数据。点任意一张打开原尺寸页面。差异不只是配色：A/B/C/D 的布局结构、信息密度和首屏重点都不一样。</p>
+</header>
+
+<div class="grid">
+
+  <a class="card" href="a-cards.html">
+    <img class="shot" src="a-cards.png" alt="A 卡片仪表盘">
+    <div class="meta">
+      <h2>A · 卡片仪表盘</h2>
+      <p>最接近你给的参考图。上半部两块（当前节点 / 内核），中间三张速率卡，底部折线图。蓝色强调、绿色状态。</p>
+      <div class="tags"><span class="tag">2:1 主次</span><span class="tag">14px 圆角</span><span class="tag">状态用色</span></div>
+      <div class="open">打开 →</div>
+    </div>
+  </a>
+
+  <a class="card" href="b-compact.html">
+    <img class="shot" src="b-compact.png" alt="B 紧凑控制台">
+    <div class="meta">
+      <h2>B · 紧凑控制台</h2>
+      <p>同样的壳，但信息更密：顶部一条四格状态条、图表与内核并排、底部直接放最近连接。8px 圆角、12px 正文。</p>
+      <div class="tags"><span class="tag">密度最高</span><span class="tag">8px 圆角</span><span class="tag">带连接表</span></div>
+      <div class="open">打开 →</div>
+    </div>
+  </a>
+
+  <a class="card" href="c-split.html">
+    <img class="shot" src="c-split.png" alt="C 双栏实时">
+    <div class="meta">
+      <h2>C · 双栏实时</h2>
+      <p>左半是概览（节点、速率、图表），右半是常驻的实时连接流。仪表盘和路由透视同屏，差异点不被藏起来。</p>
+      <div class="tags"><span class="tag">观察优先</span><span class="tag">12px 圆角</span><span class="tag">连接常在</span></div>
+      <div class="open">打开 →</div>
+    </div>
+  </a>
+
+  <a class="card" href="d-quiet.html">
+    <img class="shot" src="d-quiet.png" alt="D 静默">
+    <div class="meta">
+      <h2>D · 静默</h2>
+      <p>去掉卡片与色块，用留白和发丝线分区；一个强调色只出现在导航标尺和曲线。最接近 Linear 的安静感。</p>
+      <div class="tags"><span class="tag">无卡片</span><span class="tag">4px 圆角</span><span class="tag">留白分区</span></div>
+      <div class="open">打开 →</div>
+    </div>
+  </a>
+
+</div>
+
+<footer>文件：docs/design/mockups/variants/ · 四份 HTML 均无外部依赖，可直接用浏览器打开或发给别人看。</footer>
+</body>
+</html>

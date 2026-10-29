@@ -1,0 +1,158 @@
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { copy } from '../copy'
+import { makeAether } from '../test-utils'
+import { StatePanel } from './StatePanel'
+
+describe('StatePanel', () => {
+  it('no-config：标题、说明与唯一的导入主操作', () => {
+    render(<StatePanel status="no-config" />)
+
+    expect(screen.getByText(copy.state.noConfig.title)).toBeInTheDocument()
+    expect(screen.getByText(copy.state.noConfig.detail)).toBeInTheDocument()
+    const action = screen.getByRole('button', { name: copy.state.noConfig.importAction })
+    expect(action).toHaveClass('primary')
+    expect(screen.queryByRole('button', { name: copy.state.coreError.restartAction })).toBeNull()
+  })
+
+  it('config-error：导入主操作 + 重启次操作 + 能去日志页', async () => {
+    const onViewLogs = vi.fn()
+    render(<StatePanel status="config-error" onViewLogs={onViewLogs} />)
+
+    expect(screen.getByText(copy.state.configError.title)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: copy.state.configError.importAction })
+    ).toBeEnabled()
+    expect(screen.getByRole('button', { name: copy.state.coreError.restartAction })).toBeEnabled()
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.logsAction }))
+    expect(onViewLogs).toHaveBeenCalledTimes(1)
+  })
+
+  it('core-error：重启主操作 + 能去日志页', async () => {
+    const onViewLogs = vi.fn()
+    render(<StatePanel status="core-error" onViewLogs={onViewLogs} />)
+
+    expect(screen.getByText(copy.state.coreError.title)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: copy.state.coreError.restartAction })).toBeEnabled()
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.logsAction }))
+    expect(onViewLogs).toHaveBeenCalledTimes(1)
+  })
+
+  it('没有日志出口时按钮禁用：可点却没反应比禁用更糟', () => {
+    render(<StatePanel status="core-error" />)
+
+    expect(screen.getByRole('button', { name: copy.state.logsAction })).toBeDisabled()
+  })
+
+  it('reconnecting：说明正在自动重连，且没有「重启内核」主操作', () => {
+    render(<StatePanel status="reconnecting" />)
+
+    expect(screen.getByText(copy.state.reconnecting.title)).toBeInTheDocument()
+    expect(screen.getByText(copy.state.reconnecting.detail)).toBeInTheDocument()
+    // 自动重启已经在跑：任何手动重启按钮都会和它抢着拉起内核。
+    expect(screen.queryByRole('button', { name: copy.state.coreError.restartAction })).toBeNull()
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    // 也不能说成「内核异常」：那是退避用尽后的终态。
+    expect(screen.queryByText(copy.state.coreError.title)).toBeNull()
+  })
+
+  it('in-use：只有说明，没有任何操作，尤其没有重启内核', () => {
+    render(<StatePanel status="in-use" />)
+
+    expect(screen.getByText(copy.state.inUse.title)).toBeInTheDocument()
+    expect(screen.getByText(copy.state.inUse.detail)).toBeInTheDocument()
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    expect(screen.queryByText(copy.state.coreError.restartAction)).toBeNull()
+  })
+
+  it('in-use：措辞如实说明不做单实例锁，不能暗示本实例被拦下', () => {
+    // 规格 7.7：M1 不声明单实例保证，第二个实例照常运行。旧文案「关闭另一个实例后再试」
+    // 会让用户以为本窗口被阻止了，与真实行为相悖。
+    const text = `${copy.state.inUse.title}${copy.state.inUse.detail}`
+    expect(text).not.toContain('关闭另一个实例')
+    expect(text).not.toContain('只能有一个')
+    // 必须交代的三件事：另一个实例在、它持有系统代理、本实例继续运行但不接管。
+    expect(text).toContain('另一个')
+    expect(text).toContain('系统代理')
+    expect(text).toContain('继续运行')
+  })
+
+  it('取消导入：不显示错误，也不显示成功提示', async () => {
+    const importConfig = vi.fn(async () => ({ ok: false as const, cancelled: true as const }))
+    render(<StatePanel status="no-config" importConfig={importConfig} />)
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.noConfig.importAction }))
+
+    expect(importConfig).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(copy.state.noConfig.imported)).toBeNull()
+  })
+
+  it('导入成功：显示「重启后生效」并出现次要的重启按钮', async () => {
+    const importConfig = vi.fn(async () => ({ ok: true as const, applied: 'pending-restart' as const }))
+    render(<StatePanel status="no-config" importConfig={importConfig} />)
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.noConfig.importAction }))
+
+    expect(await screen.findByText(copy.state.noConfig.imported)).toBeInTheDocument()
+    const restart = screen.getByRole('button', { name: copy.state.noConfig.restartAction })
+    expect(restart).toHaveClass('state-action')
+    expect(restart).not.toHaveClass('primary')
+  })
+
+  it('导入失败：把主进程给的消息渲染出来', async () => {
+    const importConfig = vi.fn(async () => ({ ok: false as const, message: '缺少 proxies' }))
+    render(<StatePanel status="no-config" importConfig={importConfig} />)
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.noConfig.importAction }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('缺少 proxies')
+    expect(screen.queryByText(copy.state.noConfig.imported)).toBeNull()
+  })
+
+  it('重启失败：把失败消息渲染出来', async () => {
+    const restartCore = vi.fn(async () => ({ ok: false as const, message: '内核握手超时' }))
+    render(<StatePanel status="core-error" restartCore={restartCore} />)
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.coreError.restartAction }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('内核握手超时')
+  })
+
+  it('导入成功后重启失败：回到可重新导入的操作集，成功提示消失', async () => {
+    const importConfig = vi.fn(async () => ({ ok: true as const, applied: 'pending-restart' as const }))
+    const restartCore = vi.fn(async () => ({ ok: false as const, message: '配置有误，无法启动内核' }))
+    render(
+      <StatePanel status="config-error" importConfig={importConfig} restartCore={restartCore} />
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', { name: copy.state.configError.importAction })
+    )
+    expect(await screen.findByText(copy.state.noConfig.imported)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.noConfig.restartAction }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('配置有误，无法启动内核')
+    expect(screen.queryByText(copy.state.noConfig.imported)).toBeNull()
+    expect(
+      screen.getByRole('button', { name: copy.state.configError.importAction })
+    ).toBeEnabled()
+    expect(screen.getByRole('button', { name: copy.state.coreError.restartAction })).toBeEnabled()
+  })
+
+  it('未注入回调时走 window.aether', async () => {
+    const restartCore = vi.fn(async () => ({ ok: true as const }))
+    const onRefresh = vi.fn()
+    window.aether = makeAether({ restartCore })
+    render(<StatePanel status="core-error" onRefresh={onRefresh} />)
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.coreError.restartAction }))
+
+    expect(restartCore).toHaveBeenCalledTimes(1)
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+})

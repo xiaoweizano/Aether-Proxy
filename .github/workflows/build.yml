@@ -1,0 +1,75 @@
+# 构建 Windows x64 的安装包与便携版。
+#
+# v1 只打 Windows（CLAUDE.md 锁定：桌面栈 Electron、第一版范围 Windows 系统代理），
+# 所以这里没有 macOS / Linux 的 job，而不是「忘了配」。
+#
+# 产物在 Actions 运行页的 Artifacts 里：安装包（NSIS）与便携版（zip）。
+# 未签名：Windows SmartScreen 会拦一次，这是 v1 的既定取舍。
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# 同一个分支连续推送时取消旧的那次，避免排在后面的运行白跑十几分钟。
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 类型检查与测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 类型检查
+        run: npx tsc --noEmit
+      # pretest 会跑 token 闸门（裸色值 / 裸字号 / 裸 px 不得进渲染层），
+      # 所以这一步同时守住设计系统的一致性。
+      - name: 测试
+        run: npm test
+
+  package:
+    name: Windows x64 安装包与便携版
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # `dist` = 图标 → electron-vite build → electron-builder；产物含
+      # win-unpacked/（便携目录）与 Aether-<version>-setup.exe（NSIS 安装包）。
+      - name: 打包
+        run: npm run dist
+        env:
+          # 不签名：省掉 electron-builder 探测证书的告警，行为与本地一致。
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: 便携版打成一个 zip
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          Compress-Archive -Path dist/win-unpacked/* -DestinationPath "dist/Aether-$version-portable-win-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aether-windows-x64-installer
+          path: dist/Aether-*-setup.exe
+          # 默认 90 天，会白占配额；下载包只留一周足够。
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aether-windows-x64-portable
+          path: dist/Aether-*-portable-win-x64.zip
+          retention-days: 7

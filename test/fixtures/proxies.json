@@ -1,0 +1,68 @@
+{
+  "proxies": {
+    "GLOBAL": {
+      "type": "Selector",
+      "name": "GLOBAL",
+      "now": "DIRECT",
+      "all": ["Proxy", "Auto", "DIRECT"],
+      "udp": true,
+      "history": [],
+      "extra": {
+        "fake-ip-filter": []
+      }
+    },
+    "Auto": {
+      "type": "URLTest",
+      "name": "Auto",
+      "now": "DIRECT",
+      "all": ["HK-01", "US-01", "DIRECT"],
+      "udp": true,
+      "history": [],
+      "extra": {
+        "url": "https://www.gstatic.com/generate_204",
+        "interval": 300,
+        "tolerance": 50
+      }
+    },
+    "DIRECT": {
+      "type": "Direct",
+      "name": "DIRECT",
+      "udp": true,
+      "history": []
+    },
+    "HK-01": {
+      "type": "Shadowsocks",
+      "name": "HK-01",
+      "udp": true,
+      "history": [
+        {
+          "time": "2026-10-24T09:00:00.000Z",
+          "delay": 38
+        },
+        {
+          "time": "2026-10-24T09:05:00.000Z",
+          "delay": 41
+        }
+      ]
+    },
+    "Proxy": {
+      "type": "Selector",
+      "name": "Proxy",
+      "now": "HK-01",
+      "all": ["HK-01", "US-01", "Auto", "DIRECT"],
+      "udp": true,
+      "history": []
+    },
+    "US-01": {
+      "type": "Shadowsocks",
+      "name": "US-01",
+      "udp": true,
+      "history": [
+        {
+          "time": "2026-10-24T09:05:00.000Z",
+          "delay": 120
+        }
+      ]
+    }
+  }
+}
