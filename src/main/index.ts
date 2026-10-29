@@ -272,7 +272,7 @@ function shotOutputFile(): string {
  * 另外在中心区域找主按钮的强调色，确认状态卡真的渲染出来了；只用粗粒度的
  * 中央条带，不绑定具体坐标，布局微调不会误报。
  */
-async function captureShot(win: BrowserWindow): Promise<void> {
+async function captureShot(win: BrowserWindow, options: { requireAccent: boolean }): Promise<void> {
   const image = await win.webContents.capturePage()
   if (image.isEmpty()) throw new Error('截图内容为空')
   const bitmap = image.toBitmap()
@@ -321,7 +321,8 @@ async function captureShot(win: BrowserWindow): Promise<void> {
       }
     }
   }
-  if (accent < SHOT_MIN_ACCENT_PIXELS) {
+  // 强调色闸门只对仪表盘成立：只有仪表盘按设计有主按钮，其它页面本来就没有蓝色。
+  if (options.requireAccent && accent < SHOT_MIN_ACCENT_PIXELS) {
     throw new Error('截图中心区域没有主按钮强调色，界面可能未渲染')
   }
 
@@ -444,6 +445,8 @@ function createBrowserWindow(requested: WindowRect): ShellWindow {
   })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
+  /** 截图冒烟可指定初始页面；正常启动永远是仪表盘。 */
+  const shotPage = shotMode ? process.env['AETHER_SHOT_PAGE'] : undefined
   // startupStatus 用创建那一刻的值：重建发生在应用运行期间，状态不会因为窗口消失而改变。
   const startupStatus = context?.startupStatus ?? 'core-error'
 
@@ -451,7 +454,7 @@ function createBrowserWindow(requested: WindowRect): ShellWindow {
     // 加载完成后留一点时间让 React 首次渲染并完成布局，再截图。
     win.webContents.once('did-finish-load', () => {
       setTimeout(() => {
-        void captureShot(win)
+        void captureShot(win, { requireAccent: shotPage === undefined })
           .then(() => { app.quit() })
           .catch((err: unknown) => failShot('[aether] 截图冒烟失败', err))
       }, SHOT_SETTLE_MS)
@@ -461,13 +464,15 @@ function createBrowserWindow(requested: WindowRect): ShellWindow {
     })
   }
 
+  const shotQuery: Record<string, string> = shotPage === undefined ? {} : { page: shotPage }
   if (devUrl) {
     const url = new URL(devUrl)
     url.searchParams.set('startupStatus', startupStatus)
+    for (const [key, value] of Object.entries(shotQuery)) url.searchParams.set(key, value)
     void win.loadURL(url.toString())
   } else {
     void win.loadFile(path.join(__dirname, '../renderer/index.html'), {
-      query: { startupStatus }
+      query: { startupStatus, ...shotQuery }
     })
   }
 

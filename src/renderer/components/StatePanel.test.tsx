@@ -16,30 +16,35 @@ describe('StatePanel', () => {
     expect(screen.queryByRole('button', { name: copy.state.coreError.restartAction })).toBeNull()
   })
 
-  it('config-error：导入主操作 + 重启次操作 + 查看日志占位', () => {
-    render(<StatePanel status="config-error" />)
+  it('config-error：导入主操作 + 重启次操作 + 能去日志页', async () => {
+    const onViewLogs = vi.fn()
+    render(<StatePanel status="config-error" onViewLogs={onViewLogs} />)
 
     expect(screen.getByText(copy.state.configError.title)).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: copy.state.configError.importAction })
     ).toBeEnabled()
     expect(screen.getByRole('button', { name: copy.state.coreError.restartAction })).toBeEnabled()
-    const logs = screen.getByRole('button', { name: copy.state.logsAction })
-    expect(logs).toBeDisabled()
-    expect(logs).toHaveAttribute('title', copy.state.logsPlaceholder)
-    // 占位说明也要可见，不能只藏在 title 里。
-    expect(screen.getByText(copy.state.logsPlaceholder)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.logsAction }))
+    expect(onViewLogs).toHaveBeenCalledTimes(1)
   })
 
-  it('core-error：重启主操作 + 查看日志占位', () => {
-    render(<StatePanel status="core-error" />)
+  it('core-error：重启主操作 + 能去日志页', async () => {
+    const onViewLogs = vi.fn()
+    render(<StatePanel status="core-error" onViewLogs={onViewLogs} />)
 
     expect(screen.getByText(copy.state.coreError.title)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: copy.state.coreError.restartAction })).toBeEnabled()
-    const logs = screen.getByRole('button', { name: copy.state.logsAction })
-    expect(logs).toBeDisabled()
-    expect(logs).toHaveAttribute('title', copy.state.logsPlaceholder)
-    expect(screen.getByText(copy.state.logsPlaceholder)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.logsAction }))
+    expect(onViewLogs).toHaveBeenCalledTimes(1)
+  })
+
+  it('没有日志出口时按钮禁用：可点却没反应比禁用更糟', () => {
+    render(<StatePanel status="core-error" />)
+
+    expect(screen.getByRole('button', { name: copy.state.logsAction })).toBeDisabled()
   })
 
   it('reconnecting：说明正在自动重连，且没有「重启内核」主操作', () => {

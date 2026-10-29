@@ -14,9 +14,6 @@ const NON_READY = [
   ['in-use', copy.state.inUse.title]
 ] as const
 
-/** 日志仍落在占位页；设置页由 Task 5 换成真实内容。 */
-const PLACEHOLDER_PAGES = [['logs', copy.nav.logs]] as const
-
 describe('App', () => {
   it('ready 时渲染 Dashboard，而不是状态面板', async () => {
     window.aether = makeAether()
@@ -59,6 +56,30 @@ describe('App', () => {
     expect(screen.queryByText(copy.status.coreError)).toBeNull()
   })
 
+  it('内核不可用时「查看日志」仍能进入日志页：状态面板只接管仪表盘', async () => {
+    const payload = '[TCP] dial Proxy (match Match/) 127.0.0.1:8608(curl.exe) --> example.com:80 error: connection refused'
+    window.aether = makeAether({
+      getStatus: vi.fn(async (): Promise<AppStatusView> => ({ ...readyStatus, status: 'core-error' })),
+      getLogs: vi.fn(async () => ({
+        entries: [{ at: Date.now(), level: 'warning', payload }],
+        revision: 1
+      }))
+    })
+
+    render(<App />)
+    await screen.findByRole('heading', { name: copy.state.coreError.title })
+
+    await userEvent.click(screen.getByRole('button', { name: copy.state.logsAction }))
+
+    // 崩溃后最想看的就是日志：这个入口必须真的到达日志页，而不是停在状态面板。
+    expect(await screen.findByText(payload)).toBeInTheDocument()
+    expect(screen.queryByText(copy.state.coreError.detail)).toBeNull()
+    expect(screen.getByRole('button', { name: copy.nav.logs })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+  })
+
   it('点「连接」进入连接页，点回「仪表盘」恢复，标题跟随页面', async () => {
     window.aether = makeAether()
     render(<App />)
@@ -96,14 +117,16 @@ describe('App', () => {
     expect(screen.getAllByRole('button', { name: copy.nav.connections })).toHaveLength(1)
   })
 
-  it.each(PLACEHOLDER_PAGES)('「%s」仍落在占位页', async (page, label) => {
+  it('「日志」进入真实日志页：没有日志来源时如实说，而不是给一句占位说明', async () => {
     window.aether = makeAether()
     render(<App />)
     await screen.findByText(copy.dashboard.node.label)
 
-    await userEvent.click(screen.getByRole('button', { name: label }))
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.logs }))
 
-    expect(screen.getByText(copy.pages[page].note)).toBeInTheDocument()
+    // makeAether 的 getLogs 回 null：采集器不存在 = 没有来源。
+    expect(await screen.findByText(copy.logs.offline)).toBeInTheDocument()
+    expect(screen.getByText(copy.logs.stopped)).toBeInTheDocument()
     expect(screen.queryByText(copy.dashboard.node.label)).toBeNull()
   })
 
@@ -131,7 +154,6 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: copy.nav.settings }))
 
     expect(screen.getByRole('heading', { name: copy.nav.settings })).toBeInTheDocument()
-    expect(screen.queryByText(copy.pages.planned)).toBeNull()
     const toggle = await screen.findByRole('switch', {
       name: copy.settings.autostart.label
     })
@@ -183,7 +205,7 @@ describe('App', () => {
     await userEvent.keyboard('{Enter}')
 
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(screen.getByText(copy.pages.logs.note)).toBeInTheDocument()
+    expect(await screen.findByText(copy.logs.offline)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: copy.nav.logs })).toBeInTheDocument()
     // 导航仍走 sidebar 的同一个 page 状态，日志项的 aria-current 跟随。
     expect(screen.getByRole('button', { name: copy.nav.logs })).toHaveAttribute(
@@ -231,7 +253,7 @@ describe('App', () => {
     })
     await userEvent.click(action)
 
-    expect(screen.getByText(copy.pages.logs.note)).toBeInTheDocument()
+    expect(await screen.findByText(copy.logs.offline)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: copy.nav.logs })).toHaveAttribute(
       'aria-current',
       'page'
@@ -260,7 +282,7 @@ describe('App', () => {
     expect(onLogCounts).toHaveBeenCalledTimes(1)
   })
 
-  it('非 ready 时导航不被阻断：切页后面板保留、导航项可操作', async () => {
+  it('非 ready 时状态面板只占仪表盘：切到其它页能看到那一页本身', async () => {
     window.aether = makeAether({
       getStatus: vi.fn(
         async (): Promise<AppStatusView> => ({ ...readyStatus, status: 'no-config' })
@@ -275,10 +297,16 @@ describe('App', () => {
     const connections = screen.getByRole('button', { name: copy.nav.connections })
     await userEvent.click(connections)
 
-    // 状态面板在任意页面都是主区内容；页面状态只体现在导航选中态上。
-    expect(screen.getByRole('heading', { name: copy.state.noConfig.title })).toBeInTheDocument()
-    expect(screen.queryByText(copy.connections.empty)).toBeNull()
+    // 之前面板会把整个主区占满，导致「查看日志」在崩溃时无处可去。
+    // 现在面板是仪表盘在异常状态下的内容，不是蒙在所有页面上的遮罩。
+    expect(await screen.findByText(copy.connections.empty)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: copy.state.noConfig.title })).toBeNull()
     expect(connections).toHaveAttribute('aria-current', 'page')
-    expect(connections).toBeEnabled()
+
+    // 切回仪表盘，面板回来。
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.dashboard }))
+    expect(
+      await screen.findByRole('heading', { name: copy.state.noConfig.title })
+    ).toBeInTheDocument()
   })
 })

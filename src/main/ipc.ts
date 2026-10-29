@@ -12,6 +12,7 @@ import type {
   ModeSetResult,
   NodeSwitchInput,
   NodeSwitchResult,
+  LogsSnapshot,
   PickImportResult,
   ProxyGroupView,
   SimpleResult,
@@ -191,11 +192,13 @@ export function registerUnavailableHandlers(
   }
   ipcMain.handle(IPC.configImport, (): ImportResult => ({ ok: false, message }))
   ipcMain.handle(IPC.configPickImport, (): PickImportResult => ({ ok: false, message }))
+  ipcMain.handle(IPC.configUrlImport, (): UrlImportResult => ({ ok: false, message }))
 
   // 新增通道也必须在「装配失败」变体里存在：否则渲染层第一次调用就会收到
   // "No handler registered"，状态页连错误都显示不出来。
   ipcMain.handle(IPC.connectionsGet, (): ConnectionsSnapshot => emptyConnectionsSnapshot())
   ipcMain.handle(IPC.logsCountsGet, (): DialFailureCounts | null => null)
+  ipcMain.handle(IPC.logsRecentGet, (): LogsSnapshot | null => null)
   // 采集器不存在：没有流量数据来源，首屏补拉回 null。
   ipcMain.handle(IPC.statsGet, (): StatsSample | null => null)
   ipcMain.handle(IPC.nodeSwitch, (): NodeSwitchResult => ({ ok: false, status: 0 }))
@@ -440,6 +443,18 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
    * 采集器不存在时返回 null：没有计数来源，不能用 0 冒充「零次失败」。
    */
   ipcMain.handle(IPC.logsCountsGet, (): DialFailureCounts | null => ctx.logs?.counts() ?? null)
+
+  /**
+   * 日志尾巴。返回 null 而不是空数组，是因为两者对用户的含义完全不同：
+   * 「内核没在跑、没有日志来源」必须说成这个，不能显示成「暂无日志」。
+   */
+  ipcMain.handle(
+    IPC.logsRecentGet,
+    (): LogsSnapshot | null =>
+      ctx.logs === null
+        ? null
+        : { entries: ctx.logs.recent(), revision: ctx.logs.revision() }
+  )
 
   ipcMain.handle(IPC.nodeSwitch, async (_event, arg: unknown): Promise<NodeSwitchResult> => {
     const input = parseNodeSwitch(arg)

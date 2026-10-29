@@ -8,6 +8,11 @@ export interface StatePanelProps {
   proxyError?: string
   /** 重启成功后请求父级重新拉取状态。 */
   onRefresh?(): void
+  /**
+   * 去日志页。内核崩溃恰恰是最需要看日志的时刻，这个入口必须真的能到达日志页；
+   * 缺省时按钮禁用——一个点了没反应的按钮比禁用的按钮更糟。
+   */
+  onViewLogs?(): void
   /** 测试注入；缺省走 window.aether。 */
   importConfig?(): Promise<PickImportResult>
   restartCore?(): Promise<SimpleResult>
@@ -44,7 +49,8 @@ export function StatePanel({
   proxyError,
   onRefresh,
   importConfig,
-  restartCore
+  restartCore,
+  onViewLogs
 }: StatePanelProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -111,12 +117,13 @@ export function StatePanel({
         <button
           type="button"
           className="state-action"
-          disabled
-          title={copy.state.logsPlaceholder}
+          disabled={busy || onViewLogs === undefined}
+          onClick={() => {
+            onViewLogs?.()
+          }}
         >
           {copy.state.logsAction}
         </button>
-        <span className="state-note">{copy.state.logsPlaceholder}</span>
       </span>
     )
   }

@@ -13,13 +13,13 @@ import { useStatus } from './hooks/useStatus'
 import { useWindowMaximized } from './hooks/useWindowMaximized'
 import { ConnectionsPage } from './pages/ConnectionsPage'
 import { NodesPage } from './pages/NodesPage'
-import { Placeholder } from './pages/Placeholder'
+import { LogsPage } from './pages/LogsPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { PAGE_TITLES, type Page } from './page'
+import { PAGE_TITLES, initialPage, type Page } from './page'
 import { pickActiveProxy } from './selectors'
 
 export function App() {
-  const [page, setPage] = useState<Page>('dashboard')
+  const [page, setPage] = useState<Page>(() => initialPage(window.location.search))
   const { status, error, refresh } = useStatus()
   const { groups } = useProxies()
   const { current, history } = useStats()
@@ -47,7 +47,7 @@ export function App() {
 
   /**
    * 分发写成穷尽的 Record：新增页面必须同时在这里登记，否则 tsc 直接报缺键。
-   * 用三元表达式时，`Placeholder` 接受任意非 dashboard 页，漏接的类型错误不会出现。
+   * 用三元表达式时，漏接的页面不会在类型层面暴露出来。
    */
   const pages: Record<Page, ReactNode> = {
     dashboard: (
@@ -64,7 +64,7 @@ export function App() {
     nodes: <NodesPage groups={groups} />,
     connections: <ConnectionsPage connections={connections} />,
     settings: <SettingsPage />,
-    logs: <Placeholder page="logs" />
+    logs: <LogsPage />
   }
 
   return (
@@ -78,16 +78,22 @@ export function App() {
             title={PAGE_TITLES[page]}
             onRefresh={refreshNow}
           />
-          {status === null ? null : status.status === 'ready' ? (
-            pages[page]
-          ) : (
+          {/*
+            非 ready 时只把**仪表盘**换成状态面板，其余页面照常渲染：崩溃后最想看的
+            就是日志与设置，把整个主区锁在状态页上会让「查看日志」无处可去。
+            规格（desktop-shell）也要求状态页出现时侧栏仍可操作。
+          */}
+          {status === null ? null : status.status !== 'ready' && page === 'dashboard' ? (
             // key 让状态切换时清掉上一套状态里的「已导入 / 错误」提示。
             <StatePanel
               key={status.status}
               status={status.status}
               {...(error === null ? {} : { proxyError: error })}
               onRefresh={refreshNow}
+              onViewLogs={viewLogs}
             />
+          ) : (
+            pages[page]
           )}
         </main>
       </div>

@@ -107,6 +107,9 @@ export class LogsCollector {
   /** 窗口内拨号失败的到达时刻，升序；与 entries 相互独立。 */
   private readonly failures: number[] = []
 
+  /** 累计追加条数。环形缓冲会淘汰旧条目，所以它不等于 `entries.length`。 */
+  private appended = 0
+
   private onCounts: ((c: DialFailureCounts) => void) | null = null
   private socket: WebSocketLike | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -158,6 +161,14 @@ export class LogsCollector {
     return this.entries.map((entry) => ({ ...entry }))
   }
 
+  /**
+   * 累计追加条数（单调递增）。渲染层轮询时用它判断「这一秒有没有新日志」：
+   * 没有变化就不重渲染，也不必比较整份数组。缓冲淘汰不会让它回退。
+   */
+  revision(): number {
+    return this.appended
+  }
+
   private buildCounts(now: number): DialFailureCounts {
     this.pruneFailures(now)
     return { recent: this.failures.length, windowMs: this.windowMs }
@@ -173,6 +184,7 @@ export class LogsCollector {
   }
 
   private append(entry: LogEntry): void {
+    this.appended += 1
     this.entries.push(entry)
     while (this.entries.length > this.maxEntries) this.entries.shift()
   }

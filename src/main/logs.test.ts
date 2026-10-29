@@ -404,3 +404,38 @@ describe('LogsCollector 连接生命周期', () => {
     warn.mockRestore()
   })
 })
+
+describe('revision（日志页的轮询判据）', () => {
+  it('每追加一条加一，与缓冲上限无关', () => {
+    const h = harness({ maxEntries: 2 })
+    h.collector.start()
+    expect(h.collector.revision()).toBe(0)
+
+    h.push('warning', 'line-1')
+    h.push('warning', 'line-2')
+    h.push('warning', 'line-3')
+
+    // 缓冲只剩两条，但累计数是 3：界面据此判断「这一秒有没有新日志」。
+    expect(h.collector.recent()).toHaveLength(2)
+    expect(h.collector.revision()).toBe(3)
+  })
+
+  it('非拨号日志也计数：日志页要显示所有 warning，而不只是失败', () => {
+    const h = harness()
+    h.collector.start()
+
+    h.push('warning', OTHER_WARNING)
+
+    expect(h.collector.revision()).toBe(1)
+    expect(h.collector.counts().recent).toBe(0)
+  })
+
+  it('坏帧不计入：解析不了的帧不会让界面白重渲染一次', () => {
+    const h = harness()
+    h.collector.start()
+
+    h.socket().push('not-json')
+
+    expect(h.collector.revision()).toBe(0)
+  })
+})

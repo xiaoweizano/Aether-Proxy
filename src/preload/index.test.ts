@@ -74,6 +74,7 @@ describe('preload', () => {
       'getAutostart',
       'getConnections',
       'getLogCounts',
+      'getLogs',
       'getProxies',
       'getStats',
       'getStatus',

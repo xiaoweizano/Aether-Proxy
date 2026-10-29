@@ -81,6 +81,22 @@ export interface ConnectionsSnapshot {
 }
 
 /** 拨号失败的滚动窗口计数；界面用它显示「最近 N 分钟失败 M 次」。 */
+/** 日志缓冲里的一条；`payload` 是内核原文，不做截断或改写。 */
+export interface LogEntryView {
+  /** 到达时刻（主进程时钟）。 */
+  at: number
+  /** 内核给的级别（实测只有 `warning`）。 */
+  level: string
+  payload: string
+}
+
+export interface LogsSnapshot {
+  /** 最多 200 条，按到达顺序，最新在最后。 */
+  entries: LogEntryView[]
+  /** 累计追加条数（单调递增）；环形缓冲淘汰不会让它回退。 */
+  revision: number
+}
+
 export interface DialFailureCounts {
   /** 最近 `windowMs` 内的拨号失败次数。 */
   recent: number
@@ -201,6 +217,8 @@ export const IPC = {
   connectionsPush: 'connections:push',
   logsCountsGet: 'logs:counts',
   logsCountsPush: 'logs:counts-push',
+  /** 日志尾巴快照（最多 200 条，最新在最后）。 */
+  logsRecentGet: 'logs:recent',
   nodeSwitch: 'proxies:switch',
   configOpenDir: 'config:open-dir',
   /**
@@ -260,6 +278,13 @@ export interface AetherApi {
   getLogCounts(): Promise<DialFailureCounts | null>
   /** 订阅新失败到达时的计数；到期不会推送，见 `getLogCounts` 的注释。 */
   onLogCounts(cb: (counts: DialFailureCounts) => void): () => void
+  /**
+   * 日志尾巴快照；内核未运行（没有采集器）时为 null。
+   *
+   * 轮询用：主进程只在**有新日志**时让 `revision` 变化，界面据此跳过无意义的重渲染。
+   * 返回 null 不等于「没有日志」——那是「没有来源」，界面必须分开说。
+   */
+  getLogs(): Promise<LogsSnapshot | null>
 
   /** 在指定策略组里切换节点；失败只回 `{ok:false}`，不抛错。 */
   switchNode(input: NodeSwitchInput): Promise<NodeSwitchResult>

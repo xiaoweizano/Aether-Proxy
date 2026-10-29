@@ -7,6 +7,7 @@ import type {
   AutostartStateView,
   ConnectionsSnapshot,
   DialFailureCounts,
+  LogsSnapshot,
   ModeSetResult,
   NodeSwitchInput,
   NodeSwitchResult,
@@ -62,6 +63,7 @@ const api: AetherApi = {
       ipcRenderer.removeListener(IPC.logsCountsPush, listener)
     }
   },
+  getLogs: () => ipcRenderer.invoke(IPC.logsRecentGet) as Promise<LogsSnapshot | null>,
   switchNode: (input: NodeSwitchInput) =>
     ipcRenderer.invoke(IPC.nodeSwitch, nodeSwitchInput(input)) as Promise<NodeSwitchResult>,
   // 不传任何参数：主进程只打开自己的配置目录，渲染层没有指定路径的能力。

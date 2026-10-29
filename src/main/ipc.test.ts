@@ -699,6 +699,8 @@ describe('registerUnavailableHandlers', () => {
       IPC.connectionsPush,
       IPC.logsCountsGet,
       IPC.logsCountsPush,
+      IPC.logsRecentGet,
+      IPC.configUrlImport,
       IPC.nodeSwitch,
       IPC.configOpenDir,
       IPC.statsGet,
@@ -804,6 +806,27 @@ describe('configImport', () => {
     const result = (await invoke(h.ipc, IPC.configImport, {})) as { ok: boolean; message: string }
     expect(result.ok).toBe(false)
     expect(result.message).toBeTruthy()
+  })
+})
+
+describe('logsRecentGet', () => {
+  it('没有采集器时回 null：这是「没有来源」，不是「没有日志」', async () => {
+    const h = await harness()
+    expect(await invoke(h.ipc, IPC.logsRecentGet)).toBeNull()
+  })
+
+  it('有采集器时回条目与累计 revision', async () => {
+    const logs = {
+      recent: () => [{ at: 1000, level: 'warning', payload: 'line-1' }],
+      revision: () => 7,
+      counts: () => ({ recent: 0, windowMs: 60 * 60_000 })
+    } as unknown as LogsCollector
+    const h = await harness({ logs })
+
+    expect(await invoke(h.ipc, IPC.logsRecentGet)).toEqual({
+      entries: [{ at: 1000, level: 'warning', payload: 'line-1' }],
+      revision: 7
+    })
   })
 })
 
