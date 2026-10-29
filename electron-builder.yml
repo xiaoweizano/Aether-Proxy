@@ -11,6 +11,17 @@ appId: dev.aether.proxy
 productName: Aether
 copyright: Aether Proxy contributors
 
+# 自动更新不做（CLAUDE.md 已锁定）：electron-builder 默认会给 NSIS 生成
+# latest.yml 发布元数据，这里显式关掉，免得发布目录里出现一个没人消费的更新清单。
+publish: null
+
+# exe 文件属性里的「公司」字段来自 Electron 的存根（GitHub, Inc.）。这是自用/开源
+# 项目，不冒用别人的公司名；写入本项目自己的作者名。
+extraMetadata:
+  author:
+    name: Aether Proxy contributors
+  companyName: Aether Proxy contributors
+
 directories:
   output: dist
   buildResources: build

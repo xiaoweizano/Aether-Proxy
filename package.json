@@ -2,6 +2,8 @@
   "name": "aether-proxy",
   "version": "0.1.0",
   "private": true,
+  "description": "Aether — 跨平台代理客户端（mihomo 内核，桌面端 Electron + React）",
+  "author": "Aether Proxy contributors",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
