@@ -63,6 +63,18 @@ describe('StatePanel', () => {
     expect(screen.queryByText(copy.state.coreError.restartAction)).toBeNull()
   })
 
+  it('in-use：措辞如实说明不做单实例锁，不能暗示本实例被拦下', () => {
+    // 规格 7.7：M1 不声明单实例保证，第二个实例照常运行。旧文案「关闭另一个实例后再试」
+    // 会让用户以为本窗口被阻止了，与真实行为相悖。
+    const text = `${copy.state.inUse.title}${copy.state.inUse.detail}`
+    expect(text).not.toContain('关闭另一个实例')
+    expect(text).not.toContain('只能有一个')
+    // 必须交代的三件事：另一个实例在、它持有系统代理、本实例继续运行但不接管。
+    expect(text).toContain('另一个')
+    expect(text).toContain('系统代理')
+    expect(text).toContain('继续运行')
+  })
+
   it('取消导入：不显示错误，也不显示成功提示', async () => {
     const importConfig = vi.fn(async () => ({ ok: false as const, cancelled: true as const }))
     render(<StatePanel status="no-config" importConfig={importConfig} />)

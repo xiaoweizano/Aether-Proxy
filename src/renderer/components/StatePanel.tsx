@@ -36,7 +36,8 @@ function copyFor(status: PanelStatus): { title: string; detail: string } {
 
 /**
  * 非 ready 状态的主视图：每个状态只给一个主操作，其余入口保持次要或占位。
- * `in-use` 不提供任何操作——另一个实例持有配置与系统代理，这里的写操作都会落空。
+ * `in-use` 不提供任何操作——另一个实例持有系统代理，这里的写操作都会落空；
+ * 而且 M1 不做单实例锁，本实例本来就该继续运行（规格 7.7），没有「关掉再试」可点。
  */
 export function StatePanel({
   status,
