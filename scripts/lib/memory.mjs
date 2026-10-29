@@ -1,8 +1,8 @@
 /**
  * 常驻内存测量的纯函数层。
  *
- * 规格 `app-lifecycle`：`Aether.exe` 全部进程与 `mihomo.exe` 的 Working Set 之和
- * 低于 150 MB。把「跑 PowerShell」留在 `scripts/measure-memory.mjs`，把
+ * 预算：`Aether.exe` 全部进程与 `mihomo.exe` 的 Working Set 之和不得高于 300 MB
+ * （目标 ≤280 MB，见 docs/design/2026-10-29-memory-budget.md）。把「跑 PowerShell」留在 `scripts/measure-memory.mjs`，把
  * 「PowerShell 输出长什么样 → 总量是多少」全部放在这里，是因为后者才是会悄悄坏掉的部分：
  * `Get-Process` 的字段名（`ProcessName` / `Id` / `WorkingSet64`）或 `Win32_Process`
  * 的字段名（`Name` / `ProcessId` / `WorkingSetSize`）一变，脚本若静默跳过就会得到
@@ -18,8 +18,14 @@ import { promisify } from 'node:util'
 /** 两个受测进程系列。`Aether.exe` 覆盖 Electron 的主进程、GPU、渲染与工具进程。 */
 export const PROCESS_FAMILIES = Object.freeze(['Aether.exe', 'mihomo.exe'])
 
-/** 规格预算：两者 Working Set 之和低于 150 MB。 */
-export const MEMORY_BUDGET_MB = 150
+/**
+ * 预算闸门：两者 Working Set 之和不得高于 300 MB。
+ *
+ * 目标是 ≤280 MB（design/2026-10-29-memory-budget.md 的推翻结论），闸门比目标松 20 MB：
+ * 打包版实测基线 268 MB，三次跨度 268–274 MB（GPU 进程随系统状态浮动），
+ * 闸门贴着目标就会变成随机失败。这里抓的是回归——基线之上多出 30 MB 的常驻对象。
+ */
+export const MEMORY_BUDGET_MB = 300
 
 const BYTES_PER_MB = 1024 * 1024
 
@@ -190,7 +196,7 @@ export function summariseMemory(records, options = {}) {
     totalMb: totalBytes / BYTES_PER_MB,
     budgetMb,
     budgetBytes,
-    // 规格是「低于 150 MB」，恰好等于预算不算超出。
+    // 规格是「不高于 300 MB」，恰好等于闸门不算超出。
     overBudget: totalBytes > budgetBytes,
     missingFamilies: PROCESS_FAMILIES.filter((family) => byFamily[family].count === 0),
     /** 没有 Aether.exe 路径可对照时，mihomo.exe 的归属无法核实。 */
@@ -318,7 +324,9 @@ export function formatReport(summary) {
     lines.push(`  提示：没有找到 ${family} 进程；这类缺席是有效测量（例如内核未启动）。`)
   }
   if (summary.missingFamilies.includes('Aether.exe')) {
-    lines.push('  警告：没有找到 Aether.exe，本次测量不包含应用本体，不能用来判断 150 MB 预算是否达标。')
+    lines.push(
+      `  警告：没有找到 Aether.exe，本次测量不包含应用本体，不能用来判断 ${MEMORY_BUDGET_MB} MB 预算是否达标。`
+    )
   }
   if (summary.foreign.length > 0) {
     lines.push('  已排除：以下 mihomo.exe 不在 Aether 的安装目录下，属于其他程序，不计入预算。')

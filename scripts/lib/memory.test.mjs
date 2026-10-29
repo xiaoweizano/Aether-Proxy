@@ -123,12 +123,12 @@ describe('summariseMemory', () => {
     expect(summary.overBudget).toBe(false)
   })
 
-  it('超过 150 MB 判超标，恰好 150 MB 不算', () => {
+  it('超过 300 MB 判超标，恰好 300 MB 不算', () => {
     const at = (bytes) =>
       parse(JSON.stringify([{ ProcessName: 'Aether', Id: 1, WorkingSet64: bytes }]))
-    expect(at(150 * MB).overBudget).toBe(false)
-    expect(at(150 * MB + 1).overBudget).toBe(true)
-    expect(MEMORY_BUDGET_MB).toBe(150)
+    expect(at(300 * MB).overBudget).toBe(false)
+    expect(at(300 * MB + 1).overBudget).toBe(true)
+    expect(MEMORY_BUDGET_MB).toBe(300)
   })
 
   it('不属于受测系列的记录不计入总量', () => {
@@ -247,7 +247,7 @@ describe('输出格式', () => {
     expect(text).toContain('mihomo.exe')
     expect(text).toContain('pid     100')
     expect(text).toContain('23.8 MB')
-    expect(text).toContain('合计 83.8 MB / 150 MB')
+    expect(text).toContain('合计 83.8 MB / 300 MB')
     expect(text).toContain('在预算内')
   })
 
@@ -257,13 +257,13 @@ describe('输出格式', () => {
     )
     const text = formatReport(summary).join('\n')
     expect(text).toContain('没有找到 Aether.exe')
-    expect(text).toContain('不能用来判断 150 MB 预算')
+    expect(text).toContain('不能用来判断 300 MB 预算')
   })
 
   it('超标时报告写明超出预算', () => {
     const summary = summariseMemory(
       parseProcessOutput(
-        JSON.stringify([{ ProcessName: 'Aether', Id: 1, WorkingSet64: 200 * MB }])
+        JSON.stringify([{ ProcessName: 'Aether', Id: 1, WorkingSet64: 400 * MB }])
       )
     )
     expect(formatReport(summary).join('\n')).toContain('超出预算')
@@ -297,7 +297,7 @@ describe('exitCodeFor', () => {
 
   it('在预算内 0，超出 1', () => {
     expect(exitCodeFor(summarise(100 * MB))).toBe(0)
-    expect(exitCodeFor(summarise(200 * MB))).toBe(1)
+    expect(exitCodeFor(summarise(400 * MB))).toBe(1)
   })
 
   it('缺少 Aether.exe 时是 2（没测到），不是 0（通过）', () => {

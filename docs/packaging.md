@@ -89,6 +89,10 @@ win-unpacked/
 内核从 `resources/mihomo/mihomo.exe` 拉起、geodata 从 `resources/geodata` 校验并复制到
 profile 目录（哈希与 `vendor/geodata/SHA256SUMS` 一致）。
 
-关掉主窗口（托盘常驻状态）后测得 **273.8 MB / 150 MB 预算**：主进程 107.6 MB、
-GPU 89.7 MB、渲染进程已销毁、utility 49.7 MB、mihomo 26.8 MB。
-**超出预算**，需要后续单独处理（见报告）。
+关掉主窗口（托盘常驻状态）后测得 **268.2 MB**：主进程 106.8 MB、GPU 84.5 MB、
+utility 50.0 MB、mihomo 26.8 MB，渲染进程已随窗口销毁（三次复现 273.8 / 268.7 / 268.2 MB）。
+
+这个数字改写了内存预算：原先的「< 150 MB」在 Electron 45 上不可能达到（GPU + 网络服务
+两项就有 134 MB，此时还没画任何东西）。现行目标为 **≤ 280 MB、闸门 300 MB**，
+推翻理由与测量协议见 `docs/design/2026-10-29-memory-budget.md`。
+`npm run measure:memory` 退出码 1 表示超出闸门——那时按回归处理，先查新增的常驻对象。

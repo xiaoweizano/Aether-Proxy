@@ -8,7 +8,8 @@ import {
 } from './lib/memory.mjs'
 
 /**
- * 常驻内存闸门：`Aether.exe` 全部进程 + `mihomo.exe` 的 Working Set 之和必须低于 150 MB。
+ * 常驻内存闸门：`Aether.exe` 全部进程 + `mihomo.exe` 的 Working Set 之和不得高于 300 MB
+ * （目标 ≤280 MB，理由见 docs/design/2026-10-29-memory-budget.md）。
  *
  * 用法：
  *   npm run measure:memory              测当前正在运行的应用（窗口关掉、只留托盘时最有意义）
@@ -24,7 +25,7 @@ import {
  *
  * **只测打包版**：开发态的 `npm run dev` 跑的是 `node_modules/electron/dist/electron.exe`，
  * 进程名不是 `Aether.exe`，而且没有 ASAR 打包、没有 V8 代码缓存，数字与发布版不可比。
- * 要判断 150 MB 预算，必须用打包产物（electron-builder 的 portable / 安装版）运行。
+ * 要判断内存预算，必须用打包产物（electron-builder 的 portable / 安装版）运行。
  */
 
 const IS_WINDOWS = process.platform === 'win32'
@@ -68,7 +69,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2))
   if (options.help === true) {
     console.log('用法：npm run measure:memory [-- --minutes <分钟>]')
-    console.log('统计 Aether.exe 全部进程 + mihomo.exe 的 Working Set，合计超过 150 MB 时退出 1。')
+    console.log('统计 Aether.exe 全部进程 + mihomo.exe 的 Working Set，合计超过 300 MB 时退出 1。')
     return 0
   }
   if (!IS_WINDOWS) {

@@ -39,7 +39,7 @@
 ## 工程约定
 
 - mihomo controller 只绑定 `127.0.0.1`，带随机 secret；渲染进程不直连，一律经主进程 IPC 转发。
-- 窗口隐藏即销毁（`win.destroy()`），托盘常驻内存目标 60-100MB。
+- 窗口隐藏即销毁（`win.destroy()`），托盘常驻内存目标 ≤280MB、闸门 300MB（实测基线 268MB；推翻理由见 `docs/design/2026-10-29-memory-budget.md`）。
 - 平台相关能力（系统代理、TUN、提权）必须藏在 `PlatformProxy` 接口后，v1 只实现 Windows。
 - 退出路径必须保证：终止 mihomo 子进程、还原系统代理设置。这是硬要求。
 - 主进程内的「内核管理」和「平台代理」两个模块保持低耦合，将来可原样搬到独立守护进程（Mullvad 式架构）。
@@ -48,6 +48,7 @@
 
 - `docs/design/2026-10-23-aether-proxy.md` — 产品与技术设计，含完整决策日志与取舍依据。
 - `docs/design/2026-10-23-ui-pivot-dashboard.md` — 主视图从密集网格改为卡片仪表盘的推翻说明（Supersedes 原 UI 规范一节）。
+- `docs/design/2026-10-29-memory-budget.md` — 托盘内存预算从 <150MB 改为 ≤280MB 的推翻说明（Supersedes 原测量协议的内存一项）。
 - `PRODUCT.md` — 产品事实：用户、用途、定位、约束、原则。
 - `DESIGN.md` — 视觉系统规范（从选定的视觉稿反推）：色板、字阶、布局、组件、规则。`.impeccable/design.json` 是它的结构化 sidecar。
 - `docs/design/mockups/variants/a-cards.html` — **选定的** M1 仪表盘视觉稿（1280×800，自包含）。

@@ -49,7 +49,7 @@
 #### Scenario: 常驻资源目标
 
 - **WHEN** 窗口已销毁且无额外窗口存在，应用已运行 5 分钟
-- **THEN** `Aether.exe` 全部进程与 `mihomo.exe` 的 Working Set 之和低于 150 MB
+- **THEN** `Aether.exe` 全部进程与 `mihomo.exe` 的 Working Set 之和不超过 300 MB（目标 ≤280 MB；Electron 45 的固定成本决定了原 150 MB 不可达，见 `docs/design/2026-10-29-memory-budget.md`）
 
 ### Requirement: 未实现单实例锁
 
