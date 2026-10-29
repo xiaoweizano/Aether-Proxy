@@ -147,7 +147,7 @@ export function SettingsPage({ read, write }: SettingsPageProps) {
         </div>
 
         {showWarning && (
-          <p className="settings-warning" id="autostart-warning" role="alert">
+          <p className="settings-warning" id="autostart-warning">
             <strong className="settings-warning-title">{copy.settings.autostart.warningTitle}</strong>
             {copy.settings.autostart.warning}
           </p>
