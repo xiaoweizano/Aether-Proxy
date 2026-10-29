@@ -66,8 +66,9 @@ export function mergeConfig(
   base['external-controller'] = `127.0.0.1:${inject.controllerPort}`
   base.secret = inject.secret
   base['find-process-mode'] = 'always'
-  // 日志面板落地前保持安静：stdout/stderr 已被 supervisor 丢弃，
-  // 高日志级别只会白耗内核 IO。
+  // 固定 warning：日志页要的正是失败（拨号失败、DNS 失败），这两类都在 warning 上；
+  // 提到 info 会为每次连接开关各来一条，既淹掉真正的问题，也白耗内核写到
+  // /logs 与 stdout 的 IO（stdout 已被 supervisor 丢弃）。
   base['log-level'] = 'warning'
 
   const tun = isObject(base.tun) ? base.tun : {}
