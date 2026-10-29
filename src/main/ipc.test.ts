@@ -177,7 +177,12 @@ async function harness(options: {
     async onCoreRestarted(info) {
       ctx.coreInfo = info
     },
-    stopAll
+    stopAll,
+    createShutdownActions: () => ({
+      cancelRestarts: () => {},
+      restoreProxy: async () => {},
+      stopKernel: () => {}
+    })
   }
 
   const ipc = fakeIpc()

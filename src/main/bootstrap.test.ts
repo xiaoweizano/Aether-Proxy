@@ -20,6 +20,7 @@ import {
 import type { BootstrapOptions, ExecFileFn } from './bootstrap'
 import { FakePlatformProxy } from './proxy/fake'
 import { ProxyOwnership } from './proxy/ownership'
+import { createShutdownHandler } from './shell/power'
 import type { WebSocketLike } from './stats'
 
 const VALID_CONFIG = `proxies: []
@@ -679,6 +680,93 @@ rules:
     // 停内核时状态文件必须还在，否则强杀后无法识别残留 mihomo。
     expect(coreStateAtStop).toBe(true)
     expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(false)
+  })
+
+  it('关机路径：先取消自动重启，再还原代理，内核只被请求终止（不等宽限期）', async () => {
+    const order: string[] = []
+    let child!: CrashableChild
+    const h = await harness({
+      proxyEnabled: true,
+      spawn: () => {
+        child = fakeChild()
+        return child
+      }
+    })
+    // 定时器只记录不触发：本条用例只关心关机路径取消了调度。
+    const schedule = vi.fn()
+    h.opts.restarter = { schedule, now: () => 0 }
+
+    const originalRestore = h.pp.restore.bind(h.pp)
+    h.pp.restore = async (state) => {
+      order.push('proxy-restore')
+      await originalRestore(state)
+    }
+
+    const ctx = await bootstrap(h.opts)
+    // 让内核「正在退出但还没退出」：模拟 SIGTERM 宽限期里的真实状态。
+    const kill = vi.fn(() => {
+      order.push('core-stop-requested')
+      // 刻意不投递 exit：stop() 会一直等到 3 秒超时才返回。
+      return true
+    })
+    ;(child as unknown as { kill: typeof kill }).kill = kill
+
+    const actions = ctx.createShutdownActions()
+    const started = Date.now()
+    await createShutdownHandler(
+      {
+        cancelRestarts: () => {
+          order.push('cancel-restarts')
+          actions.cancelRestarts()
+        },
+        restoreProxy: actions.restoreProxy,
+        stopKernel: actions.stopKernel
+      },
+      { timeoutMs: 2000 }
+    )()
+
+    // 顺序：取消重启 → 还原代理 → 请求停内核。
+    expect(order).toEqual(['cancel-restarts', 'proxy-restore', 'core-stop-requested'])
+    expect(kill).toHaveBeenCalledWith('SIGTERM')
+    // 不等宽限期：内核还没退出，处理器就先回来了。
+    expect(child.exitCode).toBeNull()
+    expect(Date.now() - started).toBeLessThan(1500)
+    // 代理已真正还原。
+    expect((await h.pp.getSystemProxy()).enabled).toBe(false)
+    // 关机路径刻意保留 core-state.json：内核可能仍在宽限期里活着，
+    // 删了记录下次启动就找不到这个孤儿进程了。
+    expect(existsSync(path.join(h.dir, 'core-state.json'))).toBe(true)
+    await ctx.stopAll()
+  })
+
+  it('关机路径取消退避重启：已到点的自动重启不会在关机时把内核拉起来', async () => {
+    let child!: CrashableChild
+    const spawnFn = vi.fn(() => {
+      child = fakeChild()
+      return child
+    })
+    const h = await harness({ spawn: () => spawnFn() })
+    // 捕获退避回调但不真的等待：模拟「定时器已到点、回调排在任务队列里」。
+    // 用对象包一层：直接赋给局部变量会让 TS 的控制流分析把 `fire` 收窄成 never
+    // （赋值发生在回调里，分析看不到），调用处就会报「not callable」。
+    const pending: { fire: (() => void) | null } = { fire: null }
+    const schedule = vi.fn((fn: () => void) => {
+      pending.fire = fn
+    })
+    h.opts.restarter = { schedule, now: () => 0 }
+
+    const ctx = await bootstrap(h.opts)
+    // 内核崩溃 → 调度一次自动重启。
+    crash(child)
+    expect(schedule).toHaveBeenCalledTimes(1)
+
+    const actions = ctx.createShutdownActions()
+    await createShutdownHandler(actions, { timeoutMs: 2000 })()
+    // 关机途中，那个「已经到点」的回调真的被执行了：不得 spawn 第二个内核。
+    pending.fire?.()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(spawnFn).toHaveBeenCalledTimes(1)
   })
 
   it('内核就绪时暴露采集器，用 Bearer secret 连接 /traffic 并推送快照', async () => {

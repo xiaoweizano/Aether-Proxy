@@ -24,6 +24,7 @@ import { CoreLink } from './core/link'
 import { TrafficCollector, type StatsConnect, type TrafficSnapshot } from './stats'
 import { ConnectionsCollector } from './connections'
 import { LogsCollector } from './logs'
+import type { ShutdownActions } from './shell/power'
 import type { ConnectionsSnapshot, DialFailureCounts } from '../shared/ipc'
 import type { Mode, CoreInfo } from '../shared/types'
 
@@ -132,6 +133,16 @@ export interface AppContext {
   /** 内核重启成功后重写 core-state.json 等外部状态。 */
   onCoreRestarted(info: CoreInfo): Promise<void>
   stopAll(): Promise<void>
+  /**
+   * 关机 / 注销路径的三个动作，顺序由 `shell/power.ts` 的 `createShutdownHandler`
+   * 决定，这里只交出「怎么取消重启、怎么还原代理、怎么请求停内核」。
+   *
+   * 为什么不复用 `stopAll()`：关机时被 OS 杀掉只是早晚的事，`stopAll` 把
+   * 「还原代理（毫秒级、必须落地）」和「等内核 3 秒 SIGTERM 宽限（非关键）」
+   * 串在同一个 await 后面；在它外面套竞速超时，内核一慢就先超时，代理还原被放弃。
+   * 正是本任务要消灭的那条失败路径。
+   */
+  createShutdownActions(): ShutdownActions
 }
 
 /**
@@ -1201,6 +1212,47 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
           errors.push(err)
         }
         if (errors.length > 0) throw errors[0]
+      },
+      /**
+       * 关机 / 注销：顺序与「必须 await 谁」由 `shell/power.ts` 决定。
+       *
+       * 与 stopAll 的关键差异：
+       * - 只 await 系统代理还原，内核只**请求**终止（`stop()` 的 3 秒宽限期会等，
+       *   调用方刻意不 await 它）；
+       * - **不删 core-state.json**。stopAll 的注释已经写明顺序的理由：内核在宽限期内
+       *   被强杀时，那份记录是下一次启动唯一能识别残留进程的东西。关机时内核很可能
+       *   还活着，删了它就再也找不到孤儿进程了；留下记录，下次启动的 cleanStaleCore
+       *   会按 ownerPid 判定旧实例已死、再校验完整路径后 taskkill。
+       */
+      createShutdownActions(): ShutdownActions {
+        // in-use：内核与代理都归另一个存活实例，关机时一个都不能动。
+        if (ctx.startupStatus === 'in-use') {
+          return {
+            cancelRestarts() {},
+            async restoreProxy() {},
+            stopKernel() {}
+          }
+        }
+        return {
+          cancelRestarts() {
+            // 同步，且必须先于任何 await：关机途中到点的退避定时器会把内核重新拉起。
+            cancelRestarts()
+            // 置位后，在途重启会在下一个 await 边界放弃（与 stopAll 同一套语义）。
+            shuttingDown = true
+          },
+          async restoreProxy() {
+            await controller.disable()
+          },
+          stopKernel() {
+            // 刻意不返回 Promise：调用方不等内核的 SIGTERM 宽限期。
+            // stop() 会同步把状态置为 stopped，因此这次退出不会被误判成崩溃。
+            void activeSupervisor.stop().catch((err) => {
+              console.warn('[aether] 关机时终止内核失败：', describeError(err))
+            })
+            // 采集器不能留着重连定时器；它们与本进程同生共死，停在这里最省事。
+            stopCollectors(ctx)
+          }
+        }
       }
     }
     // 崩溃处理只改「当前」上下文；之前的上下文（不会出现多个）不在这里引用。

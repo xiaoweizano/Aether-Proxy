@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from 'electron'
 import type { OpenDialogOptions } from 'electron'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -25,6 +25,7 @@ import {
   type ManagedWindow,
   type WindowRect
 } from './shell/window'
+import { createShutdownHandler } from './shell/power'
 import type { TrafficSnapshot } from './stats'
 import { IPC } from '../shared/ipc'
 import type { ConnectionsSnapshot, DialFailureCounts } from '../shared/ipc'
@@ -384,6 +385,8 @@ function createBrowserWindow(requested: WindowRect): ShellWindow {
 
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event) => event.preventDefault())
+  // Windows 的注销/关机事件发在窗口上，不在 app 上（Electron 45）。
+  win.on('session-end', handleShutdown)
 
   /**
    * 关闭即销毁。真正的退出（`before-quit` 已置位 `quitting`）必须放行，
@@ -597,6 +600,34 @@ async function start(): Promise<void> {
 }
 
 app.whenReady().then(() => { void start() })
+
+/**
+ * 关机 / 注销：与正常退出走不同的路径。
+ *
+ * 正常退出可以等内核 3 秒宽限期；关机等不起，而真正致命的是**系统代理没还原**
+ * （下次开机整机没网）。所以这里只 await 代理还原，内核只发终止请求不等结果，
+ * 顺序与理由见 `shell/power.ts` 的模块注释。
+ *
+ * 两个事件源都接：Windows 上 `session-end` 挂在 `BrowserWindow` 上（不是 `app`），
+ * 而 `powerMonitor` 的 `shutdown` 在 Electron 侧另有触发路径。谁先到谁处理，
+ * 处理器自身幂等。
+ */
+let shutdownHandled = false
+function handleShutdown(): void {
+  if (shutdownHandled) return
+  const ctx = context
+  // context 还没建好就没有代理可还原，也没有内核要停：直接放行普通退出。
+  if (ctx === null) return
+  shutdownHandled = true
+  // 关机路径不得再走 before-quit 的清理：那会等内核 3 秒宽限期。
+  cleanupDone = true
+  stopTray()
+  void createShutdownHandler(ctx.createShutdownActions())()
+}
+
+app.on('ready', () => {
+  powerMonitor.on('shutdown', handleShutdown)
+})
 
 app.on('before-quit', (event) => {
   // 清理已结束：放行最终这一次 quit（由下面的 finally 主动触发）。
