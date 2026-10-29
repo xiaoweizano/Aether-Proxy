@@ -219,12 +219,22 @@ describe('ensureAutostartAtStartup', () => {
     expect(h.setLoginItem).not.toHaveBeenCalled()
   })
 
-  it('用户显式开过：只认系统实际值，启动时不重写注册表', async () => {
+  it('用户意愿是开、但系统里没有自启项：按意愿补回来', async () => {
     const h = await harness({ systemOpenAtLogin: false })
     await writeSettingsFile(h.file, { proxyEnabled: false, autostart: true })
 
-    expect(await ensureAutostartAtStartup(h.host, h.file)).toBe('skipped')
-    expect(h.setLoginItem).not.toHaveBeenCalled()
+    // 用户在任务管理器里删掉自启项后再打开应用：不补回去的话，设置页会显示
+    // 「已开启」而系统里根本没有自启项，那就是在说谎。
+    expect(await ensureAutostartAtStartup(h.host, h.file)).toBe('registered')
+    expect(h.setLoginItem).toHaveBeenCalledWith(true)
+  })
+
+  it('用户意愿是关、系统里却还有自启项：按意愿删掉', async () => {
+    const h = await harness({ systemOpenAtLogin: true })
+    await writeSettingsFile(h.file, { proxyEnabled: false, autostart: false })
+
+    expect(await ensureAutostartAtStartup(h.host, h.file)).toBe('registered')
+    expect(h.setLoginItem).toHaveBeenCalledWith(false)
   })
 
   it('注册没被系统接受时报告失败', async () => {

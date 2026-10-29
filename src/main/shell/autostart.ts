@@ -171,18 +171,28 @@ export async function ensureAutostartAtStartup(
   settingsFile: string
 ): Promise<StartupAutostartOutcome> {
   if (!host.isPackaged) return 'skipped'
-  let written: boolean | undefined
+  const wanted = await readSettings(settingsFile)
+    .then((settings) => resolveAutostart(settings))
+    .catch(() => null)
+  if (wanted === null) return 'failed'
+  // 以用户意愿为准对齐系统状态，而不是只在首次运行时注册一次：
+  // 用户在任务管理器里删掉自启项后再打开应用，界面显示「已开启」却没有自启项，
+  // 那就是在说谎。这里每次启动都读一次系统实际值，不一致就按意愿修正。
+  let current: boolean | null
   try {
-    written = (await readSettings(settingsFile)).autostart
+    current = host.getLoginItem()
   } catch {
-    return 'failed'
+    current = null
   }
-  if (written !== undefined) return 'skipped'
-  if (DEFAULT_AUTOSTART !== true) return 'skipped'
+  if (current === wanted) return 'skipped'
   try {
-    host.setLoginItem(true)
-    if (!host.getLoginItem()) return 'failed'
-    await writeAutostart(settingsFile, true)
+    host.setLoginItem(wanted)
+    if (host.getLoginItem() !== wanted) return 'failed'
+    // 系统值已经是用户意愿，持久化值若缺失也顺手补齐。
+    const persisted = await readSettings(settingsFile).catch(() => null)
+    if (persisted !== null && persisted.autostart === undefined) {
+      await writeAutostart(settingsFile, wanted)
+    }
     return 'registered'
   } catch {
     return 'failed'
