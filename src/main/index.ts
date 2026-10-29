@@ -413,10 +413,6 @@ function createBrowserWindow(requested: WindowRect): ShellWindow {
     // 窗口重建后 connectionsGet 必须拿到完整首屏（账本 Ruling）。
   })
 
-  win.webContents.once('did-finish-load', () => {
-    // 首帧画出来后窗口才显示，避免用户看到背景色的空窗闪一下。
-    if (!win.isDestroyed() && !win.isVisible()) win.show()
-  })
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // startupStatus 用创建那一刻的值：重建发生在应用运行期间，状态不会因为窗口消失而改变。
   const startupStatus = context?.startupStatus ?? 'core-error'
