@@ -2,6 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      内容安全策略。`%AETHER_CSP%` 由 electron.vite.config.ts 的 cspPlugin 按模式替换：
+      打包态不允许内联脚本，开发态为 Vite HMR 放开。策略本体见 src/shared/csp.ts。
+    -->
+    <meta http-equiv="Content-Security-Policy" content="%AETHER_CSP%" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Aether</title>
   </head>
