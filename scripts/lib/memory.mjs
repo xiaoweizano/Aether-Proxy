@@ -287,7 +287,7 @@ export function formatReport(summary) {
 
   /**
    * 没有 Aether.exe 时不能给出「在预算内」：那不是「达标」，是「没测到」。
-   * 退出码仍按 overBudget 走（缺席的进程系列是有效测量），但结论行必须如实。
+   * 退出码由 `exitCodeFor` 一并给出 2，结论行与退出码说的是同一件事。
    */
   const verdict =
     summary.entries.length === 0
