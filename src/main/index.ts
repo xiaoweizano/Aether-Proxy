@@ -1,9 +1,17 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import type { OpenDialogOptions } from 'electron'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { bootstrap, type AppContext } from './bootstrap'
 import { registerIpcHandlers, registerUnavailableHandlers } from './ipc'
+import {
+  createTray,
+  createTrayActions,
+  readTraySnapshot,
+  toMenuTemplate,
+  type TrayController,
+  type TrayHost
+} from './shell/tray'
 import type { TrafficSnapshot } from './stats'
 import { IPC } from '../shared/ipc'
 import type { ConnectionsSnapshot, DialFailureCounts } from '../shared/ipc'
@@ -35,6 +43,9 @@ let mainWindow: BrowserWindow | null = null
 let quitting = false
 /** 清理真正结束、允许放行的那一次 quit；此前所有 quit 都必须被挡住。 */
 let cleanupDone = false
+let trayController: TrayController | null = null
+/** 托盘菜单的刷新定时器；只管状态类字段，速率从不参与菜单。 */
+let trayTimer: NodeJS.Timeout | null = null
 
 /**
  * 采样回调只认「当前窗口」：窗口销毁即丢弃，重建窗口后由 createWindow 重新注册。
@@ -62,6 +73,121 @@ function pushConnections(snapshot: ConnectionsSnapshot): void {
 function pushLogCounts(counts: DialFailureCounts): void {
   if (mainWindow === null || mainWindow.isDestroyed()) return
   mainWindow.webContents.send(IPC.logsCountsPush, counts)
+}
+
+/**
+ * 托盘的「打开主窗口」。
+ *
+ * Task 3 只做聚焦：窗口还在，就把它从最小化/后台拉回来。Task 4 会把窗口改成
+ * 「关闭即 destroy」，届时这里要变成「已销毁则重建」——重建必须走 createWindow，
+ * 并带上当时的 startupStatus（渲染层用它决定首屏状态）。**不要**在这里提前写重建，
+ * 否则 Task 4 改窗口语义时会两套生命周期同时存在。
+ */
+function showMainWindow(): void {
+  if (mainWindow === null || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  if (!mainWindow.isVisible()) mainWindow.show()
+  mainWindow.focus()
+}
+
+/** 托盘图标的落点：打包态在 process.resourcesPath，开发态在仓库 resources/。 */
+function trayIconDir(): string {
+  const base = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '../..')
+  return path.join(base, 'resources')
+}
+
+/**
+ * 托盘图标。Windows 通知区域按「逻辑 16px × DPI 缩放」取图：
+ * - 先从最高密度的源图（32px）加载，再按目标像素缩到 16×scale，边缘不会被二次采样糊掉；
+ * - 源图缺失时退回 `tray.png`（16px）；两张都没有则留空图，由 Tray 自己显示占位图标，
+ *   而不是让主进程在启动时抛错。
+ *
+ * 两个源图都是本仓库生成的单色标记（蓝底圆角方块 + 镂空「A」），见 resources/README。
+ */
+function trayImage(): Electron.NativeImage {
+  const dir = trayIconDir()
+  const high = nativeImage.createFromPath(path.join(dir, 'tray@2x.png'))
+  const low = nativeImage.createFromPath(path.join(dir, 'tray.png'))
+  const source = !high.isEmpty() ? high : low
+  if (source.isEmpty()) return source
+  const scale = screen.getPrimaryDisplay().scaleFactor
+  const size = Math.max(16, Math.round(16 * scale))
+  return source.resize({ width: size, height: size, quality: 'best' })
+}
+
+/**
+ * Electron 侧的托盘适配器：唯一未被单测覆盖的部分。
+ *
+ * 每次 apply 都整份换菜单（菜单不可变）。托盘对象只创建一次：`setContextMenu`
+ * 换掉的是菜单，不是 Tray；旧菜单连同内嵌的点击处理器一起被 GC，不会留下监听器。
+ */
+function createTrayHost(): TrayHost {
+  const tray = new Tray(trayImage())
+  const activateHandlers: (() => void)[] = []
+  tray.on('click', () => {
+    for (const handler of activateHandlers) handler()
+  })
+
+  return {
+    apply(items, tooltip) {
+      const template = toMenuTemplate(items, (err) => {
+        console.error('[aether] 托盘动作失败', err)
+      })
+      tray.setContextMenu(Menu.buildFromTemplate(template))
+      tray.setToolTip(tooltip)
+    },
+    onActivate(handler) {
+      activateHandlers.push(handler)
+    },
+    dispose() {
+      activateHandlers.length = 0
+      tray.destroy()
+    }
+  }
+}
+
+/**
+ * 托盘的刷新节奏。菜单只在状态变化时重建（由 `createTray` 的签名比较保证），
+ * 这里只决定「多久问一次快照」。1.5 秒：比内核状态的变化粒度慢，又远比用户能
+ * 察觉的延迟快；速率每秒推送，但根本不进快照，所以不会引起重建。
+ */
+const TRAY_REFRESH_MS = 1500
+
+function startTray(ctx: AppContext, settingsFile: string): void {
+  // 截图冒烟只需要一个窗口；托盘图标会在临时 profile 里留下痕迹，也会让
+  // 冒烟进程的退出多一个持有者。--shot 下不建托盘。
+  if (shotMode) return
+  const controller = createTray({
+    host: createTrayHost(),
+    actions: createTrayActions({
+      ctx,
+      settingsFile,
+      openWindow: showMainWindow,
+      // 必须走 app.quit()：before-quit 里会做有序退出（还原系统代理、终止内核）。
+      // 直接 process.exit 会跳过 stopAll，留下孤儿内核和改不回来的代理设置。
+      quit: () => app.quit()
+    }),
+    readSnapshot: () => readTraySnapshot(ctx),
+    onError: (err) => {
+      console.warn('[aether] 托盘菜单刷新失败', err instanceof Error ? err.message : err)
+    }
+  })
+  trayController = controller
+  void controller.refresh()
+  trayTimer = setInterval(() => {
+    void controller.refresh()
+  }, TRAY_REFRESH_MS)
+  // 定时器不应单独拖住事件循环：退出时 stopAll 会负责清理。
+  trayTimer.unref()
+}
+
+function stopTray(): void {
+  if (trayTimer !== null) {
+    clearInterval(trayTimer)
+    trayTimer = null
+  }
+  trayController?.dispose()
+  trayController = null
 }
 
 const SHOT_SETTLE_MS = 500
@@ -278,6 +404,14 @@ async function start(): Promise<void> {
       // 目标目录由 IPC 层用 ctx.configDir 给出，渲染层无法指定路径。
       openPath: (target) => shell.openPath(target)
     })
+    // 托盘必须在窗口之前建：窗口没起来时它就是唯一能打开主窗口的入口。
+    // 图标/原生托盘失败不得阻断启动：窗口仍要出现，用户至少能看状态。
+    try {
+      startTray(context, path.join(userDataDir, 'settings.json'))
+    } catch (trayError) {
+      console.error('[aether] 托盘初始化失败', trayError)
+      stopTray()
+    }
     createWindow(context.startupStatus)
   } catch (err) {
     // 装配层意外失败时仍要开窗，让用户能看到状态而不是应用无声退出。
@@ -301,6 +435,9 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   if (quitting) return
   quitting = true
+  // 托盘先拆：图标不该在清理期间继续接受点击（「退出」会再次触发 quit，
+  // 「系统代理」会在 stopAll 还原之后又被点开）。
+  stopTray()
   startAbort.abort()
   const cleanup = async (): Promise<void> => {
     // 在途 bootstrap 会看到取消信号并在下一个 await 边界放弃；等它返回再清理，
