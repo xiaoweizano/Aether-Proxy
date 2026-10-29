@@ -45,6 +45,7 @@ interface Api {
   switchNode(input: { group: string; node: string }): Promise<unknown>
   openConfigDir(): Promise<unknown>
   windowControl(action: 'minimize' | 'maximize' | 'close'): Promise<unknown>
+  getStats(): Promise<unknown>
   getWindowState(): Promise<unknown>
   onWindowState(cb: (state: { maximized: boolean }) => void): () => void
   onStats(cb: (sample: unknown) => void): () => void
@@ -71,6 +72,7 @@ describe('preload', () => {
       'getConnections',
       'getLogCounts',
       'getProxies',
+      'getStats',
       'getStatus',
       'getWindowState',
       'importConfig',
@@ -119,6 +121,7 @@ describe('preload', () => {
     await a.restartCore()
     await a.importConfig()
     await a.getConnections()
+    await a.getStats()
     await a.getLogCounts()
     await a.switchNode({ group: 'Proxy', node: 'HK-01' })
     await a.openConfigDir()
@@ -132,6 +135,7 @@ describe('preload', () => {
       [IPC.coreRestart],
       [IPC.configPickImport],
       [IPC.connectionsGet],
+      [IPC.statsGet],
       [IPC.logsCountsGet],
       [IPC.nodeSwitch, { group: 'Proxy', node: 'HK-01' }],
       [IPC.configOpenDir]

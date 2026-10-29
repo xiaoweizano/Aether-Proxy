@@ -366,14 +366,29 @@ function createBrowserWindow(requested: WindowRect): ShellWindow {
     if (!destroyOnClose(quitting)) return
     event.preventDefault()
     // 关窗前把位置存下来：下一次从托盘打开要用它重建窗口。
+    // 防抖定时器可能还在等，先取消——这里就落盘，之后 destroy 不会再有机会写。
+    if (boundsTimer !== null) {
+      clearTimeout(boundsTimer)
+      boundsTimer = null
+    }
     void windowManager?.persistCurrent()
     win.destroy()
   })
 
   // 用户拖动/缩放窗口后记下新位置。只在创建完成之后才写得进来（manager 非空），
   // 而且写的是 getNormalBounds——最大化状态下 getBounds 是屏幕尺寸，会把窗口位置存坏。
+  //
+  // 拖拽期间这些事件每帧都会发：必须防抖，否则一次拖动会往磁盘写几十次
+  // （每次「读整份 JSON → 原子替换」）。400ms 足够把一次拖动合并成一次写，
+  // 又不会让用户在关窗前就丢位置——关窗与真正退出时还会各补一次同步写。
+  const BOUNDS_SAVE_DELAY_MS = 400
+  let boundsTimer: NodeJS.Timeout | null = null
   const rememberBounds = (): void => {
-    void windowManager?.persistCurrent()
+    if (boundsTimer !== null) clearTimeout(boundsTimer)
+    boundsTimer = setTimeout(() => {
+      boundsTimer = null
+      void windowManager?.persistCurrent()
+    }, BOUNDS_SAVE_DELAY_MS)
   }
   win.on('resized', rememberBounds)
   win.on('moved', rememberBounds)
@@ -386,6 +401,10 @@ function createBrowserWindow(requested: WindowRect): ShellWindow {
   })
 
   win.once('closed', () => {
+    if (boundsTimer !== null) {
+      clearTimeout(boundsTimer)
+      boundsTimer = null
+    }
     if (windowManager !== null) windowManager.forget(win)
     // 没有窗口就没有消费者，继续每 2 秒重连只会拖住事件循环。
     // 退出路径由 stopAll 兜底，这里覆盖「窗口关了但进程还在」。
@@ -515,7 +534,11 @@ async function start(): Promise<void> {
     // 装配层意外失败时仍要开窗，让用户能看到状态而不是应用无声退出。
     console.error('[aether] bootstrap 失败', err)
     // 通道也要注册：否则渲染层的 getStatus 直接 reject，状态页无法显示。
-    registerUnavailableHandlers(ipcMain)
+    // 窗口仍然是无边框的——这里必须交出真实管理器，否则错误页上的三个按钮全是死键。
+    registerUnavailableHandlers(ipcMain, {
+      windowControls: windowManager ?? undefined,
+      windowState: () => windowManager?.state() ?? { maximized: false }
+    })
   } finally {
     // 取消信号与清理都靠这个标志判断「启动流程已经不会再 spawn 内核了」。
     startSettled = true

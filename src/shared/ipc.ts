@@ -155,6 +155,8 @@ export const IPC = {
   configImport: 'config:import',
   configPickImport: 'config:pick-import',
   statsPush: 'app:stats',
+  /** 流量环形缓冲的当前快照；窗口重建后用它补首屏，不必等下一个采样点。 */
+  statsGet: 'app:stats-get',
   connectionsGet: 'connections:get',
   connectionsPush: 'connections:push',
   logsCountsGet: 'logs:counts',
@@ -186,6 +188,11 @@ export interface AetherApi {
   importConfig(): Promise<PickImportResult>
   /** 订阅流量推送；返回取消订阅函数。 */
   onStats(cb: (sample: StatsSample) => void): () => void
+  /**
+   * 流量缓冲的当前快照（含 60 点 history）；窗口重建后用它补首屏。
+   * 采集器不存在（内核未运行）时为 null——没有数据来源，不能编一条零样本出来。
+   */
+  getStats(): Promise<StatsSample | null>
 
   /** 连接缓冲的当前快照；窗口重建后用它补首屏。 */
   getConnections(): Promise<ConnectionsSnapshot>

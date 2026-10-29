@@ -12,6 +12,7 @@ import type {
   PickImportResult,
   ProxyGroupView,
   SimpleResult,
+  StatsSample,
   WindowStateView
 } from '../shared/ipc'
 import type { ProxiesResponse } from './core/link'
@@ -154,8 +155,14 @@ export function toProxyGroups(res: ProxiesResponse): ProxyGroupView[] {
  * bootstrap 本身抛出时（不该发生的装配失败）仍注册全部通道，否则渲染层每个调用
  * 都会收到 "No handler registered"，状态页连错误都显示不出来。
  * 不回显装配错误原文：那里可能拼进配置片段或路径。
+ *
+ * 窗控必须照常工作：窗口是 `frame: false`，没有系统标题栏，关不掉的窗口等于
+ * 只能杀进程。因此这里接收真实的管理器，而不是一律回 `{ok:false}`。
  */
-export function registerUnavailableHandlers(ipcMain: IpcMainLike): void {
+export function registerUnavailableHandlers(
+  ipcMain: IpcMainLike,
+  windowDeps: { windowControls?: WindowControls; windowState?: () => WindowStateView } = {}
+): void {
   const message = '应用初始化失败，请查看日志后重启'
   ipcMain.handle(IPC.statusGet, (): AppStatusView => ({
     status: 'core-error',
@@ -175,15 +182,27 @@ export function registerUnavailableHandlers(ipcMain: IpcMainLike): void {
   // "No handler registered"，状态页连错误都显示不出来。
   ipcMain.handle(IPC.connectionsGet, (): ConnectionsSnapshot => emptyConnectionsSnapshot())
   ipcMain.handle(IPC.logsCountsGet, (): DialFailureCounts | null => null)
+  // 采集器不存在：没有流量数据来源，首屏补拉回 null。
+  ipcMain.handle(IPC.statsGet, (): StatsSample | null => null)
   ipcMain.handle(IPC.nodeSwitch, (): NodeSwitchResult => ({ ok: false, status: 0 }))
   ipcMain.handle(IPC.configOpenDir, (): SimpleResult => ({ ok: false, message }))
   // 推送通道是主进程单向发送；这里注册空 handler 只为让通道集合完整，
   // 渲染层误调用时得到 undefined 而不是 "No handler registered"。
   ipcMain.handle(IPC.connectionsPush, () => {})
   ipcMain.handle(IPC.logsCountsPush, () => {})
-  // 装配失败时没有窗口管理器：按钮仍然可点，只是什么也不会发生。
-  ipcMain.handle(IPC.windowControl, (): SimpleResult => ({ ok: false, message }))
-  ipcMain.handle(IPC.windowStateGet, (): WindowStateView => ({ maximized: false }))
+  // 装配失败时窗口仍然是无边框的：必须能关、能最小化，否则用户只能杀进程。
+  ipcMain.handle(
+    IPC.windowControl,
+    async (_event, action: unknown): Promise<SimpleResult> => {
+      if (!isWindowAction(action)) return { ok: false, message }
+      if (windowDeps.windowControls === undefined) return { ok: false, message }
+      return runWindowAction(windowDeps.windowControls, action)
+    }
+  )
+  ipcMain.handle(
+    IPC.windowStateGet,
+    (): WindowStateView => windowDeps.windowState?.() ?? { maximized: false }
+  )
   ipcMain.handle(IPC.windowStatePush, () => {})
 }
 
@@ -305,6 +324,22 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
     IPC.connectionsGet,
     (): ConnectionsSnapshot => ctx.connections?.snapshot() ?? emptyConnectionsSnapshot()
   )
+
+  /**
+   * 流量缓冲的首屏补拉。窗口重建后不必等下一个采样点（一秒后）才画图。
+   * 采集器不存在（内核未运行）时返回 null：没有数据来源，不能编一条零样本。
+   */
+  ipcMain.handle(IPC.statsGet, (): StatsSample | null => {
+    if (ctx.stats === null) return null
+    const snapshot = ctx.stats.snapshot()
+    return {
+      up: snapshot.up,
+      down: snapshot.down,
+      upTotal: snapshot.upTotal,
+      downTotal: snapshot.downTotal,
+      history: snapshot.history
+    }
+  })
 
   /**
    * 计数推送只在「新失败到达」时触发；失败滚出窗口时没有回调、没有推送。

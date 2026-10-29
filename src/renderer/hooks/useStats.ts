@@ -66,6 +66,10 @@ function appendSample(
  *
  * 主进程每次推送都带完整 `history`；以它为起点可以填补窗口重建后的空档，
  * 且当 `history` 的最后一条就是本样本时不会重复追加。
+ *
+ * 窗口重建后的首屏**不能**只等下一帧推送：主进程每秒才推送一次，在此之前
+ * 三张速率卡和流量图都是空的。这里与 `useConnections` 同一形状——先订阅再补拉
+ * `getStats()`，收到过推送后丢弃补拉结果（推送更新）。
  */
 export function useStats(): StatsState {
   const [state, setState] = useState<StatsState>({ current: null, history: [] })
@@ -80,10 +84,13 @@ export function useStats(): StatsState {
       }
     }
 
-    const off = api.onStats((sample) => {
+    let receivedPush = false
+
+    const applyPush = (sample: StatsSample): void => {
       if (!mounted.current) return
       const normalized = normalize(sample)
       if (normalized === null) return
+      receivedPush = true
       setState((previous) => {
         const fromPayload = normalized.history !== null
         const base = normalized.history ?? previous.history
@@ -96,7 +103,25 @@ export function useStats(): StatsState {
           )
         }
       })
-    })
+    }
+
+    const off = api.onStats(applyPush)
+
+    // 首屏补拉：快照本身就是「最近 60 点 + 当前值」，直接作为起点，不重复追加。
+    void api.getStats().then(
+      (sample) => {
+        if (!mounted.current || receivedPush || sample === null) return
+        const normalized = normalize(sample)
+        if (normalized === null) return
+        setState({
+          current: normalized.current,
+          history: normalized.history ?? []
+        })
+      },
+      () => {
+        // 补拉失败时保留空状态；下一帧推送会自然补齐。
+      }
+    )
 
     return () => {
       mounted.current = false

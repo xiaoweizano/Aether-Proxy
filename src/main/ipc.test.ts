@@ -690,6 +690,7 @@ describe('registerUnavailableHandlers', () => {
       IPC.logsCountsPush,
       IPC.nodeSwitch,
       IPC.configOpenDir,
+      IPC.statsGet,
       IPC.windowControl,
       IPC.windowStateGet,
       IPC.windowStatePush
@@ -927,5 +928,80 @@ describe('windowState', () => {
   it('状态推送通道存在（渲染层误调用不会得到 No handler）', async () => {
     const h = await harness()
     expect(await invoke(h.ipc, IPC.windowStatePush, { maximized: true })).toBeUndefined()
+  })
+})
+
+describe('registerUnavailableHandlers 的窗控', () => {
+  it('装配失败时窗口按钮仍然可用（无边框窗口必须能关）', async () => {
+    const ipc = fakeIpc()
+    const wc = { minimize: vi.fn(), toggleMaximize: vi.fn(), close: vi.fn() }
+    registerUnavailableHandlers(ipc, {
+      windowControls: wc,
+      windowState: () => ({ maximized: true })
+    })
+
+    expect(await invoke(ipc, IPC.windowControl, 'close')).toEqual({ ok: true })
+    expect(wc.close).toHaveBeenCalledTimes(1)
+    expect(await invoke(ipc, IPC.windowControl, 'quit')).toEqual(
+      expect.objectContaining({ ok: false })
+    )
+    expect(await invoke(ipc, IPC.windowStateGet)).toEqual({ maximized: true })
+  })
+
+  it('未提供管理器时窗控回 ok:false（其余通道行为不变）', async () => {
+    const ipc = fakeIpc()
+    registerUnavailableHandlers(ipc)
+
+    const result = (await invoke(ipc, IPC.windowControl, 'close')) as { ok: boolean; message: string }
+    expect(result.ok).toBe(false)
+    expect(result.message).toBeTruthy()
+    expect(await invoke(ipc, IPC.windowStateGet)).toEqual({ maximized: false })
+  })
+})
+
+describe('statsGet', () => {
+  it('采集器不存在时返回 null（没有数据来源，不编零样本）', async () => {
+    const h = await harness()
+    expect(await invoke(h.ipc, IPC.statsGet)).toBeNull()
+  })
+
+  it('有采集器时返回当前速率与完整 history，供窗口重建补首屏', async () => {
+    const h = await harness()
+    h.ctx.stats = {
+      snapshot: () => ({
+        up: 7,
+        down: 8,
+        upTotal: 70,
+        downTotal: 80,
+        history: [
+          { up: 1, down: 2 },
+          { up: 7, down: 8 }
+        ]
+      })
+    } as unknown as AppContext['stats']
+
+    expect(await invoke(h.ipc, IPC.statsGet)).toEqual({
+      up: 7,
+      down: 8,
+      upTotal: 70,
+      downTotal: 80,
+      history: [
+        { up: 1, down: 2 },
+        { up: 7, down: 8 }
+      ]
+    })
+  })
+
+  it('快照里只有白名单字段（不泄漏 collector 的 url/secret）', async () => {
+    const h = await harness()
+    h.ctx.stats = {
+      url: 'ws://127.0.0.1:9090/traffic',
+      secret: 'top-secret-token',
+      snapshot: () => ({ up: 0, down: 0, upTotal: 0, downTotal: 0, history: [] })
+    } as unknown as AppContext['stats']
+
+    const json = JSON.stringify(await invoke(h.ipc, IPC.statsGet))
+    expect(json).not.toContain('top-secret-token')
+    expect(json).not.toContain('9090')
   })
 })

@@ -38,6 +38,7 @@ const api: AetherApi = {
       ipcRenderer.removeListener(IPC.statsPush, listener)
     }
   },
+  getStats: () => ipcRenderer.invoke(IPC.statsGet) as Promise<StatsSample | null>,
   getConnections: () =>
     ipcRenderer.invoke(IPC.connectionsGet) as Promise<ConnectionsSnapshot>,
   onConnections: (cb) => {
