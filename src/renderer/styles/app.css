@@ -1529,6 +1529,53 @@ body {
 }
 
 /*
+ * 订阅导入：说明在上、输入行在下。窗口最窄 1024px 时这一行仍放得下，
+ * 但 `flex-wrap` 保证再窄时按钮换行而不是把地址输入框压扁。
+ */
+.settings-row-column {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.settings-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-import .state-action {
+  flex: none;
+}
+
+.settings-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--conn-control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: var(--card-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+  outline: none;
+}
+
+.settings-input::placeholder {
+  color: var(--text-faint);
+}
+
+.settings-input:focus-visible {
+  border-color: var(--accent);
+}
+
+.settings-input:disabled {
+  color: var(--text-faint);
+}
+
+/*
  * 开关。DESIGN.md 的 Dots Are Circles Rule 只允许 6–8px 状态点做正圆；
  * 这是一个控件，因此走圆角矩形（--radius-control），滑块用 chip 圆角。
  */

@@ -11,6 +11,7 @@ import type {
   NodeSwitchInput,
   NodeSwitchResult,
   PickImportResult,
+  UrlImportResult,
   ProxyGroupView,
   SimpleResult,
   StatsSample,
@@ -33,6 +34,8 @@ const api: AetherApi = {
   restartCore: () => ipcRenderer.invoke(IPC.coreRestart) as Promise<SimpleResult>,
   importConfig: () =>
     ipcRenderer.invoke(IPC.configPickImport) as Promise<PickImportResult>,
+  importConfigFromUrl: (url: string) =>
+    ipcRenderer.invoke(IPC.configUrlImport, url) as Promise<UrlImportResult>,
   onStats: (cb) => {
     const listener = (_event: unknown, sample: StatsSample): void => cb(sample)
     ipcRenderer.on(IPC.statsPush, listener)

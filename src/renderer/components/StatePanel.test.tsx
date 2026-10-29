@@ -87,7 +87,7 @@ describe('StatePanel', () => {
   })
 
   it('导入成功：显示「重启后生效」并出现次要的重启按钮', async () => {
-    const importConfig = vi.fn(async () => ({ ok: true as const, needsRestart: true as const }))
+    const importConfig = vi.fn(async () => ({ ok: true as const, applied: 'pending-restart' as const }))
     render(<StatePanel status="no-config" importConfig={importConfig} />)
 
     await userEvent.click(screen.getByRole('button', { name: copy.state.noConfig.importAction }))
@@ -118,7 +118,7 @@ describe('StatePanel', () => {
   })
 
   it('导入成功后重启失败：回到可重新导入的操作集，成功提示消失', async () => {
-    const importConfig = vi.fn(async () => ({ ok: true as const, needsRestart: true as const }))
+    const importConfig = vi.fn(async () => ({ ok: true as const, applied: 'pending-restart' as const }))
     const restartCore = vi.fn(async () => ({ ok: false as const, message: '配置有误，无法启动内核' }))
     render(
       <StatePanel status="config-error" importConfig={importConfig} restartCore={restartCore} />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AutostartStateView } from '../../shared/ipc'
+import type { AutostartStateView, SimpleResult, UrlImportResult } from '../../shared/ipc'
 import { copy } from '../copy'
 
 /**
@@ -22,15 +22,25 @@ interface SettingsPageProps {
    */
   read?: () => Promise<AutostartStateView>
   write?: (enabled: boolean) => Promise<{ ok: boolean; state: AutostartStateView }>
+  /** 订阅导入。缺省走 `window.aether.importConfigFromUrl`；测试可注入。 */
+  importUrl?: (url: string) => Promise<UrlImportResult>
+  /** 导入后没生效时给用户的出口。缺省走 `window.aether.restartCore`。 */
+  restartCore?: () => Promise<SimpleResult>
 }
 
 /** 主进程状态视图；渲染层只做显示，不再推导「应该」是什么。 */
 type State = AutostartStateView
 
-export function SettingsPage({ read, write }: SettingsPageProps) {
+export function SettingsPage({ read, write, importUrl, restartCore }: SettingsPageProps) {
   const [state, setState] = useState<State | null>(null)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
+  const [url, setUrl] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importMessage, setImportMessage] = useState<string | null>(null)
+  const [importFailed, setImportFailed] = useState(false)
+  const [needsRestart, setNeedsRestart] = useState(false)
+  const [restarting, setRestarting] = useState(false)
 
   const load = useCallback(async () => {
     const api = window.aether
@@ -82,6 +92,166 @@ export function SettingsPage({ read, write }: SettingsPageProps) {
     }
   }, [state, busy, write, load])
 
+  /**
+   * 订阅导入。空地址本地拦下（不白跑一趟主进程）；其余一律以主进程回的结果为准——
+   * 成功文案明说「重启内核后生效」，因为落盘不等于生效。
+   */
+  const submitImport = useCallback(async () => {
+    if (importing) return
+    const target = url.trim()
+    if (target === '') {
+      setImportMessage(copy.settings.subscription.empty)
+      setImportFailed(true)
+      return
+    }
+    const api = window.aether
+    const runner = importUrl ?? api?.importConfigFromUrl.bind(api)
+    if (runner === undefined) {
+      setImportMessage(copy.settings.subscription.failed)
+      setImportFailed(true)
+      return
+    }
+    setImporting(true)
+    setImportMessage(null)
+    setImportFailed(false)
+    setNeedsRestart(false)
+    try {
+      const result = await runner(target)
+      if (result.ok) {
+        setUrl('')
+        // 三种成功状态必须分开说：已生效 / 需要重启 / 内核拒收。只说「已导入」
+        // 会让用户以为新订阅已经跑起来了。
+        if (result.applied === 'reloaded') {
+          setImportMessage(copy.settings.subscription.reloaded)
+          setImportFailed(false)
+        } else if (result.applied === 'reload-failed') {
+          setImportMessage(
+            `${copy.settings.subscription.reloadFailed}${result.message ?? ''}`
+          )
+          setImportFailed(true)
+          setNeedsRestart(true)
+        } else {
+          setImportMessage(copy.settings.subscription.imported)
+          setImportFailed(false)
+          setNeedsRestart(true)
+        }
+      } else {
+        setImportMessage(result.message || copy.settings.subscription.failed)
+        setImportFailed(true)
+      }
+    } catch {
+      setImportMessage(copy.settings.subscription.failed)
+      setImportFailed(true)
+    } finally {
+      setImporting(false)
+    }
+  }, [importing, url, importUrl])
+
+  /**
+   * 导入后的「立即重启内核」。只在需要重启时出现，并且**仍然以主进程回的结果为准**：
+   * 重启失败（例如新配置校验不过）时如实显示原因，不把按钮变成「已生效」。
+   */
+  const restartKernel = useCallback(async () => {
+    if (restarting) return
+    const api = window.aether
+    const call = restartCore ?? api?.restartCore.bind(api)
+    if (call === undefined) {
+      setImportMessage(copy.settings.subscription.restartFailed)
+      setImportFailed(true)
+      return
+    }
+    setRestarting(true)
+    try {
+      const result = await call()
+      if (result.ok) {
+        setNeedsRestart(false)
+        setImportMessage(copy.settings.subscription.reloaded)
+        setImportFailed(false)
+      } else {
+        setImportMessage(result.message || copy.settings.subscription.restartFailed)
+        setImportFailed(true)
+      }
+    } catch {
+      setImportMessage(copy.settings.subscription.restartFailed)
+      setImportFailed(true)
+    } finally {
+      setRestarting(false)
+    }
+  }, [restarting, restartCore])
+
+  /**
+   * 订阅导入卡片。与自启开关分开成一张卡：两者的状态源互不相干，
+   * 合成一张会让「自启读失败」连带把导入按钮也锁死。
+   *
+   * 成功态只说「已导入，重启内核后生效」——写进 config.yaml 不等于 mihomo 已经加载，
+   * 这里不替内核打包票。
+   */
+  const importCard = (
+    <div className="settings-card">
+      <div className="settings-row settings-row-column">
+        <div className="settings-text">
+          <span className="settings-label" id="subscription-label">
+            {copy.settings.subscription.label}
+          </span>
+          <span className="settings-desc">{copy.settings.subscription.description}</span>
+        </div>
+        <div className="settings-import">
+          <input
+            type="url"
+            className="settings-input"
+            aria-labelledby="subscription-label"
+            placeholder={copy.settings.subscription.placeholder}
+            value={url}
+            disabled={importing}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => {
+              setUrl(event.target.value)
+              setImportMessage(null)
+              setImportFailed(false)
+              setNeedsRestart(false)
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return
+              event.preventDefault()
+              void submitImport()
+            }}
+          />
+          <button
+            type="button"
+            className="state-action primary"
+            disabled={importing || restarting}
+            onClick={() => {
+              void submitImport()
+            }}
+          >
+            {importing ? copy.settings.subscription.importing : copy.settings.subscription.action}
+          </button>
+          {needsRestart && (
+            <button
+              type="button"
+              className="state-action"
+              disabled={restarting || importing}
+              onClick={() => {
+                void restartKernel()
+              }}
+            >
+              {restarting ? copy.settings.subscription.restarting : copy.settings.subscription.restart}
+            </button>
+          )}
+        </div>
+      </div>
+      {importMessage !== null && (
+        <p
+          className={importFailed ? 'settings-error' : 'settings-note'}
+          role={importFailed ? 'alert' : 'status'}
+        >
+          {importMessage}
+        </p>
+      )}
+    </div>
+  )
+
   // 首屏还没回来：只占位，不画一个「已关闭」的假开关。
   if (state === null) {
     return (
@@ -99,6 +269,7 @@ export function SettingsPage({ read, write }: SettingsPageProps) {
             </p>
           )}
         </div>
+        {importCard}
       </section>
     )
   }
@@ -159,6 +330,7 @@ export function SettingsPage({ read, write }: SettingsPageProps) {
           </p>
         )}
       </div>
+      {importCard}
     </section>
   )
 }

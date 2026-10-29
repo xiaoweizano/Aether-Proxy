@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import YAML from 'yaml'
@@ -13,6 +13,8 @@ import { writeCoreState, inspectCoreState, clearCoreState } from './core/state'
 import { mergeConfig } from './config/merge'
 import { missingReferences } from './config/references'
 import { writeRuntime } from './config/runtime'
+import { reloadConfig } from './config/reload'
+import { writeFileAtomic } from './config/atomic'
 import { validateConfig } from './config/validate'
 import { ensureGeodata } from './config/geodata'
 import { ProxyOwnership } from './proxy/ownership'
@@ -130,6 +132,18 @@ export interface AppContext {
    * 失败时上下文被置为对应的错误状态，并抛出可读错误。
    */
   restartCore(): Promise<CoreInfo>
+  /**
+   * 热重载：重新读 upstream.yaml → 合并并校验 runtime.yaml → `PUT /configs?force=true`。
+   *
+   * 与 `restartCore` 的分工：重启要停进程、还原再接管系统代理，**整机短暂断网**；
+   * 热重载只换内核里的配置，端口、secret、采集器、系统代理都不动。导入订阅这类
+   * 高频操作因此不必陪上一次断网。
+   *
+   * 失败必须可回滚：新配置校验不过或内核拒绝时，runtime.yaml 恢复成重载前的样子
+   * （否则下次启动也会起不来），并抛出可读错误——导入本身已经成功，这里只是没生效。
+   * 内核未运行时抛错，调用方据此提示「需要重启」。
+   */
+  reloadCore(): Promise<void>
   /** 内核重启成功后重写 core-state.json 等外部状态。 */
   onCoreRestarted(info: CoreInfo): Promise<void>
   stopAll(): Promise<void>
@@ -822,6 +836,28 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     | { ok: true; prepared: Prepared }
     | { ok: false; status: 'no-config' | 'config-error'; profile: Prepared['profile'] }
 
+  /**
+   * 由 upstream.yaml 生成并校验 runtime.yaml，**不碰进程**。
+   *
+   * `prepare`（启动 / 重启）与 `reloadRuntime`（热重载）共用这一段：两条路径都必须
+   * 重新生成配置，否则用的还是导入前的旧文件——导入等于没生效。
+   *
+   * 返回 null 表示配置引用了不存在的节点或策略组（已写日志），调用方按 config-error 处理。
+   */
+  async function buildRuntime(
+    upstream: unknown,
+    ep: { mixedPort: number; controllerPort: number; secret: string }
+  ): Promise<{ configPath: string; mode: Mode } | null> {
+    const merged = mergeConfig(upstream, {}, ep)
+    const missing = missingReferences(merged)
+    if (missing.length > 0) {
+      console.warn(`[aether] 配置引用缺失：${missing.join(', ')}`)
+      return null
+    }
+    const configPath = await writeRuntime(configDir, merged)
+    return { configPath, mode: normalizeMode(merged.mode) }
+  }
+
   async function prepare(): Promise<PrepareResult> {
     assertNotShuttingDown()
     let upstreamText: string | null = null
@@ -861,13 +897,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
     try {
       await ensureGeodata(configDir, geodataDir)
       assertNotShuttingDown()
-      const merged = mergeConfig(upstream, {}, ep)
-      const missing = missingReferences(merged)
-      if (missing.length > 0) {
-        console.warn(`[aether] 配置引用缺失：${missing.join(', ')}`)
-        return { ok: false, status: 'config-error', profile }
-      }
-      await writeRuntime(configDir, merged)
+      const built = await buildRuntime(upstream, ep)
+      if (built === null) return { ok: false, status: 'config-error', profile }
       assertNotShuttingDown()
       const validate = opts.validateFn ?? validateConfig
       const validated = await validate(binary, configDir, configPath)
@@ -888,7 +919,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
           proxyServer: `127.0.0.1:${ep.mixedPort}`,
           controllerPort: ep.controllerPort,
           secret: ep.secret,
-          mode: normalizeMode(merged.mode),
+          mode: built.mode,
           profile
         }
       }
@@ -953,7 +984,85 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
    * 给非 in-use 上下文装上重启能力：导入配置后状态页要用它把新配置真正加载进内核。
    * 重启会重新读 upstream.yaml、重新合并并校验 runtime.yaml，而不是拿旧文件重启进程。
    */
+  /** 把 runtime.yaml 恢复成热重载之前的样子；没有旧文件时删掉刚写坏的。 */
+  async function restoreRuntime(configPath: string, previous: string | null): Promise<void> {
+    if (previous !== null) {
+      await writeFileAtomic(configPath, previous).catch(() => {})
+      return
+    }
+    await rm(configPath, { force: true }).catch(() => {})
+  }
+
+  /**
+   * 热重载：让新导入的配置在**不重启进程**的情况下生效。
+   *
+   * 三条不变量：
+   * 1. 只在内核确实 ready 时执行——内核不在就先写文件，交给「重启」路径去加载；
+   * 2. 先校验再 PUT：`mihomo -t` 不过的配置绝不交给内核，旧文件原样恢复；
+   * 3. 内核拒绝（非 2xx）时把磁盘恢复成它当前正在用的那份，并**再 PUT 一次**，
+   *    避免「文件里是新配置、内核里是旧配置、界面不知道该说哪一个」。
+   */
+  async function reloadRuntime(): Promise<void> {
+    assertNotShuttingDown()
+    const current = activeContext
+    const ep = endpoints
+    if (
+      current === null ||
+      ep === null ||
+      current.startupStatus !== 'ready' ||
+      current.link === null
+    ) {
+      throw new Error('内核未运行，无法热重载')
+    }
+
+    const configPath = path.join(configDir, 'runtime.yaml')
+    // 旧文件留作回滚；读不到说明还没跑过 prepare，那就没有可回滚的旧配置。
+    const previous = await readFile(configPath, 'utf8').catch(() => null)
+    let upstreamText: string
+    try {
+      upstreamText = await readFile(path.join(configDir, 'upstream.yaml'), 'utf8')
+    } catch {
+      throw new Error('还没有配置，无法热重载')
+    }
+    let upstream: unknown
+    try {
+      upstream = YAML.parse(upstreamText)
+    } catch {
+      throw new Error('配置有误：YAML 解析失败')
+    }
+    assertNotShuttingDown()
+
+    const built = await buildRuntime(upstream, ep)
+    if (built === null) {
+      await restoreRuntime(configPath, previous)
+      throw new Error('配置有误：引用了不存在的节点或策略组')
+    }
+    const validate = opts.validateFn ?? validateConfig
+    const validated = await validate(binary, configDir, built.configPath)
+    if (!validated.ok) {
+      console.warn('[aether] 热重载前的配置校验失败')
+      await restoreRuntime(configPath, previous)
+      throw new Error('配置有误，内核未能通过校验')
+    }
+    assertNotShuttingDown()
+
+    const res = await reloadConfig(ep.controllerPort, ep.secret, built.configPath, opts.fetchFn)
+    if (!res.ok) {
+      await restoreRuntime(configPath, previous)
+      await reloadConfig(ep.controllerPort, ep.secret, configPath, opts.fetchFn)
+      throw new Error(`内核拒绝了新配置（HTTP ${res.status}）`)
+    }
+
+    current.profile = profileSummaryOf(upstream)
+    // 内核按 runtime.yaml 里的模式加载；把本会话里用户选过的模式补回去。
+    if (current.mode !== built.mode) {
+      await current.link.setMode(current.mode).catch(() => {})
+    }
+  }
+
   const attachRestart = (ctx: AppContext): void => {
+    // 热重载与重启挂在同一处：两者都只对「自己拥有内核」的上下文有意义。
+    ctx.reloadCore = reloadRuntime
     // 端口与 secret 由本次会话固定，状态文件只需跟着新的 pid 重写，
     // 否则下次启动无法识别残留内核。
     ctx.onCoreRestarted = async (info: CoreInfo) => {
@@ -1174,6 +1283,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext> {
       profile: over.profile ?? null,
       restartCore: async () => {
         throw new Error('内核未运行，无法重启')
+      },
+      reloadCore: async () => {
+        throw new Error('内核未运行，无法热重载')
       },
       onCoreRestarted: async () => {},
       // 退出清理只有一份实现，且读取活跃字段：no-config 下导入配置并重启后，

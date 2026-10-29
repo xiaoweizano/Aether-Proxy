@@ -79,6 +79,7 @@ describe('preload', () => {
       'getStatus',
       'getWindowState',
       'importConfig',
+      'importConfigFromUrl',
       'onConnections',
       'onLogCounts',
       'onStats',

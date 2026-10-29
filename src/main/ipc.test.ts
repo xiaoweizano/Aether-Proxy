@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { CoreInfo } from '../shared/types'
-import type { AppContext } from './bootstrap'
+import type { AppContext, AppStatus } from './bootstrap'
 import type { CoreSupervisor } from './core/supervisor'
 import type { SystemProxyController } from './proxy/controller'
 import type { ProxyOwnership } from './proxy/ownership'
@@ -124,6 +124,8 @@ async function harness(options: {
   windowControls?: { minimize(): void; toggleMaximize(): void; close(): void }
   windowState?: () => { maximized: boolean }
   autostart?: AutostartHost
+  startupStatus?: AppStatus
+  reloadCore?: () => Promise<void>
 } = {}): Promise<Harness> {
   const dir = await mkdtemp(path.join(tmpdir(), 'aether-ipc-'))
   const controller = {
@@ -145,7 +147,7 @@ async function harness(options: {
     controller: controller as unknown as SystemProxyController,
     ownership: {} as unknown as ProxyOwnership,
     mode: 'rule',
-    startupStatus: 'ready',
+    startupStatus: options.startupStatus ?? 'ready',
     restore: 'none',
     proxyEnabled: false,
     proxyServer: options.proxyServer === undefined ? '127.0.0.1:7891' : options.proxyServer,
@@ -174,6 +176,7 @@ async function harness(options: {
       await ctx.onCoreRestarted(info)
       return info
     },
+    reloadCore: vi.fn(options.reloadCore ?? (async () => {})),
     async onCoreRestarted(info) {
       ctx.coreInfo = info
     },
@@ -747,7 +750,7 @@ describe('configImport', () => {
 
     expect(await invoke(h.ipc, IPC.configImport, { sourcePath: source })).toEqual({
       ok: true,
-      needsRestart: true
+      applied: 'reloaded'
     })
     const written = await readFile(path.join(h.ctx.configDir, 'upstream.yaml'), 'utf8')
     expect(written).toContain('proxy-groups')
@@ -762,7 +765,7 @@ describe('configImport', () => {
 
     expect(await invoke(h.ipc, IPC.configImport, { sourcePath: source })).toEqual({
       ok: true,
-      needsRestart: true
+      applied: 'reloaded'
     })
     expect(existsSync(path.join(h.ctx.configDir, 'upstream.yaml'))).toBe(true)
   })
@@ -804,6 +807,84 @@ describe('configImport', () => {
   })
 })
 
+describe('导入后的生效路径', () => {
+  const GOOD_CONFIG = 'proxies: []\nproxy-groups:\n  - { name: P, type: select, proxies: [DIRECT] }\n'
+
+  async function importFile(h: Harness): Promise<unknown> {
+    const source = path.join(h.dir, 'source.yaml')
+    await writeFile(source, GOOD_CONFIG)
+    return invoke(h.ipc, IPC.configImport, { sourcePath: source })
+  }
+
+  it('内核在跑且热重载成功：applied=reloaded，不重启进程', async () => {
+    const h = await harness()
+    expect(await importFile(h)).toEqual({ ok: true, applied: 'reloaded' })
+    expect(h.ctx.reloadCore).toHaveBeenCalledTimes(1)
+    expect(h.supervisor.stop).not.toHaveBeenCalled()
+  })
+
+  it('内核没在跑：不尝试热重载，回 pending-restart', async () => {
+    const h = await harness({ startupStatus: 'no-config' })
+    expect(await importFile(h)).toEqual({ ok: true, applied: 'pending-restart' })
+    expect(h.ctx.reloadCore).not.toHaveBeenCalled()
+  })
+
+  it('内核在跑却拒收：导入仍然成功，但带出原因', async () => {
+    const h = await harness({
+      reloadCore: async () => {
+        throw new Error('配置有误，内核未能通过校验')
+      }
+    })
+    expect(await importFile(h)).toEqual({
+      ok: true,
+      applied: 'reload-failed',
+      message: '配置有误，内核未能通过校验'
+    })
+  })
+
+  it('订阅 URL 导入同样走热重载', async () => {
+    const h = await harness()
+    const fetchSpy = vi.fn(async () => new Response(GOOD_CONFIG, { status: 200 }))
+    const original = globalThis.fetch
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    try {
+      expect(await invoke(h.ipc, IPC.configUrlImport, 'https://example.com/sub')).toEqual({
+        ok: true,
+        applied: 'reloaded'
+      })
+    } finally {
+      globalThis.fetch = original
+    }
+    expect(h.ctx.reloadCore).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('configUrlImport', () => {
+  const GOOD_CONFIG = "proxies: []\nproxy-groups:\n  - { name: P, type: select, proxies: [DIRECT] }\n"
+
+  it.each([
+    ['file 协议', 'file:///C:/Windows/win.ini'],
+    ['data 协议', 'data:text/plain,hello'],
+    ['javascript 协议', 'javascript:alert(1)'],
+    ['没有协议', 'example.com/sub'],
+    ['空串', ''],
+    ['只有空白', '   '],
+    ['不是字符串', 42]
+  ])('非 http(s) 的地址（%s）被拒绝，且不发起请求', async (_label, value) => {
+    const h = await harness()
+    const fetchSpy = vi.fn()
+    const original = globalThis.fetch
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    try {
+      const result = (await invoke(h.ipc, IPC.configUrlImport, value)) as { ok: boolean }
+      expect(result.ok).toBe(false)
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+})
+
 describe('configPickImport', () => {
   const GOOD_CONFIG = 'proxies: []\nproxy-groups:\n  - { name: P, type: select, proxies: [DIRECT] }\n'
 
@@ -812,7 +893,7 @@ describe('configPickImport', () => {
     await writeFile(source, GOOD_CONFIG)
     const h = await harness({ pickImportFile: async () => source })
 
-    expect(await invoke(h.ipc, IPC.configPickImport)).toEqual({ ok: true, needsRestart: true })
+    expect(await invoke(h.ipc, IPC.configPickImport)).toEqual({ ok: true, applied: 'reloaded' })
     const written = await readFile(path.join(h.ctx.configDir, 'upstream.yaml'), 'utf8')
     expect(written).toContain('proxy-groups')
   })

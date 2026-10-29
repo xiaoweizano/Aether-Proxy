@@ -7,6 +7,7 @@ import type {
   AutostartStateView,
   ConnectionsSnapshot,
   DialFailureCounts,
+  ImportApplied,
   ImportResult,
   ModeSetResult,
   NodeSwitchInput,
@@ -15,11 +16,12 @@ import type {
   ProxyGroupView,
   SimpleResult,
   StatsSample,
+  UrlImportResult,
   WindowStateView
 } from '../shared/ipc'
 import type { ProxiesResponse } from './core/link'
 import type { AppContext } from './bootstrap'
-import { importFromFile } from './config/import'
+import { importFromFile, importFromUrl } from './config/import'
 import { writeSettings } from './settings'
 import { readAutostart, setAutostart, type AutostartHost } from './shell/autostart'
 import { isWindowAction, runWindowAction, type WindowControls } from './shell/window'
@@ -240,9 +242,47 @@ function unavailableAutostart(): AutostartStateView {
   }
 }
 
+/**
+ * 订阅地址校验。URL 来自渲染层，所以**只放行 http/https**：
+ * 否则 file://、data: 等协议会变成渲染层驱动主进程读任意本地文件或解析任意内容的通道。
+ * 返回规范化后的 href，非 http(s) 一律 null。
+ */
+function parseSubscriptionUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+  return parsed.href
+}
+
 type ImportOutcome =
-  | { ok: true; needsRestart: true }
+  | { ok: true; applied: ImportApplied; message?: string }
   | { ok: false; message: string }
+
+/**
+ * 导入成功之后让新配置真正生效。
+ *
+ * 内核在跑就热重载：不停进程、不断系统代理，用户粘贴完订阅立刻能看到新节点。
+ * 内核没在跑时「重启后生效」就是事实，不必尝试。
+ *
+ * **热重载失败不是导入失败**：配置已经落盘，界面要说的是「已导入、但内核没接受」
+ * 并把原因带出去——只报「已导入」会让用户以为已经生效，那是最坏的一种结果。
+ */
+async function applyImported(ctx: AppContext): Promise<{ applied: ImportApplied; message?: string }> {
+  if (ctx.startupStatus !== 'ready') return { applied: 'pending-restart' }
+  try {
+    await ctx.reloadCore()
+    return { applied: 'reloaded' }
+  } catch (err) {
+    return { applied: 'reload-failed', message: shortMessage(err) }
+  }
+}
 
 /** 两个导入通道共用的落盘步骤：目录按需创建，失败只回短消息。 */
 async function importIntoConfigDir(ctx: AppContext, sourcePath: string): Promise<ImportOutcome> {
@@ -250,10 +290,10 @@ async function importIntoConfigDir(ctx: AppContext, sourcePath: string): Promise
     // configDir 才是 upstream.yaml 的落点；no-config 时 profileDir 为 null。
     await mkdir(ctx.configDir, { recursive: true })
     await importFromFile(ctx.configDir, sourcePath)
-    return { ok: true, needsRestart: true }
   } catch (err) {
     return { ok: false, message: shortMessage(err) }
   }
+  return { ok: true, ...(await applyImported(ctx)) }
 }
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps: IpcDeps): void {
@@ -353,6 +393,25 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: AppContext, deps:
     if (sourcePath === null) return { ok: false, cancelled: true }
     return importIntoConfigDir(ctx, sourcePath)
   })
+
+  ipcMain.handle(
+    IPC.configUrlImport,
+    async (_event, rawUrl: unknown): Promise<UrlImportResult> => {
+      // 与文件导入同一道闸：另一个实例占用配置时不能改写 upstream.yaml。
+      if (ctx.startupStatus === 'in-use') {
+        return { ok: false, message: '另一个实例正在运行' }
+      }
+      const url = parseSubscriptionUrl(rawUrl)
+      if (url === null) return { ok: false, message: '订阅地址无效：只支持 http / https' }
+      try {
+        await mkdir(ctx.configDir, { recursive: true })
+        await importFromUrl(ctx.configDir, url)
+      } catch (err) {
+        return { ok: false, message: shortMessage(err) }
+      }
+      return { ok: true, ...(await applyImported(ctx)) }
+    }
+  )
 
   ipcMain.handle(
     IPC.connectionsGet,

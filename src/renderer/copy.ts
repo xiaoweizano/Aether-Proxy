@@ -240,6 +240,24 @@ export const copy = {
       /** 读屏与键盘：开关的可读名字包含当前状态，避免只播报「开关」。 */
       switchLabel: (enabled: boolean) =>
         `开机自启：${enabled ? '已开启' : '已关闭'}`
+    },
+    subscription: {
+      label: '从订阅地址导入',
+      description: '粘贴 Clash 订阅链接，一次性拉取并保存为当前配置。',
+      placeholder: 'https://example.com/subscribe?token=...',
+      action: '导入',
+      importing: '导入中…',
+      /** 内核在跑：已热重载，配置真的生效了。 */
+      reloaded: '配置已导入，已热重载生效',
+      /** 内核没在跑：落盘不等于生效，必须说明下一步。 */
+      imported: '配置已导入，重启内核后生效',
+      /** 内核在跑却拒绝了新配置：原因由主进程给出，这里只接半句。 */
+      reloadFailed: '配置已导入，但内核没有接受：',
+      restart: '立即重启内核',
+      restarting: '重启中…',
+      restartFailed: '重启内核失败',
+      empty: '请先填写订阅地址',
+      failed: '导入失败，请检查地址后重试'
     }
   },
   version: 'Version 0.1.0'

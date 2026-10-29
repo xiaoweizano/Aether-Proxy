@@ -114,16 +114,32 @@ export interface SimpleResult {
   message?: string
 }
 
+/**
+ * 导入成功之后配置所处的状态。
+ *
+ * - `reloaded`：内核在运行，已热重载并接受了新配置，不用重启；
+ * - `pending-restart`：已写入，但内核没在跑——重启内核后生效；
+ * - `reload-failed`：已写入，内核在跑却拒绝了新配置（附原因）。重启同样可能失败，
+ *   界面必须把原因一起显示，不能只说「已导入」。
+ */
+export type ImportApplied = 'reloaded' | 'pending-restart' | 'reload-failed'
+
 export interface ImportResult {
   ok: boolean
-  needsRestart?: boolean
+  applied?: ImportApplied
+  cancelled?: boolean
   message?: string
 }
 
 /** 渲染层只能发起「选文件」；路径由主进程的原生对话框产生。 */
 export type PickImportResult =
-  | { ok: true; needsRestart: true }
+  | { ok: true; applied: ImportApplied; message?: string }
   | { ok: false; cancelled?: true; message?: string }
+
+/** 订阅 URL 导入。URL 由渲染层提供（用户输入的地址，不含本地路径）。 */
+export type UrlImportResult =
+  | { ok: true; applied: ImportApplied; message?: string }
+  | { ok: false; message: string }
 
 export interface StatsHistorySample {
   up: number
@@ -176,6 +192,8 @@ export const IPC = {
   coreRestart: 'core:restart',
   configImport: 'config:import',
   configPickImport: 'config:pick-import',
+  /** 从订阅 URL 导入（一次性拉取，不做定时刷新）。 */
+  configUrlImport: 'config:url-import',
   statsPush: 'app:stats',
   /** 流量环形缓冲的当前快照；窗口重建后用它补首屏，不必等下一个采样点。 */
   statsGet: 'app:stats-get',
@@ -214,6 +232,11 @@ export interface AetherApi {
   restartCore(): Promise<SimpleResult>
   /** 主进程弹原生文件选择框；渲染层拿不到也不该拿本地路径。 */
   importConfig(): Promise<PickImportResult>
+  /**
+   * 从订阅地址一次性拉取配置。只接受 http/https，主进程会校验协议，
+   * 避免渲染层把它当成任意协议的发起点。
+   */
+  importConfigFromUrl(url: string): Promise<UrlImportResult>
   /** 订阅流量推送；返回取消订阅函数。 */
   onStats(cb: (sample: StatsSample) => void): () => void
   /**

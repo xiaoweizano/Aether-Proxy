@@ -1,7 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import type { AutostartSetResult, AutostartStateView } from '../../shared/ipc'
+import type {
+  AutostartSetResult,
+  AutostartStateView,
+  SimpleResult,
+  UrlImportResult
+} from '../../shared/ipc'
 import { copy } from '../copy'
 import { makeAether } from '../test-utils'
 import { SettingsPage } from './SettingsPage'
@@ -21,6 +26,8 @@ interface Options {
   initial?: AutostartStateView
   set?: (enabled: boolean) => Promise<AutostartSetResult>
   get?: () => Promise<AutostartStateView>
+  importUrl?: (url: string) => Promise<UrlImportResult>
+  restartCore?: () => Promise<SimpleResult>
 }
 
 function mount(options: Options = {}) {
@@ -29,8 +36,12 @@ function mount(options: Options = {}) {
     options.set ??
       (async (enabled: boolean) => ({ ok: true, state: state({ enabled, persisted: enabled }) }))
   )
-  window.aether = makeAether({ getAutostart, setAutostart })
-  return { ...render(<SettingsPage />), getAutostart, setAutostart }
+  const importConfigFromUrl = vi.fn(
+    options.importUrl ?? (async () => ({ ok: true, applied: 'reloaded' }) as const)
+  )
+  const restartCore = vi.fn(options.restartCore ?? (async () => ({ ok: true }) as const))
+  window.aether = makeAether({ getAutostart, setAutostart, importConfigFromUrl, restartCore })
+  return { ...render(<SettingsPage />), getAutostart, setAutostart, importConfigFromUrl, restartCore }
 }
 
 function toggle(): HTMLElement {
@@ -179,5 +190,202 @@ describe('SettingsPage 开机自启', () => {
     expect(setAutostart).toHaveBeenCalledTimes(1)
     release?.()
     await waitFor(() => expect(toggle()).toBeEnabled())
+  })
+})
+
+describe('SettingsPage 订阅导入', () => {
+  function urlInput(): HTMLElement {
+    return screen.getByPlaceholderText(copy.settings.subscription.placeholder)
+  }
+
+  function submit(): HTMLElement {
+    return screen.getByRole('button', { name: copy.settings.subscription.action })
+  }
+
+  it('地址为空：本地拦下，不惊动主进程，并给出原因', async () => {
+    const { importConfigFromUrl } = mount()
+
+    await userEvent.click(submit())
+
+    expect(importConfigFromUrl).not.toHaveBeenCalled()
+    expect(await screen.findByText(copy.settings.subscription.empty)).toBeInTheDocument()
+  })
+
+  it('只有空白字符也算空', async () => {
+    const { importConfigFromUrl } = mount()
+
+    await userEvent.type(urlInput(), '   ')
+    await userEvent.click(submit())
+
+    expect(importConfigFromUrl).not.toHaveBeenCalled()
+    expect(await screen.findByText(copy.settings.subscription.empty)).toBeInTheDocument()
+  })
+
+  it('导入成功且已热重载：地址去掉首尾空白后交给主进程，并明说已生效', async () => {
+    const { importConfigFromUrl } = mount()
+
+    await userEvent.type(urlInput(), '  https://example.com/sub?a=1  ')
+    await userEvent.click(submit())
+
+    await waitFor(() =>
+      expect(importConfigFromUrl).toHaveBeenCalledWith('https://example.com/sub?a=1')
+    )
+    expect(await screen.findByText(copy.settings.subscription.reloaded)).toBeInTheDocument()
+    // 成功文案不能出现「重启」：内核已经接受了新配置，再让用户重启就是说谎。
+    expect(screen.queryByText(copy.settings.subscription.restart)).toBeNull()
+    // 成功后清空输入框，避免用户以为再点一次会「再应用一次」。
+    expect(urlInput()).toHaveValue('')
+  })
+
+  it('内核没在跑：说「重启后生效」，并就地给出重启按钮', async () => {
+    const restartCore = vi.fn(async () => ({ ok: true }) as const)
+    mount({
+      importUrl: async () => ({ ok: true, applied: 'pending-restart' }),
+      restartCore
+    })
+
+    await userEvent.type(urlInput(), 'https://example.com/sub')
+    await userEvent.click(submit())
+
+    expect(await screen.findByText(copy.settings.subscription.imported)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: copy.settings.subscription.restart }))
+    expect(restartCore).toHaveBeenCalledTimes(1)
+    // 重启成功后才是真的生效。
+    expect(await screen.findByText(copy.settings.subscription.reloaded)).toBeInTheDocument()
+  })
+
+  it('重启失败：原样显示主进程给的原因，不改口说已生效', async () => {
+    mount({
+      importUrl: async () => ({ ok: true, applied: 'pending-restart' }),
+      restartCore: async () => ({ ok: false, message: '配置有误，无法启动内核' })
+    })
+
+    await userEvent.type(urlInput(), 'https://example.com/sub')
+    await userEvent.click(submit())
+    await userEvent.click(screen.getByRole('button', { name: copy.settings.subscription.restart }))
+
+    expect(await screen.findByText('配置有误，无法启动内核')).toBeInTheDocument()
+    expect(screen.queryByText(copy.settings.subscription.reloaded)).toBeNull()
+  })
+
+  it('内核在跑却拒收：已导入但未生效，原因一起显示', async () => {
+    mount({
+      importUrl: async () => ({
+        ok: true,
+        applied: 'reload-failed',
+        message: '内核拒绝了新配置（HTTP 400）'
+      })
+    })
+
+    await userEvent.type(urlInput(), 'https://example.com/sub')
+    await userEvent.click(submit())
+
+    expect(
+      await screen.findByText(
+        `${copy.settings.subscription.reloadFailed}内核拒绝了新配置（HTTP 400）`
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText(copy.settings.subscription.reloaded)).toBeNull()
+    // 没生效就要给出重启这个出口。
+    expect(
+      screen.getByRole('button', { name: copy.settings.subscription.restart })
+    ).toBeInTheDocument()
+  })
+
+  it('主进程拒绝时原样显示它给的原因，不说「已导入」', async () => {
+    mount({ importUrl: async () => ({ ok: false, message: '订阅返回 404' }) })
+
+    await userEvent.type(urlInput(), 'https://example.com/sub')
+    await userEvent.click(submit())
+
+    expect(await screen.findByText('订阅返回 404')).toBeInTheDocument()
+    expect(screen.queryByText(copy.settings.subscription.imported)).toBeNull()
+    // 失败时保留输入，用户可以改一处再试。
+    expect(urlInput()).toHaveValue('https://example.com/sub')
+  })
+
+  it('主进程没给原因时用兜底文案', async () => {
+    mount({ importUrl: async () => ({ ok: false, message: '' }) })
+
+    await userEvent.type(urlInput(), 'https://example.com/sub')
+    await userEvent.click(submit())
+
+    expect(await screen.findByText(copy.settings.subscription.failed)).toBeInTheDocument()
+  })
+
+  it('通道抛错也算失败', async () => {
+    mount({
+      importUrl: async () => {
+        throw new Error('IPC 断了')
+      }
+    })
+
+    await userEvent.type(urlInput(), 'https://example.com/sub')
+    await userEvent.click(submit())
+
+    expect(await screen.findByText(copy.settings.subscription.failed)).toBeInTheDocument()
+  })
+
+  it('回车提交与点按钮等价', async () => {
+    const { importConfigFromUrl } = mount()
+
+    await userEvent.type(urlInput(), 'https://example.com/sub{Enter}')
+
+    await waitFor(() =>
+      expect(importConfigFromUrl).toHaveBeenCalledWith('https://example.com/sub')
+    )
+  })
+
+  it('导入进行中：按钮禁用且文案变成进行时，连点不会发第二次请求', async () => {
+    let release: (() => void) | undefined
+    const importConfigFromUrl = vi.fn(
+      () =>
+        new Promise<UrlImportResult>((resolve) => {
+          release = () => resolve({ ok: true, applied: 'reloaded' })
+        })
+    )
+    mount({ importUrl: importConfigFromUrl })
+
+    await userEvent.type(urlInput(), 'https://example.com/sub')
+    await userEvent.click(submit())
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: copy.settings.subscription.importing })
+      ).toBeDisabled()
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: copy.settings.subscription.importing })
+    )
+    expect(importConfigFromUrl).toHaveBeenCalledTimes(1)
+
+    release?.()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: copy.settings.subscription.action })
+      ).toBeEnabled()
+    )
+  })
+
+  it('重新输入时清掉上一次的成功/失败提示', async () => {
+    mount()
+    await userEvent.type(urlInput(), 'https://example.com/sub')
+    await userEvent.click(submit())
+    expect(await screen.findByText(copy.settings.subscription.reloaded)).toBeInTheDocument()
+
+    await userEvent.type(urlInput(), 'h')
+
+    expect(screen.queryByText(copy.settings.subscription.reloaded)).toBeNull()
+  })
+
+  it('自启读失败也不会连带锁死导入卡片', async () => {
+    mount({
+      get: async () => {
+        throw new Error('IPC 断了')
+      }
+    })
+
+    expect(await screen.findByText(copy.settings.autostart.loadFailed)).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(copy.settings.subscription.placeholder)).toBeInTheDocument()
   })
 })

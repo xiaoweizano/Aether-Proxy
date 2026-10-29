@@ -213,6 +213,7 @@ async function harness(options: {
   processPathFn?: NonNullable<BootstrapOptions['processPathFn']>
   killFn?: NonNullable<BootstrapOptions['killFn']>
   restarter?: NonNullable<BootstrapOptions['restarter']>
+  fetchFn?: NonNullable<BootstrapOptions['fetchFn']>
 } = {}): Promise<Harness> {
   const config = options.config === undefined ? VALID_CONFIG : options.config
   const dir = await makeUserDir(config !== null, config ?? VALID_CONFIG)
@@ -234,7 +235,7 @@ async function harness(options: {
       resourcesPath: dir,
       repoRoot: process.cwd(),
       spawnFn: spawnFn as unknown as BootstrapOptions['spawnFn'],
-      fetchFn: okFetch(),
+      fetchFn: options.fetchFn ?? okFetch(),
       platformProxy: pp,
       validateFn: options.validateFn ?? (async () => ({ ok: true, output: 'ok' })),
       // 默认不碰真实网络：单元测试里的内核端口并不存在，交给真实 ws 会反复重连。
@@ -2145,5 +2146,103 @@ describe('孤儿清理的生产适配器', () => {
   it('sameExecutable 忽略大小写、区分不同路径', () => {
     expect(sameExecutable(MIHOMO_PATH, MIHOMO_PATH.toUpperCase())).toBe(true)
     expect(sameExecutable(MIHOMO_PATH, FOREIGN_MIHOMO_PATH)).toBe(false)
+  })
+})
+
+describe('热重载', () => {
+  /** 只把 PUT /configs 交给测试处理，其余（握手、/version）一律 200。 */
+  function fetchWithReload(reply: () => { ok: boolean; status: number }): {
+    fetchFn: typeof fetch
+    puts: string[]
+  } {
+    const puts: string[] = []
+    const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if ((init?.method ?? 'GET').toUpperCase() === 'PUT') {
+        puts.push(url)
+        const r = reply()
+        return { ok: r.ok, status: r.status, json: async () => ({}) }
+      }
+      return { ok: true, status: 200, json: async () => ({ version: 'test' }) }
+    }) as unknown as typeof fetch
+    return { fetchFn, puts }
+  }
+
+  const NEW_CONFIG = `proxies:
+  - { name: 新节点, type: ss, server: 1.2.3.4, port: 443, cipher: aes-128-gcm, password: x }
+proxy-groups:
+  - { name: Proxy, type: select, proxies: [新节点, DIRECT] }
+rules:
+  - MATCH,Proxy
+`
+
+  async function writeUpstream(dir: string, text: string): Promise<void> {
+    await writeFile(path.join(dir, 'profiles', 'default', 'upstream.yaml'), text)
+  }
+
+  function runtimePath(dir: string): string {
+    return path.join(dir, 'profiles', 'default', 'runtime.yaml')
+  }
+
+  it('内核在跑：重新生成 runtime.yaml 并 PUT /configs，不重启进程', async () => {
+    const { fetchFn, puts } = fetchWithReload(() => ({ ok: true, status: 204 }))
+    const h = await harness({ fetchFn })
+    const ctx = await bootstrap(h.opts)
+    const spawnsBefore = h.spawnFn.mock.calls.length
+
+    await writeUpstream(h.dir, NEW_CONFIG)
+    await ctx.reloadCore()
+
+    expect(puts).toHaveLength(1)
+    expect(puts[0]).toContain('/configs?force=true')
+    // 进程没换：热重载的价值就在这里。
+    expect(h.spawnFn.mock.calls.length).toBe(spawnsBefore)
+    expect(ctx.startupStatus).toBe('ready')
+    // 新配置真的落进了 runtime.yaml，且 profile 摘要跟着更新。
+    expect(await readFile(runtimePath(h.dir), 'utf8')).toContain('新节点')
+    expect(ctx.profile).toEqual({ nodeCount: 1, groupCount: 1 })
+    await ctx.stopAll()
+  })
+
+  it('内核没在跑时直接拒绝：没有可重载的对象', async () => {
+    const h = await harness({ config: null })
+    const ctx = await bootstrap(h.opts)
+
+    await expect(ctx.reloadCore()).rejects.toThrow('内核未运行')
+    await ctx.stopAll()
+  })
+
+  it('新配置校验不过：抛错并把 runtime.yaml 恢复成重载前的样子', async () => {
+    let calls = 0
+    const h = await harness({
+      fetchFn: fetchWithReload(() => ({ ok: true, status: 204 })).fetchFn,
+      validateFn: async () => {
+        calls += 1
+        return calls === 1 ? { ok: true, output: 'ok' } : { ok: false, output: 'bad' }
+      }
+    })
+    const ctx = await bootstrap(h.opts)
+    const before = await readFile(runtimePath(h.dir), 'utf8')
+
+    await writeUpstream(h.dir, NEW_CONFIG)
+    await expect(ctx.reloadCore()).rejects.toThrow('内核未能通过校验')
+
+    // 坏配置绝不能留在磁盘上：否则下次启动也会起不来。
+    expect(await readFile(runtimePath(h.dir), 'utf8')).toBe(before)
+    await ctx.stopAll()
+  })
+
+  it('内核拒收新配置：回滚磁盘并再 PUT 一次让内核与文件一致', async () => {
+    const { fetchFn, puts } = fetchWithReload(() => ({ ok: false, status: 400 }))
+    const h = await harness({ fetchFn })
+    const ctx = await bootstrap(h.opts)
+    const before = await readFile(runtimePath(h.dir), 'utf8')
+
+    await writeUpstream(h.dir, NEW_CONFIG)
+    await expect(ctx.reloadCore()).rejects.toThrow('HTTP 400')
+
+    expect(await readFile(runtimePath(h.dir), 'utf8')).toBe(before)
+    expect(puts).toHaveLength(2)
+    await ctx.stopAll()
   })
 })
