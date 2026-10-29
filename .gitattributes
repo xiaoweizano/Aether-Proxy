@@ -1,3 +1,5 @@
 vendor/geodata/** binary
 vendor/*.zip binary
 *.exe binary
+# 安装包图标是手写二进制容器：别让 Git 在 Windows 上做换行归一化，否则 rcedit 会拒收。
+build/*.ico binary
