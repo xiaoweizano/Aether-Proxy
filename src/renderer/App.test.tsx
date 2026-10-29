@@ -14,11 +14,8 @@ const NON_READY = [
   ['in-use', copy.state.inUse.title]
 ] as const
 
-/** 设置 / 日志仍落在占位页；连接页与节点页已实现。 */
-const PLACEHOLDER_PAGES = [
-  ['settings', copy.nav.settings],
-  ['logs', copy.nav.logs]
-] as const
+/** 日志仍落在占位页；设置页由 Task 5 换成真实内容。 */
+const PLACEHOLDER_PAGES = [['logs', copy.nav.logs]] as const
 
 describe('App', () => {
   it('ready 时渲染 Dashboard，而不是状态面板', async () => {
@@ -99,7 +96,7 @@ describe('App', () => {
     expect(screen.getAllByRole('button', { name: copy.nav.connections })).toHaveLength(1)
   })
 
-  it.each(PLACEHOLDER_PAGES)('「%s」在 Task 4 落在占位页', async (page, label) => {
+  it.each(PLACEHOLDER_PAGES)('「%s」仍落在占位页', async (page, label) => {
     window.aether = makeAether()
     render(<App />)
     await screen.findByText(copy.dashboard.node.label)
@@ -108,6 +105,42 @@ describe('App', () => {
 
     expect(screen.getByText(copy.pages[page].note)).toBeInTheDocument()
     expect(screen.queryByText(copy.dashboard.node.label)).toBeNull()
+  })
+
+  it('「设置」进入真实设置页，关闭自启后同屏显示警告', async () => {
+    window.aether = makeAether({
+      getAutostart: vi.fn(async () => ({
+        enabled: true,
+        persisted: true,
+        appliesToSystem: true,
+        systemDiffers: false
+      })),
+      setAutostart: vi.fn(async () => ({
+        ok: true,
+        state: {
+          enabled: false,
+          persisted: false,
+          appliesToSystem: true,
+          systemDiffers: false
+        }
+      }))
+    })
+    render(<App />)
+    await screen.findByText(copy.dashboard.node.label)
+
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.settings }))
+
+    expect(screen.getByRole('heading', { name: copy.nav.settings })).toBeInTheDocument()
+    expect(screen.queryByText(copy.pages.planned)).toBeNull()
+    const toggle = await screen.findByRole('switch', {
+      name: copy.settings.autostart.label
+    })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    expect(await screen.findByText(copy.settings.autostart.warning)).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 
   it('节点页与仪表盘共用同一个轮询器，切换节点走 switchNode', async () => {

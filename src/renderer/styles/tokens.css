@@ -89,6 +89,15 @@
   --node-delay-width: 56px;
   --node-chevron-width: 12px;
 
+  /* 设置页开关：圆角矩形（Dots Are Circles Rule 只允许 6–8px 圆点做正圆）。 */
+  --switch-height: 34px;
+  --switch-track-width: 30px;
+  --switch-track-height: 16px;
+  --switch-thumb-size: 10px;
+  --switch-thumb-inset: 2px;
+  /* 设置卡的阅读宽度：与连接页搜索框同宽，一页一项时不至于拉成一条长句。 */
+  --settings-width: 520px;
+
   /* 字体 */
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI", "PingFang SC", sans-serif;
   --num: "Cascadia Mono", "Consolas", ui-monospace, monospace;

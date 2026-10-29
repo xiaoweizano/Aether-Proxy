@@ -14,6 +14,7 @@ import { useWindowMaximized } from './hooks/useWindowMaximized'
 import { ConnectionsPage } from './pages/ConnectionsPage'
 import { NodesPage } from './pages/NodesPage'
 import { Placeholder } from './pages/Placeholder'
+import { SettingsPage } from './pages/SettingsPage'
 import { PAGE_TITLES, type Page } from './page'
 import { pickActiveProxy } from './selectors'
 
@@ -62,7 +63,7 @@ export function App() {
     ),
     nodes: <NodesPage groups={groups} />,
     connections: <ConnectionsPage connections={connections} />,
-    settings: <Placeholder page="settings" />,
+    settings: <SettingsPage />,
     logs: <Placeholder page="logs" />
   }
 

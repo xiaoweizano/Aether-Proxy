@@ -1478,3 +1478,148 @@ body {
   font-size: var(--fs-body);
   text-align: center;
 }
+
+/* ── 设置页：开机自启 ─────────────────────────────────── */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  max-width: var(--settings-width);
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--card-pad-y) var(--card-pad-x);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.settings-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.settings-label {
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.settings-desc {
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+
+/* 开发态 / 系统值不一致的说明：与正文同屏、同字号，不进 tooltip。 */
+.settings-note {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/*
+ * 开关。DESIGN.md 的 Dots Are Circles Rule 只允许 6–8px 状态点做正圆；
+ * 这是一个控件，因此走圆角矩形（--radius-control），滑块用 chip 圆角。
+ */
+.settings-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  height: var(--switch-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+
+.settings-switch:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings-switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-switch-track {
+  position: relative;
+  width: var(--switch-track-width);
+  height: var(--switch-track-height);
+  flex: none;
+  border-radius: var(--radius-chip);
+  background: var(--card-2);
+  border: 1px solid var(--border-2);
+}
+
+.settings-switch-thumb {
+  position: absolute;
+  top: var(--switch-thumb-inset);
+  left: var(--switch-thumb-inset);
+  width: var(--switch-thumb-size);
+  height: var(--switch-thumb-size);
+  border-radius: var(--radius-chip);
+  background: var(--text-faint);
+}
+
+/* 开启用健康绿：Green Is Health Rule 里「代理开着 / 这分钟是健康的」同一族事实。 */
+.settings-switch[data-state='on'] {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.settings-switch[data-state='on'] .settings-switch-track {
+  background: color-mix(in srgb, var(--success) 28%, transparent);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+}
+
+.settings-switch[data-state='on'] .settings-switch-thumb {
+  left: auto;
+  right: var(--switch-thumb-inset);
+  background: var(--success);
+}
+
+/*
+ * 关闭自启的警告：同屏、可读、不折叠。
+ * 用失败红做文字与 1px 描边（One Red Card Rule 禁止红色成块填充），
+ * 这条警告描述的是一旦重启就会发生的事实，不是装饰。
+ */
+.settings-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+  border-radius: var(--radius-control);
+  color: var(--danger);
+  font-size: var(--fs-label);
+  line-height: 1.6;
+}
+
+.settings-warning-title {
+  font-weight: 600;
+}
+
+.settings-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-label);
+}
